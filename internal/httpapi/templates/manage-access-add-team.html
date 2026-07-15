@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Add Team</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3f0ea;
+      --panel: #ffffff;
+      --ink: #1f2428;
+      --muted: #66717a;
+      --accent: #2f6f73;
+      --line: #d9e0e2;
+      --danger: #a33a32;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    main {
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 32px 20px 56px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 20px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 32px;
+      line-height: 1.15;
+    }
+    a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .header-links {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .header-links > * + *::before {
+      content: "·";
+      color: var(--muted);
+      margin-right: 8px;
+    }
+    .header-links form {
+      margin: 0;
+    }
+    .link-button {
+      border: 0;
+      background: transparent;
+      padding: 0;
+      color: var(--accent);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      box-shadow: 0 10px 30px rgba(31, 36, 40, 0.05);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    label {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    input, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font: inherit;
+      background: white;
+    }
+    textarea {
+      min-height: 82px;
+      resize: vertical;
+    }
+    button {
+      height: 42px;
+      padding: 0 18px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--accent);
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .header-links .link-button {
+      height: auto;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--accent);
+    }
+    .button-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-top: 14px;
+    }
+    .notice.error {
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 14px;
+      color: var(--danger);
+      background: rgba(163, 58, 50, 0.1);
+    }
+    @media (max-width: 720px) {
+      header, .button-row { display: block; }
+      .header-links { margin-top: 10px; }
+      header a, .header-links a { display: inline-block; margin-top: 10px; }
+      .grid { grid-template-columns: 1fr; }
+      .button-row button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Add Team</h1>
+      <div class="header-links">
+        <a href="/">Public modules</a>
+        <a href="/manage">Manage</a>
+        <a href="/manage/access">Access</a>
+        <form method="post" action="/manage/logout">{{csrfInput $.CSRFToken}}<button class="link-button" type="submit">Sign out</button></form>
+      </div>
+    </header>
+    {{if .Error}}<div class="notice error">{{.Error}}</div>{{end}}
+    <section class="panel">
+      <form method="post" action="/manage/access">
+        {{csrfInput $.CSRFToken}}
+        <input type="hidden" name="action" value="save_team">
+        <div class="grid">
+          <div>
+            <label for="new-team">Team</label>
+            <input id="new-team" name="team" placeholder="platform">
+          </div>
+          <div>
+            <label for="new-extra-publish-spaces">Extra publish spaces</label>
+            <textarea id="new-extra-publish-spaces" name="extra_publish_spaces" placeholder="shared-modules"></textarea>
+          </div>
+          <div>
+            <label for="new-read-tokens">Read tokens</label>
+            <textarea id="new-read-tokens" name="read_tokens"></textarea>
+          </div>
+          <div>
+            <label for="new-publish-tokens">Publish tokens</label>
+            <textarea id="new-publish-tokens" name="publish_tokens"></textarea>
+          </div>
+          <div>
+            <label for="new-oidc-groups">OIDC publish groups</label>
+            <textarea id="new-oidc-groups" name="oidc_groups" placeholder="platform-publishers"></textarea>
+          </div>
+          <div>
+            <label for="new-team-admin-emails">OIDC team admins (emails)</label>
+            <textarea id="new-team-admin-emails" name="oidc_team_admin_emails" placeholder="team-owner@example.com"></textarea>
+          </div>
+          <div>
+            <label for="new-team-admin-groups">OIDC team admins (groups)</label>
+            <textarea id="new-team-admin-groups" name="oidc_team_admin_groups" placeholder="platform-admins"></textarea>
+          </div>
+        </div>
+        <div class="button-row">
+          <button type="submit">Add Team</button>
+        </div>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

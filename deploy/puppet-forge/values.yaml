@@ -1,0 +1,119 @@
+replicaCount: 2
+# If secret.stringData.DATABASE_DSN uses sqlite://, this must be set to 1.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/zxzharmlesszxz/puppet-forge
+  tag: ""
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 80
+  containerPort: 8080
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  path: /metrics
+  labels: {}
+  annotations: {}
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: forge.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+persistence:
+  enabled: false
+  accessModes:
+    - ReadWriteOnce
+  size: 5Gi
+  storageClassName: ""
+  mountPath: /data
+
+config:
+  APP_ENV: prod
+  HTTP_ADDR: ":8080"
+  READ_TIMEOUT: 10s
+  WRITE_TIMEOUT: 30s
+  SHUTDOWN_TIMEOUT: 10s
+  ARTIFACT_BACKEND: gcs
+  ARTIFACT_ENDPOINT: https://storage.googleapis.com
+  ARTIFACT_BUCKET: puppet-forge-artifacts
+  ARTIFACT_PROJECT: my-gcp-project
+  ARTIFACT_PREFIX: modules
+  ARTIFACT_REGION: us-east-1
+  ARTIFACT_PATH_STYLE: "true"
+  PUBLIC_BASE_URL: ""
+  PUBLIC_MODULE_ACCESS: "false"
+  ACTIVE_RELEASE_TTL: 720h
+  SECURITY_HSTS_ENABLED: "false"
+  WEB_AUTH_MODE: none
+  OIDC_ISSUER_URL: ""
+  OIDC_REDIRECT_URL: ""
+  OIDC_LOGOUT_URL: ""
+  UPSTREAM_URL: https://forgeapi.puppetlabs.com
+  UPSTREAM_PROXY_JSON_CACHE_TTL: 5m
+  UPSTREAM_PROXY_JSON_STALE_TTL: 1h
+  FORGE_CACHE_MAX_BODY_BYTES: "1048576"
+  MODULE_UPLOAD_MAX_BYTES: "134217728"
+  UPSTREAM_ARTIFACT_MAX_BYTES: "134217728"
+  UPSTREAM_SYNC_INTERVAL: 15m
+  UPSTREAM_SYNC_LIMIT: "1000"
+  METRICS_MODULE_LIMIT: "10000"
+
+secret:
+  create: true
+  name: ""
+  stringData:
+    DATABASE_DSN: postgres://forge:change-me@postgres:5432/forge?sslmode=disable
+    ADMIN_TOKEN: ""
+    ARTIFACT_ACCESS_KEY_ID: ""
+    ARTIFACT_SECRET_ACCESS_KEY: ""
+    OIDC_CLIENT_ID: ""
+    OIDC_CLIENT_SECRET: ""
+    OIDC_COOKIE_SECRET: ""
+
+podAnnotations: {}
+podLabels: {}
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
