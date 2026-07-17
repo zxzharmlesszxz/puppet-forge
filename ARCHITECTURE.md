@@ -41,7 +41,7 @@ The service separates:
 2. `internal/httpapi` reads the uploaded file and optional form fields.
 3. `internal/service` inspects the archive and fills missing `owner`, `name`, `version`, `description`, `README`, and metadata from `metadata.json`.
 4. The service validates owner/name slugs and version presence.
-5. Artifact storage writes the archive to `<prefix>/<owner>/<name>/<version>/<file>`.
+5. Artifact storage writes the archive to `<prefix>/<owner>/<name>/<owner>-<name>-<version>.tar.gz`.
 6. SQL store upserts the module and persists the release metadata.
 7. API returns the created release payload.
 

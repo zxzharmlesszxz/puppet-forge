@@ -100,6 +100,7 @@ func (s *ModuleService) Publish(ctx context.Context, input domain.PublishModuleI
 		metrics.ObservePublish(owner, err)
 		return domain.Release{}, err
 	}
+	input.FileName = releaseArchiveFileName(input.Owner, input.Name, input.Version)
 
 	module, err := s.modules.UpsertModule(ctx, input.Owner, input.Name)
 	if err != nil {
@@ -109,7 +110,7 @@ func (s *ModuleService) Publish(ctx context.Context, input domain.PublishModuleI
 
 	sha := sha256.Sum256(input.FileBytes)
 	shaHex := hex.EncodeToString(sha[:])
-	objectPath := path.Join(s.prefix, input.Owner, input.Name, input.Version, input.FileName)
+	objectPath := path.Join(s.prefix, input.Owner, input.Name, input.FileName)
 
 	if err := s.artifacts.Upload(ctx, objectPath, input.ContentType, input.FileBytes); err != nil {
 		err := fmt.Errorf("upload artifact: %w", err)
@@ -752,6 +753,10 @@ func mergeMetadata(base, override map[string]any) map[string]any {
 		merged[key] = value
 	}
 	return merged
+}
+
+func releaseArchiveFileName(owner, name, version string) string {
+	return owner + "-" + name + "-" + version + ".tar.gz"
 }
 
 func normalizeArchivePath(name string) string {

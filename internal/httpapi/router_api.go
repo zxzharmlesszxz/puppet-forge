@@ -53,7 +53,7 @@ func (r *Router) moduleItem(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if len(parts) == 5 && parts[2] == "versions" && parts[4] == "download" && req.Method == http.MethodGet {
-		r.redirectDownload(w, req, parts[0], parts[1], parts[3])
+		r.serveDownload(w, req, parts[0], parts[1], parts[3])
 		return
 	}
 
@@ -335,7 +335,7 @@ func (r *Router) protectedReleaseDeleteError(ctx context.Context, module domain.
 	return nil
 }
 
-func (r *Router) redirectDownload(w http.ResponseWriter, req *http.Request, owner, name, version string) {
+func (r *Router) serveDownload(w http.ResponseWriter, req *http.Request, owner, name, version string) {
 	if !r.requireReadAccess(w, req) {
 		return
 	}
@@ -358,7 +358,16 @@ func (r *Router) redirectDownload(w http.ResponseWriter, req *http.Request, owne
 		return
 	}
 
-	http.Redirect(w, req, release.DownloadURL, http.StatusFound)
+	object, err := r.modules.ReadReleaseArchive(req.Context(), owner, name, version)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeObject(w, req, object)
 }
 
 func (r *Router) markReleaseUsed(ctx context.Context, owner, name, version string) {

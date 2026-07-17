@@ -51,7 +51,7 @@
 
 1. Клієнт надсилає multipart-запит із tar.gz артефактом і метаданими.
 2. Сервіс валідує owner/name/version.
-3. Файл завантажується в GCS у префікс `modules/<owner>/<name>/<version>/`.
+3. Назва артефакту нормалізується до `<owner>-<name>-<version>.tar.gz`, а файл завантажується в storage prefix `modules/<owner>/<name>/`.
 4. Метадані релізу записуються в обраний SQL backend.
 5. API повертає опис створеного релізу.
 
