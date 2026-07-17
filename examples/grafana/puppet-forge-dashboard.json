@@ -258,7 +258,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "count(last_over_time(puppet_forge_module_info{job=~\"$job\"}[$__range]))",
+                        "expr": "count(max by (module, owner, name) (last_over_time(puppet_forge_module_info{job=~\"$job\"}[$__range])))",
                         "legendFormat": "modules",
                         "range": false,
                         "instant": true
@@ -2249,7 +2249,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum by (result) (last_over_time(puppet_forge_upstream_refresh_modules{job=~\"$job\"}[$__range]))",
+                        "expr": "max by (result) (last_over_time(puppet_forge_upstream_refresh_modules{job=~\"$job\"}[$__range]))",
                         "legendFormat": "{{result}}",
                         "range": false,
                         "instant": true
@@ -2366,7 +2366,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "last_over_time(puppet_forge_module_info{job=~\"$job\"}[$__range])",
+                        "expr": "max by (module, owner, name, latest_version) (last_over_time(puppet_forge_module_info{job=~\"$job\"}[$__range]))",
                         "legendFormat": "",
                         "range": false,
                         "instant": true,
@@ -4355,7 +4355,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "count by (owner) (last_over_time(puppet_forge_module_info{job=~\"$job\"}[$__range]))",
+                        "expr": "count by (owner) (max by (module, owner, name) (last_over_time(puppet_forge_module_info{job=~\"$job\"}[$__range])))",
                         "legendFormat": "{{owner}}",
                         "range": false,
                         "instant": true
@@ -4472,7 +4472,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "last_over_time(puppet_forge_module_releases{job=~\"$job\"}[$__range])",
+                        "expr": "max by (source) (last_over_time(puppet_forge_module_releases{job=~\"$job\"}[$__range]))",
                         "legendFormat": "{{source}}",
                         "range": false,
                         "instant": true
@@ -4589,7 +4589,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "last_over_time(puppet_forge_module_latest_releases{job=~\"$job\"}[$__range])",
+                        "expr": "max by (source) (last_over_time(puppet_forge_module_latest_releases{job=~\"$job\"}[$__range]))",
                         "legendFormat": "{{source}}",
                         "range": false,
                         "instant": true
@@ -4706,7 +4706,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum(last_over_time(puppet_forge_module_releases{job=~\"$job\"}[$__range]))",
+                        "expr": "sum(max by (source) (last_over_time(puppet_forge_module_releases{job=~\"$job\"}[$__range])))",
                         "legendFormat": "modules",
                         "range": false,
                         "instant": true
@@ -4789,7 +4789,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum(last_over_time(puppet_forge_module_latest_releases{job=~\"$job\"}[$__range]))",
+                        "expr": "sum(max by (source) (last_over_time(puppet_forge_module_latest_releases{job=~\"$job\"}[$__range])))",
                         "legendFormat": "modules",
                         "range": false,
                         "instant": true
@@ -4872,7 +4872,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "count by (owner) (last_over_time(puppet_forge_module_info{job=~\"$job\"}[$__range]))",
+                        "expr": "count by (owner) (max by (module, owner, name) (last_over_time(puppet_forge_module_info{job=~\"$job\"}[$__range])))",
                         "legendFormat": "{{owner}}",
                         "range": false,
                         "instant": true
@@ -5594,7 +5594,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "puppet_forge_build_info{job=~\"$job\"}",
+                        "expr": "max by (version, go_version) (puppet_forge_build_info{job=~\"$job\"})",
                         "legendFormat": "{{version}}",
                         "range": false,
                         "instant": true
