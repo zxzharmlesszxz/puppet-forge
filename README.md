@@ -585,6 +585,8 @@ Workflow [`Release`](./.github/workflows/release.yml) runs only for tags matchin
 - Helm chart `puppet-forge-1.2.3.tgz` with `appVersion: v1.2.3`;
 - Helm repository index on GitHub Pages through `helm/chart-releaser-action`.
 
+After all release publishing jobs succeed, the workflow updates the source Helm chart metadata on the default branch to the released chart version and appVersion. That follow-up commit uses `[skip ci]` so the normal branch CI workflow is not started just for release metadata.
+
 For the Helm repository, create or allow the `gh-pages` branch and configure GitHub Pages to serve it. After a release:
 
 ```bash
