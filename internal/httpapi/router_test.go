@@ -432,23 +432,36 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 		}
 	}
 
-	moduleSvc := service.NewModuleService(st, testArtifactStorage{}, "modules", nil)
+	archiveBody := []byte("local archive bytes")
+	moduleSvc := service.NewModuleService(st, fixedDownloadStorage{body: archiveBody, contentType: "application/gzip"}, "modules", nil)
 	authorizer := newAdminAuthorizer(t)
 
 	server := httptest.NewServer(newTestRouter(moduleSvc, nil, "http://example.test", authorizer, nil, "admin-token", true, defaultActiveReleaseTTL))
 	t.Cleanup(server.Close)
 
-	downloadClient := server.Client()
-	downloadClient.CheckRedirect = func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
-	resp, err := downloadClient.Get(server.URL + "/api/v1/modules/teamname/apache/versions/1.2.3/download")
+	resp, err := server.Client().Get(server.URL + "/api/v1/modules/teamname/apache/versions/1.2.3/download")
 	if err != nil {
 		t.Fatalf("GET download error = %v", err)
 	}
+	downloadBody, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusFound {
-		t.Fatalf("download status = %d, want %d", resp.StatusCode, http.StatusFound)
+	if err != nil {
+		t.Fatalf("ReadAll(download body) error = %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("download status = %d, want %d body=%s", resp.StatusCode, http.StatusOK, string(downloadBody))
+	}
+	if got := resp.Header.Get("Location"); got != "" {
+		t.Fatalf("download redirected to %q instead of serving the archive", got)
+	}
+	if got := resp.Header.Get("Content-Type"); got != "application/gzip" {
+		t.Fatalf("download content type = %q, want application/gzip", got)
+	}
+	if got := resp.Header.Get("Content-Length"); got != "19" {
+		t.Fatalf("download content length = %q, want 19", got)
+	}
+	if !bytes.Equal(downloadBody, archiveBody) {
+		t.Fatalf("download body = %q, want %q", downloadBody, archiveBody)
 	}
 
 	jar := newCookieJar(t)

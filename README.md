@@ -56,7 +56,7 @@ Publish flow:
 
 1. A client sends a multipart request containing a `.tar.gz` module artifact.
 2. The service validates `owner`, `name`, and `version`.
-3. The artifact is uploaded under `modules/<owner>/<name>/<version>/`.
+3. The artifact filename is normalized to `<owner>-<name>-<version>.tar.gz` and uploaded under `modules/<owner>/<name>/`.
 4. Release metadata is written to the selected SQL backend.
 5. The API returns the created release description.
 

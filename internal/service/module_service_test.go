@@ -158,11 +158,15 @@ func TestPublish(t *testing.T) {
 		t.Fatalf("Publish() error = %v", err)
 	}
 
-	if artifacts.objectPath != "modules/acme/apache/1.2.3/acme-apache-1.2.3.tar.gz" {
+	if artifacts.objectPath != "modules/acme/apache/acme-apache-1.2.3.tar.gz" {
 		t.Fatalf("unexpected object path: %s", artifacts.objectPath)
 	}
 
-	if release.DownloadURL != "https://example.invalid/modules/acme/apache/1.2.3/acme-apache-1.2.3.tar.gz" {
+	if release.FileName != "acme-apache-1.2.3.tar.gz" {
+		t.Fatalf("unexpected release file name: %s", release.FileName)
+	}
+
+	if release.DownloadURL != "https://example.invalid/modules/acme/apache/acme-apache-1.2.3.tar.gz" {
 		t.Fatalf("unexpected download url: %s", release.DownloadURL)
 	}
 
@@ -439,7 +443,7 @@ func TestPublishUsesMetadataJSONAsSourceOfTruth(t *testing.T) {
 	service := NewModuleService(moduleStore, artifacts, "modules", nil)
 
 	release, err := service.Publish(context.Background(), domain.PublishModuleInput{
-		FileName:    "teamname-apt-2.3.4.tar.gz",
+		FileName:    "uploaded-archive.tar.gz",
 		ContentType: "application/gzip",
 		FileBytes:   archive,
 	})
@@ -453,8 +457,44 @@ func TestPublishUsesMetadataJSONAsSourceOfTruth(t *testing.T) {
 	if release.Description != "APT module" {
 		t.Fatalf("unexpected description: %q", release.Description)
 	}
-	if artifacts.objectPath != "modules/teamname/apt/2.3.4/teamname-apt-2.3.4.tar.gz" {
+	if release.FileName != "teamname-apt-2.3.4.tar.gz" {
+		t.Fatalf("unexpected normalized file name: %s", release.FileName)
+	}
+	if artifacts.objectPath != "modules/teamname/apt/teamname-apt-2.3.4.tar.gz" {
 		t.Fatalf("unexpected object path: %s", artifacts.objectPath)
+	}
+}
+
+func TestPublishNormalizesUploadedArchiveFileName(t *testing.T) {
+	t.Parallel()
+
+	archive, err := testutil.BuildTarGz(map[string]string{
+		"metadata.json": `{"name":"teamname-build","version":"4.0.0"}`,
+	})
+	if err != nil {
+		t.Fatalf("testutil.BuildTarGz() error = %v", err)
+	}
+
+	moduleStore := &testModuleStore{}
+	artifacts := &testArtifactStorage{}
+	service := NewModuleService(moduleStore, artifacts, "modules", nil)
+
+	release, err := service.Publish(context.Background(), domain.PublishModuleInput{
+		FileName:  "build.tar.gz",
+		FileBytes: archive,
+	})
+	if err != nil {
+		t.Fatalf("Publish() error = %v", err)
+	}
+
+	if release.FileName != "teamname-build-4.0.0.tar.gz" {
+		t.Fatalf("unexpected normalized file name: %s", release.FileName)
+	}
+	if release.StoragePath != "modules/teamname/build/teamname-build-4.0.0.tar.gz" {
+		t.Fatalf("unexpected storage path: %s", release.StoragePath)
+	}
+	if artifacts.objectPath != release.StoragePath {
+		t.Fatalf("uploaded object path %s does not match release storage path %s", artifacts.objectPath, release.StoragePath)
 	}
 }
 
@@ -474,7 +514,7 @@ func TestReadReleaseFileExtractsFileFromArchive(t *testing.T) {
 			Owner:       "teamname",
 			Name:        "apt",
 			Version:     "2.3.4",
-			StoragePath: "modules/teamname/apt/2.3.4/teamname-apt-2.3.4.tar.gz",
+			StoragePath: "modules/teamname/apt/teamname-apt-2.3.4.tar.gz",
 		},
 	}
 	artifacts := &testArtifactStorage{
@@ -510,7 +550,7 @@ func TestReadReleaseFileRejectsPathTraversal(t *testing.T) {
 			Owner:       "teamname",
 			Name:        "apt",
 			Version:     "2.3.4",
-			StoragePath: "modules/teamname/apt/2.3.4/teamname-apt-2.3.4.tar.gz",
+			StoragePath: "modules/teamname/apt/teamname-apt-2.3.4.tar.gz",
 		},
 	}
 	artifacts := &testArtifactStorage{
@@ -575,7 +615,7 @@ func TestReadReleaseFileRejectsOversizedExtractedFile(t *testing.T) {
 			Owner:       "teamname",
 			Name:        "apt",
 			Version:     "2.3.4",
-			StoragePath: "modules/teamname/apt/2.3.4/teamname-apt-2.3.4.tar.gz",
+			StoragePath: "modules/teamname/apt/teamname-apt-2.3.4.tar.gz",
 		},
 	}
 	artifacts := &testArtifactStorage{

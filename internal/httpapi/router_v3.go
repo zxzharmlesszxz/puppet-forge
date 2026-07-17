@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
@@ -174,17 +173,8 @@ func (r *Router) serveLocalV3File(w http.ResponseWriter, req *http.Request, file
 		return true
 	}
 
-	if object.ContentType != "" {
-		w.Header().Set("Content-Type", object.ContentType)
-	}
-	w.Header().Set("Content-Length", strconv.Itoa(len(object.Body)))
 	r.markReleaseUsed(req.Context(), release.Owner, release.Name, release.Version)
-	if req.Method == http.MethodHead {
-		w.WriteHeader(http.StatusOK)
-		return true
-	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(object.Body)
+	writeObject(w, req, object)
 	return true
 }
 
