@@ -49,7 +49,7 @@ spec:
             )
 
         - record: job:puppet_forge_indexed_modules
-          expr: count by (job) (puppet_forge_module_info)
+          expr: count by (job) (max by (job, module, owner, name) (puppet_forge_module_info))
 
         - record: job:puppet_forge_publish_errors:rate5m
           expr: sum by (job) (rate(puppet_forge_publish_total{result="error"}[5m]))
@@ -173,7 +173,12 @@ spec:
             description: "Upstream refresh cycles have produced errors for at least 15 minutes."
 
         - alert: PuppetForgeUpstreamRefreshPartialFailure
-          expr: puppet_forge_upstream_refresh_modules{result="error"} > 0
+          expr: |
+            max by (job) (puppet_forge_upstream_refresh_last_error_timestamp_seconds)
+            >
+            max by (job) (puppet_forge_upstream_refresh_last_success_timestamp_seconds)
+            and
+            max by (job) (puppet_forge_upstream_refresh_modules{result="error"}) > 0
           for: 15m
           labels:
             severity: warning
@@ -183,9 +188,9 @@ spec:
 
         - alert: PuppetForgeNoSuccessfulUpstreamRefresh
           expr: |
-            time() - puppet_forge_upstream_refresh_last_success_timestamp_seconds > 86400
+            time() - max by (job) (puppet_forge_upstream_refresh_last_success_timestamp_seconds) > 86400
             and
-            puppet_forge_upstream_refresh_modules{result="attempted"} > 0
+            max by (job) (puppet_forge_upstream_refresh_modules{result="attempted"}) > 0
           for: 30m
           labels:
             severity: warning
@@ -207,7 +212,7 @@ spec:
 
         - alert: PuppetForgeNoIndexedModules
           expr: |
-            up{job=~".*puppet-forge.*"} == 1
+            max by (job) (up{job=~".*puppet-forge.*"}) == 1
             unless on (job)
             job:puppet_forge_indexed_modules > 0
           for: 30m
@@ -218,7 +223,7 @@ spec:
             description: "The service is scrapeable, but no indexed modules have been exported for at least 30 minutes."
 
         - alert: PuppetForgeHighInFlightRequests
-          expr: puppet_forge_http_in_flight_requests > 50
+          expr: sum by (job) (puppet_forge_http_in_flight_requests) > 50
           for: 15m
           labels:
             severity: warning
