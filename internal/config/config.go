@@ -19,6 +19,7 @@ type Config struct {
 	ShutdownTimeout           time.Duration
 	DatabaseDSN               string
 	AdminToken                string
+	ManageSessionSecret       string
 	PublicModuleAccess        bool
 	ActiveReleaseTTL          time.Duration
 	ArtifactBackend           string
@@ -73,6 +74,7 @@ func loadArgs(args []string, output io.Writer) (cfg Config, err error) {
 		HTTPAddr:                  getEnv("HTTP_ADDR", ":8080"),
 		DatabaseDSN:               os.Getenv("DATABASE_DSN"),
 		AdminToken:                os.Getenv("ADMIN_TOKEN"),
+		ManageSessionSecret:       os.Getenv("MANAGE_SESSION_SECRET"),
 		PublicModuleAccess:        getEnv("PUBLIC_MODULE_ACCESS", "false") == "true",
 		ActiveReleaseTTL:          mustDuration("ACTIVE_RELEASE_TTL", 30*24*time.Hour),
 		ArtifactBackend:           getEnv("ARTIFACT_BACKEND", "gcs"),
@@ -131,6 +133,7 @@ func applyFlags(cfg *Config, args []string, output io.Writer) error {
 	flags.DurationVar(&cfg.ShutdownTimeout, "shutdown-timeout", cfg.ShutdownTimeout, "graceful shutdown timeout")
 	flags.StringVar(&cfg.DatabaseDSN, "database-dsn", cfg.DatabaseDSN, "metadata database DSN")
 	flags.StringVar(&cfg.AdminToken, "admin-token", cfg.AdminToken, "runtime bootstrap admin token")
+	flags.StringVar(&cfg.ManageSessionSecret, "manage-session-secret", cfg.ManageSessionSecret, "shared secret for encrypted manage token sessions")
 	flags.BoolVar(&cfg.PublicModuleAccess, "public-module-access", cfg.PublicModuleAccess, "allow unauthenticated module read/download access")
 	flags.DurationVar(&cfg.ActiveReleaseTTL, "active-release-ttl", cfg.ActiveReleaseTTL, "active release protection TTL")
 	flags.StringVar(&cfg.ArtifactBackend, "artifact-backend", cfg.ArtifactBackend, "artifact storage backend: gcs or s3")

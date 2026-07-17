@@ -227,6 +227,7 @@ Flag names are the lowercase kebab-case form of the environment variable name:
 
 ```text
 DATABASE_DSN -> --database-dsn
+MANAGE_SESSION_SECRET -> --manage-session-secret
 PUBLIC_MODULE_ACCESS -> --public-module-access
 UPSTREAM_PROXY_JSON_CACHE_TTL -> --upstream-proxy-json-cache-ttl
 UPSTREAM_PROXY_JSON_STALE_TTL -> --upstream-proxy-json-stale-ttl
@@ -255,6 +256,7 @@ Environment variables:
 | `SHUTDOWN_TIMEOUT` | `10s` | ні | Graceful shutdown timeout. |
 | `DATABASE_DSN` | порожньо | так | DSN metadata store. `postgres://...` вмикає PostgreSQL, `sqlite:///path/file.db` вмикає SQLite. |
 | `ADMIN_TOKEN` | порожньо | для порожньої БД | Runtime bootstrap/break-glass admin token. Не зберігається в БД; потрібен, щоб на чистому старті зайти в `/manage/access`. |
+| `MANAGE_SESSION_SECRET` | порожньо | ні | Shared secret для encrypted `/manage` token sessions. Задай його для multi-replica deployments. Якщо порожній, сервіс використовує fallback: `OIDC_COOKIE_SECRET`, потім `ADMIN_TOKEN`, потім per-process random secret. |
 | `ARTIFACT_BACKEND` | `gcs` | ні | Backend для tarball артефактів: `gcs` або `s3`. |
 | `ARTIFACT_ENDPOINT` | `https://storage.googleapis.com` | для `s3`; опційно для `gcs` | Endpoint object storage. Для `gcs` можна вказати emulator/custom host; для `s3` це S3-compatible endpoint, наприклад MinIO. |
 | `ARTIFACT_BUCKET` | порожньо | так | Bucket/container для module tarballs і upstream artifact cache. |

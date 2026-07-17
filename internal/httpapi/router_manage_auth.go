@@ -23,6 +23,8 @@ func (r *Router) loginPage(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusTooManyRequests, errors.New("too many login attempts"))
 		return
 	}
+	clearManageTokenCookie(w)
+	clearManageCSRFToken(w)
 	r.webAuth.Login(w, req)
 }
 
@@ -65,6 +67,9 @@ func (r *Router) manageLoginPage(w http.ResponseWriter, req *http.Request) {
 		if !ok || (!principal.CanPublish && !principal.CanAdmin) {
 			r.renderManageLogin(w, "publish or admin token required")
 			return
+		}
+		if r.webAuth != nil {
+			r.webAuth.ClearSessionForRequest(w, req)
 		}
 		sessionID, err := r.manageSessions.Create(token, manageSessionTTL)
 		if err != nil {
@@ -109,14 +114,7 @@ func (r *Router) manageLogoutPage(w http.ResponseWriter, req *http.Request) {
 	if cookie, err := req.Cookie(manageTokenCookie); err == nil {
 		r.manageSessions.Delete(cookie.Value)
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     manageTokenCookie,
-		Value:    "",
-		Path:     "/manage",
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   -1,
-	})
+	clearManageTokenCookie(w)
 	clearManageCSRFToken(w)
 	if r.webAuth != nil {
 		if hasOIDCSession {
@@ -126,6 +124,17 @@ func (r *Router) manageLogoutPage(w http.ResponseWriter, req *http.Request) {
 		r.webAuth.ClearSessionForRequest(w, req)
 	}
 	http.Redirect(w, req, "/manage/login", http.StatusFound)
+}
+
+func clearManageTokenCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     manageTokenCookie,
+		Value:    "",
+		Path:     "/manage",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	})
 }
 
 func (r *Router) managePrincipal(req *http.Request) (auth.Principal, bool) {

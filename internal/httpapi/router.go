@@ -30,6 +30,7 @@ type RouterConfig struct {
 	Authorizer          *auth.Authorizer
 	WebAuth             *webauth.OIDCAuth
 	AdminToken          string
+	ManageSessionSecret string
 	PublicModuleAccess  bool
 	ActiveReleaseTTL    time.Duration
 	SecurityHSTSEnabled bool
@@ -79,6 +80,14 @@ func NewRouter(config RouterConfig, opts ...RouterOption) http.Handler {
 	if config.ActiveReleaseTTL <= 0 {
 		config.ActiveReleaseTTL = defaultActiveReleaseTTL
 	}
+	manageSessionSecret := config.ManageSessionSecret
+	if manageSessionSecret == "" {
+		manageSessionSecret = config.AdminToken
+	}
+	if manageSessionSecret == "" {
+		manageSessionSecret = randomManageSessionSecret()
+	}
+
 	r := &Router{
 		modules:             config.Modules,
 		forgeProxy:          config.ForgeProxy,
@@ -86,7 +95,7 @@ func NewRouter(config RouterConfig, opts ...RouterOption) http.Handler {
 		authorizer:          config.Authorizer,
 		webAuth:             config.WebAuth,
 		adminToken:          config.AdminToken,
-		manageSessions:      newManageSessionStore(),
+		manageSessions:      newManageSessionStore(manageSessionSecret),
 		rateLimiter:         newRateLimiter(time.Now),
 		publicModuleAccess:  config.PublicModuleAccess,
 		activeReleaseTTL:    config.ActiveReleaseTTL,

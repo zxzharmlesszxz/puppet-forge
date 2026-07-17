@@ -8,7 +8,7 @@ import (
 func TestManageSessionStoreEvictsOldestWhenSessionLimitIsExceeded(t *testing.T) {
 	t.Parallel()
 
-	store := newManageSessionStore()
+	store := newManageSessionStore("")
 	store.maxSessions = 2
 
 	firstID, err := store.Create("first-token", time.Minute)
@@ -38,7 +38,7 @@ func TestManageSessionStoreEvictsOldestWhenSessionLimitIsExceeded(t *testing.T) 
 func TestManageSessionStoreCompactsDeletedSessionOrder(t *testing.T) {
 	t.Parallel()
 
-	store := newManageSessionStore()
+	store := newManageSessionStore("")
 	store.maxSessions = 2
 
 	firstID, err := store.Create("first-token", time.Minute)
@@ -66,7 +66,7 @@ func TestManageSessionStoreCompactsDeletedSessionOrder(t *testing.T) {
 func TestManageSessionStoreTokenDeletesExpiredSession(t *testing.T) {
 	t.Parallel()
 
-	store := newManageSessionStore()
+	store := newManageSessionStore("")
 	sessionID, err := store.Create("expired-token", time.Nanosecond)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -80,5 +80,38 @@ func TestManageSessionStoreTokenDeletesExpiredSession(t *testing.T) {
 	store.mu.RUnlock()
 	if exists {
 		t.Fatal("expected expired session to be deleted")
+	}
+}
+
+func TestManageSessionStoreEncryptedCookieWorksAcrossStores(t *testing.T) {
+	t.Parallel()
+
+	firstStore := newManageSessionStore("shared-secret")
+	secondStore := newManageSessionStore("shared-secret")
+
+	sessionCookie, err := firstStore.Create("admin-token", time.Minute)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if sessionCookie == "admin-token" {
+		t.Fatal("expected encrypted session cookie, got raw token")
+	}
+	if token, ok := secondStore.Token(sessionCookie, time.Now()); !ok || token != "admin-token" {
+		t.Fatalf("expected second store to decode session cookie, got token=%q ok=%v", token, ok)
+	}
+}
+
+func TestManageSessionStoreEncryptedCookieRejectsDifferentSecret(t *testing.T) {
+	t.Parallel()
+
+	firstStore := newManageSessionStore("shared-secret")
+	secondStore := newManageSessionStore("other-secret")
+
+	sessionCookie, err := firstStore.Create("admin-token", time.Minute)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if token, ok := secondStore.Token(sessionCookie, time.Now()); ok || token != "" {
+		t.Fatalf("expected different secret to reject session cookie, got token=%q ok=%v", token, ok)
 	}
 }

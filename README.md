@@ -83,6 +83,7 @@ Flag names are the lowercase kebab-case form of the environment variable name:
 
 ```text
 DATABASE_DSN -> --database-dsn
+MANAGE_SESSION_SECRET -> --manage-session-secret
 PUBLIC_MODULE_ACCESS -> --public-module-access
 UPSTREAM_PROXY_JSON_CACHE_TTL -> --upstream-proxy-json-cache-ttl
 UPSTREAM_PROXY_JSON_STALE_TTL -> --upstream-proxy-json-stale-ttl
@@ -111,6 +112,7 @@ puppet-forge \
 | `SHUTDOWN_TIMEOUT`              | `10s`                             | no                             | Graceful shutdown timeout.                                                                                                                                                                                                                   |
 | `DATABASE_DSN`                  | empty                             | yes                            | Metadata store DSN. `postgres://...` enables PostgreSQL, `sqlite:///path/file.db` enables SQLite.                                                                                                                                            |
 | `ADMIN_TOKEN`                   | empty                             | when DB access config is empty | Runtime bootstrap/break-glass admin token. It is not stored in the database and is used to bootstrap `/manage/access`.                                                                                                                       |
+| `MANAGE_SESSION_SECRET`         | empty                             | no                             | Shared secret for encrypted `/manage` token sessions. Set it for multi-replica deployments. If empty, the service falls back to `OIDC_COOKIE_SECRET`, then `ADMIN_TOKEN`, then a per-process random secret.                                  |
 | `ARTIFACT_BACKEND`              | `gcs`                             | no                             | Artifact backend for module tarballs: `gcs` or `s3`.                                                                                                                                                                                         |
 | `ARTIFACT_ENDPOINT`             | `https://storage.googleapis.com`  | for `s3`; optional for `gcs`   | Object storage endpoint. For `gcs`, this may point to an emulator/custom host. For `s3`, this is the S3-compatible endpoint.                                                                                                                 |
 | `ARTIFACT_BUCKET`               | empty                             | yes                            | Bucket/container for module tarballs and upstream artifact cache.                                                                                                                                                                            |

@@ -43,6 +43,32 @@ func TestRequirePublishUsesTeamAsDefaultOwner(t *testing.T) {
 	}
 }
 
+func TestExtraPublishSpacesDoNotReplacePrimaryTeamSpace(t *testing.T) {
+	t.Parallel()
+
+	authorizer, err := NewAuthorizer([]TeamConfig{
+		{
+			Team:          "teamname",
+			PublishTokens: []string{"publish-token"},
+			PublishOwners: []string{"shared"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
+	}
+
+	principal, ok := authorizer.AuthenticateToken("publish-token")
+	if !ok {
+		t.Fatal("publish token was not accepted")
+	}
+	if _, ok := principal.PublishOwners["teamname"]; !ok {
+		t.Fatalf("primary team space missing from publish owners: %#v", principal.PublishOwners)
+	}
+	if _, ok := principal.PublishOwners["shared"]; !ok {
+		t.Fatalf("extra publish space missing from publish owners: %#v", principal.PublishOwners)
+	}
+}
+
 func TestTeamConfigJSONUsesExtraPublishSpacesWithLegacyFallback(t *testing.T) {
 	t.Parallel()
 

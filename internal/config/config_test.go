@@ -65,6 +65,22 @@ func TestLoadReadsAdminToken(t *testing.T) {
 	}
 }
 
+func TestLoadReadsManageSessionSecret(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("DATABASE_DSN", "sqlite:///tmp/puppet-forge.db")
+	t.Setenv("ARTIFACT_BUCKET", "forge-artifacts")
+	t.Setenv("ARTIFACT_PROJECT", "local-dev")
+	t.Setenv("MANAGE_SESSION_SECRET", "shared-session-secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ManageSessionSecret != "shared-session-secret" {
+		t.Fatalf("unexpected MANAGE_SESSION_SECRET: %q", cfg.ManageSessionSecret)
+	}
+}
+
 func TestLoadReadsPublicModuleAccess(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("DATABASE_DSN", "sqlite:///tmp/puppet-forge.db")
@@ -223,6 +239,7 @@ func TestLoadArgsOverridesEnvironment(t *testing.T) {
 		"--upstream-artifact-max-bytes", "16384",
 		"--upstream-proxy-json-stale-ttl", "10m",
 		"--metrics-module-limit", "321",
+		"--manage-session-secret", "flag-session-secret",
 	})
 	if err != nil {
 		t.Fatalf("LoadArgs() error = %v", err)
@@ -251,6 +268,9 @@ func TestLoadArgsOverridesEnvironment(t *testing.T) {
 	}
 	if cfg.UpstreamProxyJSONStaleTTL != 10*time.Minute {
 		t.Fatalf("unexpected UPSTREAM_PROXY_JSON_STALE_TTL: %s", cfg.UpstreamProxyJSONStaleTTL)
+	}
+	if cfg.ManageSessionSecret != "flag-session-secret" {
+		t.Fatalf("unexpected MANAGE_SESSION_SECRET: %q", cfg.ManageSessionSecret)
 	}
 	if cfg.MetricsModuleLimit != 321 {
 		t.Fatalf("unexpected METRICS_MODULE_LIMIT: %d", cfg.MetricsModuleLimit)

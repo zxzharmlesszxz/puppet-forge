@@ -114,6 +114,7 @@ func New(cfg config.Config) (*App, error) {
 		Authorizer:          authorizer,
 		WebAuth:             oidcAuth,
 		AdminToken:          cfg.AdminToken,
+		ManageSessionSecret: manageSessionSecret(cfg),
 		PublicModuleAccess:  cfg.PublicModuleAccess,
 		ActiveReleaseTTL:    cfg.ActiveReleaseTTL,
 		SecurityHSTSEnabled: cfg.SecurityHSTSEnabled,
@@ -130,6 +131,16 @@ func New(cfg config.Config) (*App, error) {
 	app.startUpstreamRefresh(backgroundCtx, moduleSvc, cfg.UpstreamSyncInterval, cfg.UpstreamSyncLimit)
 
 	return app, nil
+}
+
+func manageSessionSecret(cfg config.Config) string {
+	if cfg.ManageSessionSecret != "" {
+		return cfg.ManageSessionSecret
+	}
+	if cfg.OIDCCookieSecret != "" {
+		return cfg.OIDCCookieSecret
+	}
+	return cfg.AdminToken
 }
 
 func (a *App) Router() http.Handler {

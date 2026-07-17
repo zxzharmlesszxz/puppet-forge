@@ -96,12 +96,9 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 			return nil, err
 		}
 
+		ownerSet := make(map[string]struct{}, len(cfg.PublishOwners)+1)
+		ownerSet[cfg.Team] = struct{}{}
 		owners := cfg.PublishOwners
-		if len(owners) == 0 {
-			owners = []string{cfg.Team}
-		}
-
-		ownerSet := make(map[string]struct{}, len(owners))
 		for _, owner := range owners {
 			if owner == "" {
 				continue
