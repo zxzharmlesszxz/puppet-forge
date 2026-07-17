@@ -555,6 +555,17 @@ Helm chart лежить у [`deploy/puppet-forge`](./deploy/puppet-forge).
 helm upgrade --install puppet-forge ./deploy/puppet-forge
 ```
 
+За замовчуванням chart використовує фіксований `replicaCount`. Щоб кількістю реплік керував Kubernetes, увімкни HPA:
+
+```bash
+helm upgrade --install puppet-forge ./deploy/puppet-forge \
+  --set autoscaling.enabled=true \
+  --set autoscaling.minReplicas=2 \
+  --set autoscaling.maxReplicas=6
+```
+
+Коли `autoscaling.enabled=true`, Deployment не рендерить `spec.replicas`; цим керує `HorizontalPodAutoscaler`. Не вмикай autoscaling із `sqlite://` `DATABASE_DSN`; для кількох реплік потрібні PostgreSQL і спільний `MANAGE_SESSION_SECRET`.
+
 Prometheus Operator ресурси вимкнені за замовчуванням. Для scrape і alerts увімкни `serviceMonitor.enabled=true` та `prometheusRule.enabled=true`.
 
 ## GitHub Actions
