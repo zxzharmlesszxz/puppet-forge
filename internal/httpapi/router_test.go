@@ -370,10 +370,50 @@ func TestDeleteReleaseRejectsLatestAndActiveVersions(t *testing.T) {
 	}
 }
 
-func TestDeleteModuleRejectsProtectedReleases(t *testing.T) {
+func TestDeleteModuleRejectsActiveReleases(t *testing.T) {
 	t.Parallel()
 
 	st := newHTTPAPITestStore(t)
+	ctx := context.Background()
+
+	module := createTeamnameApacheModuleAndRelease(t, st)
+	createTeamnameApacheRelease(t, st, module, "2.0.0")
+	if err := st.MarkReleaseUsed(ctx, "teamname", "apache", "1.2.3"); err != nil {
+		t.Fatalf("MarkReleaseUsed() error = %v", err)
+	}
+
+	moduleSvc := service.NewModuleService(st, testArtifactStorage{}, "modules", nil)
+	authorizer := newAdminAuthorizer(t)
+	server := httptest.NewServer(newTestRouter(moduleSvc, nil, "http://example.test", authorizer, nil, "admin-token", false, defaultActiveReleaseTTL))
+	t.Cleanup(server.Close)
+
+	req, err := http.NewRequest(http.MethodDelete, server.URL+"/api/v1/modules/teamname/apache", nil)
+	if err != nil {
+		t.Fatalf("NewRequest(api delete module) error = %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("DELETE module error = %v", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("ReadAll(api delete module response) error = %v", err)
+	}
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(body), "module contains active release teamname/apache 1.2.3 cannot be deleted") {
+		t.Fatalf("expected module delete to get 409 active-release error, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if _, err := st.GetModule(ctx, "teamname", "apache"); err != nil {
+		t.Fatalf("active module was removed or lookup failed: %v", err)
+	}
+}
+
+func TestDeleteModuleAllowsLatestReleaseWhenNoReleaseIsActive(t *testing.T) {
+	t.Parallel()
+
+	st := newHTTPAPITestStore(t)
+	ctx := context.Background()
 
 	module := createTeamnameApacheModuleAndRelease(t, st)
 	createTeamnameApacheRelease(t, st, module, "2.0.0")
@@ -397,8 +437,11 @@ func TestDeleteModuleRejectsProtectedReleases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadAll(api delete module response) error = %v", err)
 	}
-	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(body), "module contains latest release teamname/apache 2.0.0 cannot be deleted") {
-		t.Fatalf("expected module delete to get 409 protected error, got %d body=%s", resp.StatusCode, string(body))
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"status":"deleted"`) {
+		t.Fatalf("expected module delete to succeed, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if _, err := st.GetModule(ctx, "teamname", "apache"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetModule() error = %v, want ErrNotFound", err)
 	}
 }
 
@@ -1293,7 +1336,7 @@ func TestHTTPAPIAccessMatrix(t *testing.T) {
 		{name: "guest delete module", method: http.MethodDelete, path: "/api/v1/modules/teamname/apache", want: http.StatusUnauthorized},
 		{name: "read delete module", method: http.MethodDelete, path: "/api/v1/modules/teamname/apache", token: "read-token", want: http.StatusForbidden},
 		{name: "publish delete module", method: http.MethodDelete, path: "/api/v1/modules/teamname/apache", token: "publish-token", want: http.StatusForbidden},
-		{name: "admin delete module protected", method: http.MethodDelete, path: "/api/v1/modules/teamname/apache", token: "admin-token", want: http.StatusConflict},
+		{name: "admin delete module", method: http.MethodDelete, path: "/api/v1/modules/teamname/apache", token: "admin-token", want: http.StatusOK},
 	}
 
 	for _, tt := range tests {
@@ -1486,11 +1529,11 @@ func TestManageActionsEnforceRoleBoundary(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected admin manage module delete final response 200, got %d", resp.StatusCode)
 	}
-	if !strings.Contains(string(adminBody), "module contains latest release teamname/apache 1.2.3 cannot be deleted") {
-		t.Fatalf("expected admin module delete to be blocked by latest release policy, got body:\n%s", string(adminBody))
+	if !strings.Contains(string(adminBody), "module deleted") {
+		t.Fatalf("expected admin module delete to succeed, got body:\n%s", string(adminBody))
 	}
-	if _, err := st.GetModule(ctx, "teamname", "apache"); err != nil {
-		t.Fatalf("protected module was removed or lookup failed: %v", err)
+	if _, err := st.GetModule(ctx, "teamname", "apache"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetModule() error = %v, want ErrNotFound", err)
 	}
 }
 
@@ -1581,11 +1624,11 @@ func TestManagePostRequiresCSRFToken(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected csrf-protected delete final response 200, got %d", resp.StatusCode)
 	}
-	if !strings.Contains(string(body), "module contains latest release teamname/apache 1.2.3 cannot be deleted") {
-		t.Fatalf("expected csrf-protected delete to reach latest release policy, got body:\n%s", string(body))
+	if !strings.Contains(string(body), "module deleted") {
+		t.Fatalf("expected csrf-protected delete to succeed, got body:\n%s", string(body))
 	}
-	if _, err := st.GetModule(ctx, "teamname", "apache"); err != nil {
-		t.Fatalf("protected module was removed or lookup failed: %v", err)
+	if _, err := st.GetModule(ctx, "teamname", "apache"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetModule() error = %v, want ErrNotFound", err)
 	}
 }
 

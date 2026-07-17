@@ -292,8 +292,7 @@ func (r *Router) deleteRelease(w http.ResponseWriter, req *http.Request, owner, 
 }
 
 func (r *Router) ensureModuleDeletable(ctx context.Context, owner, name string) error {
-	module, err := r.modules.GetModule(ctx, owner, name)
-	if err != nil {
+	if _, err := r.modules.GetModule(ctx, owner, name); err != nil {
 		return err
 	}
 
@@ -302,7 +301,13 @@ func (r *Router) ensureModuleDeletable(ctx context.Context, owner, name string) 
 		return err
 	}
 	for _, version := range versions {
-		if err := r.protectedReleaseDeleteError(ctx, module, version.Version); err != nil {
+		activeSince := time.Now().Add(-r.activeReleaseTTL)
+		active, err := r.modules.IsReleaseActive(ctx, owner, name, version.Version, activeSince)
+		if err != nil {
+			return err
+		}
+		if active {
+			err := protectedDeleteError{message: fmt.Sprintf("active release %s/%s %s cannot be deleted", owner, name, version.Version)}
 			return protectedDeleteError{message: "module contains " + err.Error()}
 		}
 	}
