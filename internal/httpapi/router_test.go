@@ -238,6 +238,113 @@ func TestManageTokenSessionWorksAcrossRouterInstances(t *testing.T) {
 	}
 }
 
+func TestManagePrincipalRefreshesAccessConfigFromStore(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	if err := st.ReplaceTeamConfigs(ctx, []auth.TeamConfig{
+		{
+			Team:          "teamname",
+			PublishTokens: []string{"session-token"},
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceTeamConfigs() error = %v", err)
+	}
+
+	staleAuthorizer, err := auth.NewAuthorizer([]auth.TeamConfig{
+		{
+			Team:        "platform-admin",
+			AdminTokens: []string{"session-token"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
+	}
+	router := &Router{
+		modules:             service.NewModuleService(st, testArtifactStorage{}, "modules", nil),
+		authorizer:          staleAuthorizer,
+		adminToken:          "runtime-admin-token",
+		manageSessions:      newManageSessionStore("shared-session-secret"),
+		refreshAccessConfig: true,
+	}
+	sessionID, err := router.manageSessions.Create("session-token", manageSessionTTL)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/manage", nil)
+	req.AddCookie(&http.Cookie{Name: manageTokenCookie, Value: sessionID})
+
+	principal, ok := router.managePrincipal(req)
+	if !ok {
+		t.Fatal("managePrincipal() denied refreshed publish token")
+	}
+	if principal.CanAdmin || principal.Team != "teamname" || !principal.CanPublish {
+		t.Fatalf("managePrincipal() used stale admin authorizer: %#v", principal)
+	}
+}
+
+func TestManageAccessPostRefreshesStaleAdminBeforeSaving(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	if err := st.ReplaceTeamConfigs(ctx, []auth.TeamConfig{
+		{
+			Team:          "teamname",
+			PublishTokens: []string{"session-token"},
+			PublishOwners: []string{"teamname"},
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceTeamConfigs() error = %v", err)
+	}
+	staleAuthorizer, err := auth.NewAuthorizer([]auth.TeamConfig{
+		{
+			Team:        "platform-admin",
+			AdminTokens: []string{"session-token"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
+	}
+	router := NewRouter(RouterConfig{
+		Modules:             service.NewModuleService(st, testArtifactStorage{}, "modules", nil),
+		Authorizer:          staleAuthorizer,
+		AdminToken:          "runtime-admin-token",
+		ManageSessionSecret: "shared-session-secret",
+		RefreshAccessConfig: true,
+	})
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+
+	jar := newCookieJar(t)
+	client := server.Client()
+	client.Jar = jar
+	postManageToken(t, client, server.URL, "session-token")
+	resp, err := client.PostForm(server.URL+"/manage/access", manageFormValues(t, client, server.URL, url.Values{
+		"action": {"save_team"},
+		"team":   {"carbon"},
+	}))
+	if err != nil {
+		t.Fatalf("POST /manage/access error = %v", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected refreshed non-admin session to get 403, got %d body:\n%s", resp.StatusCode, string(body))
+	}
+	configs, err := st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() error = %v", err)
+	}
+	if findAccessConfig(configs, "carbon") != nil {
+		t.Fatalf("stale admin authorizer created a new team: %#v", configs)
+	}
+}
+
 func TestIndexFilterHiddenRowsStayHidden(t *testing.T) {
 	t.Parallel()
 

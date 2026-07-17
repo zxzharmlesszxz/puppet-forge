@@ -19,6 +19,7 @@ const (
 	defaultActiveReleaseTTL = 30 * 24 * time.Hour
 	defaultModuleUploadMax  = 128 << 20
 	manageSessionTTL        = 8 * time.Hour
+	accessConfigRefreshTTL  = 2 * time.Second
 )
 
 type RouterOption func(*Router)
@@ -31,6 +32,7 @@ type RouterConfig struct {
 	WebAuth             *webauth.OIDCAuth
 	AdminToken          string
 	ManageSessionSecret string
+	RefreshAccessConfig bool
 	PublicModuleAccess  bool
 	ActiveReleaseTTL    time.Duration
 	SecurityHSTSEnabled bool
@@ -58,6 +60,9 @@ type Router struct {
 	publicBaseURL       string
 	authorizerMu        sync.RWMutex
 	authorizer          *auth.Authorizer
+	authorizerRefreshMu sync.Mutex
+	authorizerRefreshed time.Time
+	refreshAccessConfig bool
 	webAuth             *webauth.OIDCAuth
 	adminToken          string
 	manageSessions      *manageSessionStore
@@ -93,6 +98,7 @@ func NewRouter(config RouterConfig, opts ...RouterOption) http.Handler {
 		forgeProxy:          config.ForgeProxy,
 		publicBaseURL:       strings.TrimRight(config.PublicBaseURL, "/"),
 		authorizer:          config.Authorizer,
+		refreshAccessConfig: config.RefreshAccessConfig,
 		webAuth:             config.WebAuth,
 		adminToken:          config.AdminToken,
 		manageSessions:      newManageSessionStore(manageSessionSecret),
