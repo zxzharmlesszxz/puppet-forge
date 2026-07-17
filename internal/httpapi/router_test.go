@@ -173,7 +173,7 @@ func TestManageTokenLoginCanSwitchFromPublisherToAdmin(t *testing.T) {
 	}
 }
 
-func TestManageTokenLoginStoresOpaqueServerSideSession(t *testing.T) {
+func TestManageTokenLoginStoresOpaqueEncryptedSession(t *testing.T) {
 	t.Parallel()
 
 	st := newHTTPAPITestStore(t)
@@ -209,7 +209,44 @@ func TestManageTokenLoginStoresOpaqueServerSideSession(t *testing.T) {
 
 	body := getBody(t, client, server.URL+"/manage")
 	if !strings.Contains(body, "Team: bootstrap-admin") {
-		t.Fatalf("server-side manage session was not accepted:\n%s", body)
+		t.Fatalf("encrypted manage session was not accepted:\n%s", body)
+	}
+}
+
+func TestManageTokenSessionWorksAcrossRouterInstances(t *testing.T) {
+	t.Parallel()
+
+	st := newHTTPAPITestStore(t)
+	moduleSvcA := service.NewModuleService(st, testArtifactStorage{}, "modules", nil)
+	moduleSvcB := service.NewModuleService(st, testArtifactStorage{}, "modules", nil)
+	authorizer := newAdminAuthorizer(t)
+
+	serverA := httptest.NewServer(newTestRouter(moduleSvcA, nil, "http://example.test", authorizer, nil, "admin-token", false, defaultActiveReleaseTTL))
+	t.Cleanup(serverA.Close)
+	serverB := httptest.NewServer(newTestRouter(moduleSvcB, nil, "http://example.test", authorizer, nil, "admin-token", false, defaultActiveReleaseTTL))
+	t.Cleanup(serverB.Close)
+
+	jar := newCookieJar(t)
+	client := serverA.Client()
+	client.CheckRedirect = nil
+	client.Jar = jar
+
+	postManageToken(t, client, serverA.URL, "admin-token")
+	body := getBody(t, client, serverB.URL+"/manage")
+	if !strings.Contains(body, "Team: bootstrap-admin") {
+		t.Fatalf("manage token session was not accepted by another router instance:\n%s", body)
+	}
+}
+
+func TestIndexFilterHiddenRowsStayHidden(t *testing.T) {
+	t.Parallel()
+
+	var page bytes.Buffer
+	if err := indexPageTemplate.Execute(&page, indexPageData{}); err != nil {
+		t.Fatalf("indexPageTemplate.Execute() error = %v", err)
+	}
+	if !strings.Contains(page.String(), ".row[hidden]") {
+		t.Fatalf("index page does not force filtered rows hidden:\n%s", page.String())
 	}
 }
 
