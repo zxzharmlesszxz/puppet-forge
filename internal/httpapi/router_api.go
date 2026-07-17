@@ -436,6 +436,9 @@ func readPublishInput(w http.ResponseWriter, req *http.Request, maxBytes int64) 
 
 	file, header, err := req.FormFile("file")
 	if err != nil {
+		if errors.Is(err, http.ErrMissingFile) {
+			return domain.PublishModuleInput{}, errors.New("artifact file is required")
+		}
 		return domain.PublishModuleInput{}, fmt.Errorf("read file: %w", err)
 	}
 	if maxBytes > 0 && header.Size > maxBytes {
