@@ -115,6 +115,7 @@ func New(cfg config.Config) (*App, error) {
 		WebAuth:             oidcAuth,
 		AdminToken:          cfg.AdminToken,
 		ManageSessionSecret: manageSessionSecret(cfg),
+		RefreshAccessConfig: true,
 		PublicModuleAccess:  cfg.PublicModuleAccess,
 		ActiveReleaseTTL:    cfg.ActiveReleaseTTL,
 		SecurityHSTSEnabled: cfg.SecurityHSTSEnabled,

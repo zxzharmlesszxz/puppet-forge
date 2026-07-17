@@ -56,7 +56,8 @@ func (r *Router) manageLoginPage(w http.ResponseWriter, req *http.Request) {
 		token := strings.TrimSpace(req.FormValue("token"))
 		var principal auth.Principal
 		var ok bool
-		authorizer := r.currentAuthorizer()
+		r.refreshManageAuthorizer(req.Context())
+		authorizer := r.authorizerSnapshot()
 		if authorizer != nil {
 			principal, ok = authorizer.AuthenticateToken(token)
 		}
@@ -138,7 +139,8 @@ func clearManageTokenCookie(w http.ResponseWriter) {
 }
 
 func (r *Router) managePrincipal(req *http.Request) (auth.Principal, bool) {
-	authorizer := r.currentAuthorizer()
+	r.refreshManageAuthorizer(req.Context())
+	authorizer := r.authorizerSnapshot()
 	if authorizer == nil || !authorizer.Enabled() {
 		return auth.Principal{Team: "local", CanAdmin: true, CanRead: true, CanPublish: true}, true
 	}
