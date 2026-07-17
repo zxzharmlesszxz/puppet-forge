@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Access Config</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3f0ea;
+      --panel: #ffffff;
+      --ink: #1f2428;
+      --muted: #66717a;
+      --accent: #2f6f73;
+      --line: #d9e0e2;
+      --danger: #a33a32;
+      --ok: #2e7146;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    main {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 32px 20px 56px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 20px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 32px;
+      line-height: 1.15;
+    }
+    a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .link-button {
+      border: 0;
+      background: transparent;
+      padding: 0;
+      color: var(--accent);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+    }
+    .header-links {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .header-links > * + *::before {
+      content: "·";
+      color: var(--muted);
+      margin-right: 8px;
+    }
+    .header-links form {
+      margin: 0;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      margin-top: 18px;
+      box-shadow: 0 10px 30px rgba(31, 36, 40, 0.05);
+    }
+    h2 {
+      margin: 0 0 16px;
+      font-size: 20px;
+    }
+    h3 {
+      margin: 0 0 14px;
+      font-size: 16px;
+    }
+    label {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    input, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font: inherit;
+      background: white;
+    }
+    textarea {
+      min-height: 82px;
+      resize: vertical;
+    }
+    .json textarea {
+      min-height: 420px;
+      font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    button {
+      height: 42px;
+      padding: 0 18px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--accent);
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .header-links .link-button {
+      height: auto;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--accent);
+    }
+    .button-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-top: 14px;
+    }
+    .danger-button {
+      background: transparent;
+      border: 1px solid rgba(163, 58, 50, 0.35);
+      color: var(--danger);
+    }
+    .delete-team {
+      margin-top: 10px;
+    }
+    details {
+      margin-top: 18px;
+    }
+    summary {
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      margin: 0 0 14px;
+    }
+    .notice {
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 14px;
+    }
+    .notice.ok {
+      color: var(--ok);
+      background: rgba(46, 113, 70, 0.1);
+    }
+    .notice.error {
+      color: var(--danger);
+      background: rgba(163, 58, 50, 0.1);
+    }
+    summary.team-summary {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 4px 0;
+      list-style: none;
+    }
+    summary.team-summary::before {
+      content: "▶";
+      font-size: 12px;
+      color: var(--muted);
+      transition: transform 0.15s;
+    }
+    details[open] summary.team-summary::before {
+      content: "▼";
+    }
+    summary.team-summary::-webkit-details-marker {
+      display: none;
+    }
+    .team-name {
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .team-badges {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 20px;
+      background: rgba(47, 111, 115, 0.1);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.5;
+    }
+    @media (max-width: 720px) {
+      header, .button-row {
+        display: block;
+      }
+      .header-links {
+        margin-top: 10px;
+      }
+      header a, .header-links a {
+        display: inline-block;
+        margin-top: 10px;
+      }
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      .button-row button, .delete-team button {
+        width: 100%;
+      }
+      .danger-button {
+        margin-top: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Access Config</h1>
+      <div class="header-links">
+        <a href="/">Public modules</a>
+        <a href="/manage">Manage</a>
+        <a href="/manage/access">Access</a>
+        {{if .CanAdmin}}<a href="/manage/access/add">Add Team</a>{{end}}
+        <form method="post" action="/manage/logout">{{csrfInput $.CSRFToken}}<button class="link-button" type="submit">Sign out</button></form>
+      </div>
+    </header>
+    {{if .Message}}<div class="notice ok">{{.Message}}</div>{{end}}
+    {{if .Error}}<div class="notice error">{{.Error}}</div>{{end}}
+
+    {{if .CanAdmin}}
+    <section class="panel">
+      <details data-access-section="global-admins">
+        <summary class="team-summary"><span class="team-name">Global OIDC Admins</span></summary>
+        <form method="post" action="/manage/access">
+          {{csrfInput $.CSRFToken}}
+          <input type="hidden" name="action" value="save_global_admins">
+          <div class="grid" style="margin-top:16px">
+            <div>
+              <label for="global-admin-groups">OIDC admin groups</label>
+              <textarea id="global-admin-groups" name="oidc_admin_groups" placeholder="forge-admins">{{.AdminOIDCGroups}}</textarea>
+            </div>
+            <div>
+              <label for="global-admin-emails">OIDC admin emails</label>
+              <textarea id="global-admin-emails" name="oidc_admin_emails" placeholder="admin@example.com">{{.AdminOIDCEmails}}</textarea>
+            </div>
+            <div>
+              <label for="global-admin-subjects">OIDC admin subjects</label>
+              <textarea id="global-admin-subjects" name="oidc_admin_subjects">{{.AdminOIDCSubjects}}</textarea>
+            </div>
+          </div>
+          <div class="button-row">
+            <button type="submit">Save Global Admins</button>
+          </div>
+        </form>
+      </details>
+    </section>
+    {{end}}
+
+    {{range .Teams}}
+    <section class="panel">
+      <details data-access-section="team:{{.Team}}">
+        <summary class="team-summary">
+          <span class="team-name">{{.Team}}</span>
+          {{if .Badges}}<span class="team-badges">{{range .Badges}}<span class="badge">{{.}}</span>{{end}}</span>{{end}}
+        </summary>
+      <form method="post" action="/manage/access">
+        {{csrfInput $.CSRFToken}}
+        <input type="hidden" name="action" value="save_team">
+        <input type="hidden" name="original_team" value="{{.Team}}">
+        <div class="grid">
+          <div>
+            {{if $.CanAdmin}}
+            <label for="team-edit-{{.Team}}">Team</label>
+            <input id="team-edit-{{.Team}}" name="team" value="{{.Team}}">
+            {{else}}
+            <label for="team-readonly-{{.Team}}">Team</label>
+            <input id="team-readonly-{{.Team}}" name="team" value="{{.Team}}" readonly>
+            {{end}}
+          </div>
+          {{if $.CanAdmin}}
+          <div>
+            <label for="extra-spaces-{{.Team}}">Extra publish spaces</label>
+            <textarea id="extra-spaces-{{.Team}}" name="extra_publish_spaces">{{.ExtraPublishSpaces}}</textarea>
+          </div>
+          {{end}}
+          <div>
+            <label for="read-{{.Team}}">Read tokens</label>
+            <textarea id="read-{{.Team}}" name="read_tokens">{{.ReadTokens}}</textarea>
+          </div>
+          <div>
+            <label for="publish-{{.Team}}">Publish tokens</label>
+            <textarea id="publish-{{.Team}}" name="publish_tokens">{{.PublishTokens}}</textarea>
+          </div>
+          <div>
+            <label for="groups-{{.Team}}">OIDC publish groups</label>
+            <textarea id="groups-{{.Team}}" name="oidc_groups">{{.OIDCGroups}}</textarea>
+          </div>
+          <div>
+            <label for="team-admin-emails-{{.Team}}">OIDC team admins (emails)</label>
+            <textarea id="team-admin-emails-{{.Team}}" name="oidc_team_admin_emails">{{.OIDCTeamAdminEmails}}</textarea>
+          </div>
+          <div>
+            <label for="team-admin-groups-{{.Team}}">OIDC team admins (groups)</label>
+            <textarea id="team-admin-groups-{{.Team}}" name="oidc_team_admin_groups">{{.OIDCTeamAdminGroups}}</textarea>
+          </div>
+        </div>
+        <div class="button-row">
+          <button type="submit">Save Team</button>
+        </div>
+      </form>
+      {{if $.CanAdmin}}
+      <form class="delete-team" method="post" action="/manage/access">
+        {{csrfInput $.CSRFToken}}
+        <input type="hidden" name="action" value="delete_team">
+        <input type="hidden" name="team" value="{{.Team}}">
+        <button class="danger-button" type="submit">Delete Team</button>
+      </form>
+      {{end}}
+      </details>
+    </section>
+    {{end}}
+
+    {{if .CanAdmin}}
+    <details data-access-section="advanced-json">
+      <summary>Advanced JSON editor</summary>
+      <section class="panel json">
+        <p class="muted">JSON replace overwrites all access teams.</p>
+      <form method="post" action="/manage/access">
+        {{csrfInput $.CSRFToken}}
+        <input type="hidden" name="action" value="replace_json">
+        <label class="visually-hidden" for="access-config-json">Access config JSON</label>
+        <textarea id="access-config-json" name="config" spellcheck="false">{{.ConfigJSON}}</textarea>
+        <button type="submit">Save Access Config</button>
+      </form>
+      </section>
+    </details>
+    {{end}}
+  </main>
+  <script>
+    (() => {
+      const storageKey = "puppet-forge:manage-access:open-sections";
+      const sections = Array.from(document.querySelectorAll("details[data-access-section]"));
+
+      function readOpenSections() {
+        try {
+          const raw = window.localStorage.getItem(storageKey);
+          const values = JSON.parse(raw || "[]");
+          return Array.isArray(values) ? new Set(values) : new Set();
+        } catch {
+          return new Set();
+        }
+      }
+
+      function writeOpenSections() {
+        const open = sections
+          .filter((section) => section.open)
+          .map((section) => section.dataset.accessSection);
+        window.localStorage.setItem(storageKey, JSON.stringify(open));
+      }
+
+      const openSections = readOpenSections();
+      sections.forEach((section) => {
+        if (openSections.has(section.dataset.accessSection)) {
+          section.open = true;
+        }
+        section.addEventListener("toggle", writeOpenSections);
+      });
+      document.querySelectorAll("form").forEach((form) => {
+        form.addEventListener("submit", writeOpenSections);
+      });
+    })();
+  </script>
+</body>
+</html>

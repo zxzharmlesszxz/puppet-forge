@@ -1,0 +1,13 @@
+.git
+.idea
+.agents
+
+dist
+coverage.out
+coverage.txt
+*.test
+*.prof
+
+.env
+.env.*
+.DS_Store

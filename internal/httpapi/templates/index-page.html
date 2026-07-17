@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Puppet Forge</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #efe7d8;
+      --panel: #fffaf3;
+      --ink: #1f1a14;
+      --muted: #73695d;
+      --accent: #b14a2b;
+      --line: #dacdbb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      background:
+        radial-gradient(circle at top right, rgba(177, 74, 43, 0.12), transparent 28%),
+        linear-gradient(180deg, #fbf6ee 0%, var(--bg) 100%);
+      color: var(--ink);
+    }
+    main {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 48px 20px 72px;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .brand {
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .nav a {
+      color: var(--accent);
+      font-size: 15px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav a:hover {
+      text-decoration: underline;
+    }
+    .hero, .list {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 18px 50px rgba(64, 40, 10, 0.08);
+    }
+    .hero {
+      padding: 30px 32px;
+      margin-bottom: 24px;
+    }
+    .eyebrow {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 10px 0 12px;
+      font-size: 46px;
+      line-height: 1.05;
+    }
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.6;
+      max-width: 720px;
+    }
+    .toolbar {
+      margin-top: 24px;
+      display: grid;
+      gap: 12px;
+    }
+    .search {
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.75);
+      color: var(--ink);
+      font-size: 16px;
+      outline: none;
+    }
+    .search:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 4px rgba(177, 74, 43, 0.12);
+    }
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    .list {
+      padding: 10px 0;
+    }
+    .row {
+      display: block;
+      padding: 18px 26px;
+      text-decoration: none;
+      color: inherit;
+      border-top: 1px solid var(--line);
+    }
+    .row:first-child {
+      border-top: 0;
+    }
+    .row:hover {
+      background: rgba(177, 74, 43, 0.05);
+    }
+    .name {
+      font-size: 24px;
+      margin-bottom: 6px;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 15px;
+    }
+    .empty {
+      padding: 24px 26px;
+      color: var(--muted);
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <nav class="topbar" aria-label="Main navigation">
+      <a class="brand" href="/">Puppet Forge</a>
+      <div class="nav">
+        <!--suppress HtmlUnknownTarget -->
+        <a href="{{.AuthLink}}">{{.AuthLabel}}</a>
+      </div>
+    </nav>
+    <section class="hero">
+      <div class="eyebrow">Local Forge</div>
+      <h1>Published Modules</h1>
+      <p class="subtitle">Index of all modules currently stored in this service. Open any module to view its latest release and extracted README.</p>
+      <div class="toolbar">
+        <label class="visually-hidden" for="module-filter">Filter modules</label>
+        <input id="module-filter" class="search" type="search" placeholder="Filter by owner or module name" autocomplete="off">
+      </div>
+    </section>
+    <section class="list" id="module-list">
+      {{if .Modules}}
+        {{range .Modules}}
+        <!--suppress HtmlUnknownTarget -->
+        <a class="row" href="/modules/{{.Owner}}/{{.Name}}" data-module="{{.Owner}}/{{.Name}}">
+          <div class="name">{{.Owner}}/{{.Name}}</div>
+          <div class="meta">Latest version: {{if .LatestVersion}}{{.LatestVersion}}{{else}}n/a{{end}}</div>
+        </a>
+        {{end}}
+      {{else}}
+      <div class="empty">No modules have been published yet.</div>
+      {{end}}
+    </section>
+  </main>
+  <script>
+    const input = document.getElementById('module-filter');
+    const rows = Array.from(document.querySelectorAll('[data-module]'));
+    if (input) {
+      input.addEventListener('input', () => {
+        const needle = input.value.trim().toLowerCase();
+        rows.forEach((row) => {
+          const hay = row.dataset.module.toLowerCase();
+          row.hidden = needle !== '' && !hay.includes(needle);
+        });
+      });
+    }
+  </script>
+</body>
+</html>
