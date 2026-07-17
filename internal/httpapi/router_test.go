@@ -519,6 +519,9 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 	if strings.Contains(body, "/manage/modules/teamname/apache/versions/2.0.0/delete") {
 		t.Fatalf("manage page exposes delete for latest release:\n%s", body)
 	}
+	if !strings.Contains(body, "/manage/modules/teamname/apache/delete") {
+		t.Fatalf("manage page hides module delete action for admin:\n%s", body)
+	}
 	if !strings.Contains(body, "in use") {
 		t.Fatalf("manage page does not mark active release:\n%s", body)
 	}
@@ -533,6 +536,24 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 	}
 	if !strings.Contains(body, "/manage/modules/teamname/apache/versions/1.5.0/delete") {
 		t.Fatalf("manage page hides delete for inactive release:\n%s", body)
+	}
+	if !strings.Contains(body, `class="release-danger-button" type="submit">Delete</button>`) {
+		t.Fatalf("manage page does not render release delete as a highlighted danger button:\n%s", body)
+	}
+	for _, wantStyle := range []string{
+		`.release-version:hover`,
+		`.release-version:focus-within`,
+		`.release-version.is-latest:hover`,
+		`.release-version.is-active:hover`,
+		`.release-version:has(.release-danger-button:hover)`,
+		`.release-version:has(.release-danger-button:focus-visible)`,
+	} {
+		if !strings.Contains(body, wantStyle) {
+			t.Fatalf("manage page does not render release highlight style %q:\n%s", wantStyle, body)
+		}
+	}
+	if strings.Contains(body, `class="link-button danger" type="submit">delete</button>`) {
+		t.Fatalf("manage page renders legacy release delete link:\n%s", body)
 	}
 }
 
@@ -2704,6 +2725,123 @@ func TestManageModulesNavStaysInManage(t *testing.T) {
 	}
 	if strings.Contains(body, `href="/modules/teamname/apache"`) {
 		t.Fatalf("manage module row points to public module page:\n%s", body)
+	}
+}
+
+func TestManagePublishFormRequiresOnlySpaceInBrowser(t *testing.T) {
+	t.Parallel()
+
+	var rec bytes.Buffer
+	err := managePageTemplate.Execute(&rec, managePageData{
+		Principal: auth.Principal{CanAdmin: true, CanPublish: true},
+		CSRFToken: "csrf",
+	})
+	if err != nil {
+		t.Fatalf("managePageTemplate.Execute() error = %v", err)
+	}
+	body := rec.String()
+	if !strings.Contains(body, `<label for="publish-owner-input">Space</label>`) {
+		t.Fatalf("manage publish form does not label owner as space:\n%s", body)
+	}
+	for _, want := range []string{
+		`<input id="publish-owner-input" name="owner" placeholder="platform" required>`,
+		`placeholder="optional override, e.g. apache"`,
+		`placeholder="optional override, e.g. 1.2.3"`,
+		`placeholder="optional description override"`,
+		`placeholder="{&quot;source&quot;:&quot;manual&quot;}"`,
+		`<span class="field-pill">Required</span>`,
+		`Leave override fields empty to use values from the archive metadata.`,
+		`Defaults to the module name from metadata.json.`,
+		`Merged over metadata.json from the archive.`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("manage publish form missing expected helper %q:\n%s", want, body)
+		}
+	}
+	for _, forbidden := range []string{
+		`id="module-name-input" name="name" placeholder="module" required`,
+		`id="module-version-input" name="version" placeholder="1.2.3" required`,
+		`id="module-archive-input" name="file" type="file" accept=".gz,.tgz,.tar.gz" required`,
+		`id="module-description-input" name="description" placeholder="Optional override" required`,
+		`id="module-metadata-input" name="metadata" placeholder="{&#34;source&#34;:&#34;web&#34;}" required`,
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("manage publish form marks optional field as browser-required %q:\n%s", forbidden, body)
+		}
+	}
+}
+
+func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
+	t.Parallel()
+
+	module := domain.Module{Owner: "teamname", Name: "apache", LatestVersion: "2.0.0"}
+	rows := []manageModuleRow{{
+		Module: module,
+		Versions: []manageVersionRow{
+			{Version: "1.2.3", Active: true},
+			{Version: "2.0.0", Latest: true},
+		},
+		CanDelete: true,
+	}}
+	for _, principal := range []auth.Principal{
+		{CanAdmin: true},
+		{Team: "teamname", CanPublish: true, CanManageTeam: true, ManagedTeams: map[string]struct{}{"teamname": {}}},
+	} {
+		var rec bytes.Buffer
+		err := managePageTemplate.Execute(&rec, managePageData{
+			Principal: principal,
+			Modules:   rows,
+			CSRFToken: "csrf",
+		})
+		if err != nil {
+			t.Fatalf("managePageTemplate.Execute() error = %v", err)
+		}
+		body := rec.String()
+		if !strings.Contains(body, `/manage/modules/teamname/apache/delete`) {
+			t.Fatalf("manage page hides module delete action for %#v:\n%s", principal, body)
+		}
+		if !strings.Contains(body, `class="danger-button" type="submit">Delete module</button>`) {
+			t.Fatalf("manage page does not render module delete as a danger button for %#v:\n%s", principal, body)
+		}
+		for _, wantStyle := range []string{
+			`details[data-section-key]:hover`,
+			`details[data-section-key]:focus-within`,
+			`details[data-section-key]:has(.danger-button:hover)`,
+			`details[data-section-key]:has(.danger-button:focus-visible)`,
+		} {
+			if !strings.Contains(body, wantStyle) {
+				t.Fatalf("manage page does not render module block highlight style %q for %#v:\n%s", wantStyle, principal, body)
+			}
+		}
+		if strings.Contains(body, `class="delete-form"`) || strings.Contains(body, `>delete module</button>`) {
+			t.Fatalf("manage page renders legacy module delete control for %#v:\n%s", principal, body)
+		}
+		if strings.Contains(body, `/manage/modules/teamname/apache/versions/1.2.3/delete`) {
+			t.Fatalf("manage page exposes active release delete action for %#v:\n%s", principal, body)
+		}
+		if strings.Contains(body, `/manage/modules/teamname/apache/versions/2.0.0/delete`) {
+			t.Fatalf("manage page exposes latest release delete action for %#v:\n%s", principal, body)
+		}
+	}
+}
+
+func TestReadPublishInputReportsMissingArchive(t *testing.T) {
+	t.Parallel()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("owner", "teamname"); err != nil {
+		t.Fatalf("WriteField(owner) error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("multipart Close() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	_, err := readPublishInput(httptest.NewRecorder(), req, 0)
+	if err == nil || err.Error() != "artifact file is required" {
+		t.Fatalf("readPublishInput() error = %v, want artifact file is required", err)
 	}
 }
 

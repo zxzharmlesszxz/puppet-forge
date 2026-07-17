@@ -122,6 +122,43 @@
       font-size: 13px;
       font-weight: 700;
     }
+    .section-lead {
+      margin: -6px 0 18px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 7px;
+    }
+    .label-row label {
+      margin-bottom: 0;
+    }
+    .field-pill {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: rgba(47, 111, 115, 0.09);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .field-pill.optional {
+      background: rgba(102, 113, 122, 0.1);
+      color: var(--muted);
+    }
+    .field-hint {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
     input, select, textarea {
       width: 100%;
       border: 1px solid var(--line);
@@ -157,16 +194,39 @@
       border-radius: 6px;
       padding: 5px 8px;
       white-space: nowrap;
+      transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+    }
+    .release-version:hover,
+    .release-version:focus-within {
+      background: rgba(47, 111, 115, 0.055);
+      border-color: rgba(47, 111, 115, 0.28);
+      box-shadow: 0 4px 12px rgba(31, 36, 40, 0.06);
     }
     .release-version.is-latest {
       border-color: #2f6f95;
       background: #e6f3f9;
       color: #153f58;
     }
+    .release-version.is-latest:hover,
+    .release-version.is-latest:focus-within {
+      background: #d9edf7;
+      border-color: #2f6f95;
+    }
     .release-version.is-active {
       border-color: #6f5aa8;
       background: #eeeafd;
       color: #3d2d75;
+    }
+    .release-version.is-active:hover,
+    .release-version.is-active:focus-within {
+      background: #e4defa;
+      border-color: #6f5aa8;
+    }
+    .release-version:has(.release-danger-button:hover),
+    .release-version:has(.release-danger-button:focus-visible) {
+      background: rgba(163, 58, 50, 0.075);
+      border-color: var(--danger);
+      box-shadow: 0 5px 16px rgba(163, 58, 50, 0.2);
     }
     .usage-badge {
       color: currentColor;
@@ -175,6 +235,24 @@
     }
     details {
       margin-top: 14px;
+    }
+    details[data-section-key] {
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 6px 10px 10px;
+      transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+    }
+    details[data-section-key]:hover,
+    details[data-section-key]:focus-within {
+      background: rgba(47, 111, 115, 0.045);
+      border-color: rgba(47, 111, 115, 0.18);
+      box-shadow: 0 6px 18px rgba(31, 36, 40, 0.04);
+    }
+    details[data-section-key]:has(.danger-button:hover),
+    details[data-section-key]:has(.danger-button:focus-visible) {
+      background: rgba(163, 58, 50, 0.055);
+      border-color: var(--danger);
+      box-shadow: 0 8px 22px rgba(163, 58, 50, 0.18);
     }
     summary.catalog-item {
       cursor: pointer;
@@ -214,6 +292,44 @@
       font-size: 12px;
       font-weight: 700;
     }
+    .module-actions {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .module-actions form {
+      margin: 0;
+    }
+    .danger-button,
+    .release-danger-button {
+      border: 1px solid rgba(163, 58, 50, 0.45);
+      border-radius: 6px;
+      background: rgba(163, 58, 50, 0.06);
+      color: var(--danger);
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .danger-button {
+      min-height: 32px;
+      padding: 0 12px;
+      font-size: 13px;
+    }
+    .release-danger-button {
+      min-height: 24px;
+      padding: 0 8px;
+      font-size: 12px;
+    }
+    .danger-button:hover,
+    .danger-button:focus-visible,
+    .release-danger-button:hover,
+    .release-danger-button:focus-visible {
+      background: var(--danger);
+      border-color: var(--danger);
+      color: white;
+      outline: none;
+    }
     .catalog-filter {
       display: flex;
       gap: 8px;
@@ -238,9 +354,6 @@
       color: var(--muted);
       font-size: 20px;
       text-decoration: none;
-    }
-    .delete-form {
-      margin-top: 14px;
     }
     .danger {
       color: var(--danger);
@@ -294,16 +407,17 @@
     {{if .Principal.CanPublish}}
     <section class="panel">
       <h2>Upload or Update</h2>
+      <p class="section-lead">Choose the target space and upload a Puppet module archive. Leave override fields empty to use values from the archive metadata.</p>
       <form method="post" action="/manage/modules" enctype="multipart/form-data">
         {{csrfInput $.CSRFToken}}
         <div class="grid">
           <div>
             {{if .Principal.CanAdmin}}
-            <label for="publish-owner-input">Owner</label>
-            <input id="publish-owner-input" name="owner" placeholder="team">
+            <div class="label-row"><label for="publish-owner-input">Space</label><span class="field-pill">Required</span></div>
+            <input id="publish-owner-input" name="owner" placeholder="platform" required>
             {{else}}
-            <label for="publish-owner-select">Owner</label>
-            <select id="publish-owner-select" name="owner">
+            <div class="label-row"><label for="publish-owner-select">Space</label><span class="field-pill">Required</span></div>
+            <select id="publish-owner-select" name="owner" required>
               {{range .Owners}}
               <option value="{{.}}">{{.}}</option>
               {{end}}
@@ -311,24 +425,28 @@
             {{end}}
           </div>
           <div>
-            <label for="module-name-input">Name</label>
-            <input id="module-name-input" name="name" placeholder="module">
+            <div class="label-row"><label for="module-name-input">Name</label><span class="field-pill optional">Optional</span></div>
+            <input id="module-name-input" name="name" placeholder="optional override, e.g. apache">
+            <p class="field-hint">Defaults to the module name from metadata.json.</p>
           </div>
           <div>
-            <label for="module-version-input">Version</label>
-            <input id="module-version-input" name="version" placeholder="1.2.3">
+            <div class="label-row"><label for="module-version-input">Version</label><span class="field-pill optional">Optional</span></div>
+            <input id="module-version-input" name="version" placeholder="optional override, e.g. 1.2.3">
+            <p class="field-hint">Defaults to the archive version.</p>
           </div>
           <div>
-            <label for="module-archive-input">Archive</label>
-            <input id="module-archive-input" name="file" type="file" accept=".gz,.tgz,.tar.gz" required>
+            <div class="label-row"><label for="module-archive-input">Archive</label><span class="field-pill optional">Tarball</span></div>
+            <input id="module-archive-input" name="file" type="file" accept=".gz,.tgz,.tar.gz">
+            <p class="field-hint">Use a Puppet module .tar.gz archive.</p>
           </div>
           <div class="field-full">
-            <label for="module-description-input">Description</label>
-            <input id="module-description-input" name="description" placeholder="Optional override">
+            <div class="label-row"><label for="module-description-input">Description</label><span class="field-pill optional">Optional</span></div>
+            <input id="module-description-input" name="description" placeholder="optional description override">
           </div>
           <div class="field-full">
-            <label for="module-metadata-input">Metadata JSON</label>
-            <textarea id="module-metadata-input" name="metadata" placeholder="{&quot;source&quot;:&quot;web&quot;}"></textarea>
+            <div class="label-row"><label for="module-metadata-input">Metadata JSON</label><span class="field-pill optional">Optional</span></div>
+            <textarea id="module-metadata-input" name="metadata" placeholder="{&quot;source&quot;:&quot;manual&quot;}"></textarea>
+            <p class="field-hint">Merged over metadata.json from the archive.</p>
           </div>
         </div>
         <button class="primary" type="submit">Publish</button>
@@ -374,6 +492,14 @@
           <span class="badge">
             {{len .Versions}} version{{if ne (len .Versions) 1}}s{{end}}
           </span>
+          {{if .CanDelete}}
+          <span class="module-actions">
+            <form method="post" action="/manage/modules/{{$owner}}/{{$name}}/delete">
+              {{csrfInput $.CSRFToken}}
+              <button class="danger-button" type="submit">Delete module</button>
+            </form>
+          </span>
+          {{end}}
         </summary>
         <div class="release-list">
           {{range .Versions}}
@@ -388,18 +514,12 @@
             {{if and (not .Latest) (not .Active) (or $.Principal.CanAdmin $.Principal.CanManageTeam)}}
             <form method="post" action="/manage/modules/{{$row.Module.Owner}}/{{$row.Module.Name}}/versions/{{.Version}}/delete">
               {{csrfInput $.CSRFToken}}
-              <button class="link-button danger" type="submit">delete</button>
+              <button class="release-danger-button" type="submit">Delete</button>
             </form>
             {{end}}
           </div>
           {{end}}
         </div>
-        {{if .CanDelete}}
-        <form class="delete-form" method="post" action="/manage/modules/{{$owner}}/{{$name}}/delete">
-          {{csrfInput $.CSRFToken}}
-          <button class="link-button danger" type="submit">delete module</button>
-        </form>
-        {{end}}
       </details>
       {{end}}
       {{else}}
@@ -429,14 +549,17 @@
         window.localStorage.setItem(storageKey, JSON.stringify(open));
       };
       const openSections = loadOpenSections();
-      sections.forEach((section) => {
-        if (openSections.has(section.dataset.sectionKey)) {
-          section.open = true;
-        }
-        section.addEventListener("toggle", saveOpenSections);
-      });
-      document.addEventListener("submit", saveOpenSections);
-    })();
+              sections.forEach((section) => {
+                if (openSections.has(section.dataset.sectionKey)) {
+                  section.open = true;
+                }
+                section.addEventListener("toggle", saveOpenSections);
+              });
+              document.querySelectorAll(".module-actions").forEach((action) => {
+                action.addEventListener("click", (event) => event.stopPropagation());
+              });
+              document.addEventListener("submit", saveOpenSections);
+            })();
   </script>
 </body>
 </html>

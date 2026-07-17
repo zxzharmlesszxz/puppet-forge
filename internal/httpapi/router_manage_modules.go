@@ -71,13 +71,9 @@ func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 		key := struct{ owner, name string }{module.Owner, module.Name}
 		versions := releasesByModule[key]
 		versionRows := make([]manageVersionRow, 0, len(versions))
-		hasProtectedRelease := false
 		for _, version := range versions {
 			_, active := activeReleaseSet[struct{ owner, name, version string }{module.Owner, module.Name, version.Version}]
 			latest := version.Version == module.LatestVersion
-			if latest || active {
-				hasProtectedRelease = true
-			}
 			versionRows = append(versionRows, manageVersionRow{
 				Version: version.Version,
 				Active:  active,
@@ -87,7 +83,7 @@ func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 		rows = append(rows, manageModuleRow{
 			Module:    module,
 			Versions:  versionRows,
-			CanDelete: canDeleteInSpace(principal, module.Owner) && !hasProtectedRelease,
+			CanDelete: canDeleteInSpace(principal, module.Owner),
 		})
 	}
 
