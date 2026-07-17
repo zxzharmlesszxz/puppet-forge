@@ -558,6 +558,17 @@ Example:
 helm upgrade --install puppet-forge ./deploy/puppet-forge
 ```
 
+By default the chart uses a fixed `replicaCount`. To let Kubernetes manage the replica count, enable HPA:
+
+```bash
+helm upgrade --install puppet-forge ./deploy/puppet-forge \
+  --set autoscaling.enabled=true \
+  --set autoscaling.minReplicas=2 \
+  --set autoscaling.maxReplicas=6
+```
+
+When `autoscaling.enabled=true`, the Deployment does not render `spec.replicas`; the `HorizontalPodAutoscaler` owns it. Do not enable autoscaling with a `sqlite://` `DATABASE_DSN`; use PostgreSQL and a shared `MANAGE_SESSION_SECRET` for multi-replica deployments.
+
 The chart supports Prometheus Operator resources, disabled by default:
 
 - `serviceMonitor.enabled=true` creates a `ServiceMonitor`;

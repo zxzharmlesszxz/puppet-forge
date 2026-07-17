@@ -1,5 +1,6 @@
 replicaCount: 2
-# If secret.stringData.DATABASE_DSN uses sqlite://, this must be set to 1.
+# Used only when autoscaling.enabled=false.
+# If secret.stringData.DATABASE_DSN uses sqlite://, keep autoscaling disabled and replicaCount=1.
 
 nameOverride: ""
 fullnameOverride: ""
@@ -51,6 +52,13 @@ resources:
     cpu: 500m
     memory: 512Mi
 
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: ""
+
 persistence:
   enabled: false
   accessModes:
@@ -96,6 +104,7 @@ secret:
   stringData:
     DATABASE_DSN: postgres://forge:change-me@postgres:5432/forge?sslmode=disable
     ADMIN_TOKEN: ""
+    MANAGE_SESSION_SECRET: ""
     ARTIFACT_ACCESS_KEY_ID: ""
     ARTIFACT_SECRET_ACCESS_KEY: ""
     OIDC_CLIENT_ID: ""
