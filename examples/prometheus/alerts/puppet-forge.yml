@@ -1,0 +1,230 @@
+groups:
+  - name: puppet-forge.recording
+    interval: 30s
+    rules:
+      - record: job_route:puppet_forge_http_requests:rate5m
+        expr: sum by (job, route) (rate(puppet_forge_http_requests_total[5m]))
+
+      - record: job_route_status:puppet_forge_http_requests:rate5m
+        expr: sum by (job, route, status) (rate(puppet_forge_http_requests_total[5m]))
+
+      - record: job_route:puppet_forge_http_panics:rate5m
+        expr: sum by (job, route) (rate(puppet_forge_http_panics_total[5m]))
+
+      - record: job_route:puppet_forge_http_error_ratio5m
+        expr: |
+          sum by (job, route) (
+            rate(puppet_forge_http_requests_total{status=~"5..",route!~"/metrics|/healthz|/readyz"}[5m])
+          )
+          /
+          clamp_min(
+            sum by (job, route) (
+              rate(puppet_forge_http_requests_total{route!~"/metrics|/healthz|/readyz"}[5m])
+            ),
+            0.001
+          )
+
+      - record: job_route:puppet_forge_http_latency_p95_seconds5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (job, route, le) (
+              rate(puppet_forge_http_request_duration_seconds_bucket{route!~"/metrics|/healthz|/readyz"}[5m])
+            )
+          )
+
+      - record: job:puppet_forge_indexed_modules
+        expr: count by (job) (puppet_forge_module_info)
+
+      - record: job:puppet_forge_publish_errors:rate5m
+        expr: sum by (job) (rate(puppet_forge_publish_total{result="error"}[5m]))
+
+      - record: job:puppet_forge_delete_errors:rate5m
+        expr: sum by (job) (rate(puppet_forge_delete_total{result="error"}[5m]))
+
+      - record: job:puppet_forge_release_usage_mark_errors:rate5m
+        expr: sum by (job) (rate(puppet_forge_release_usage_mark_total{result="error"}[5m]))
+
+      - record: job_trigger:puppet_forge_upstream_sync_errors:rate5m
+        expr: sum by (job, trigger) (rate(puppet_forge_upstream_sync_total{result="error"}[5m]))
+
+      - record: job:puppet_forge_upstream_refresh_cycle_errors:rate5m
+        expr: sum by (job) (rate(puppet_forge_upstream_refresh_cycles_total{result="error"}[5m]))
+
+      - record: job_kind:puppet_forge_upstream_cache_requests:rate5m
+        expr: sum by (job, kind) (rate(puppet_forge_upstream_cache_requests_total{result=~"hit|miss|stale"}[5m]))
+
+      - record: job_kind:puppet_forge_upstream_cache_hit_ratio5m
+        expr: |
+          sum by (job, kind) (
+            rate(puppet_forge_upstream_cache_requests_total{result="hit"}[5m])
+          )
+          /
+          clamp_min(
+            sum by (job, kind) (
+              rate(puppet_forge_upstream_cache_requests_total{result=~"hit|miss|stale"}[5m])
+            ),
+            0.001
+          )
+
+  - name: puppet-forge.alerts
+    interval: 30s
+    rules:
+      - alert: PuppetForgeHigh5xxErrorRatio
+        expr: |
+          job_route:puppet_forge_http_error_ratio5m > 0.05
+          and
+          job_route:puppet_forge_http_requests:rate5m > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge has elevated 5xx responses on {{ $labels.job }} {{ $labels.route }}"
+          description: "5xx ratio has been above 5% for at least 10 minutes on route {{ $labels.route }}."
+
+      - alert: PuppetForgeHTTPPanics
+        expr: job_route:puppet_forge_http_panics:rate5m > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge recovered HTTP panics on {{ $labels.job }} {{ $labels.route }}"
+          description: "HTTP handlers have recovered from panics for at least 5 minutes on route {{ $labels.route }}."
+
+      - alert: PuppetForgeHighP95Latency
+        expr: |
+          job_route:puppet_forge_http_latency_p95_seconds5m > 2
+          and
+          job_route:puppet_forge_http_requests:rate5m > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge latency is high on {{ $labels.job }} {{ $labels.route }}"
+          description: "P95 latency has been above 2s for at least 15 minutes on route {{ $labels.route }}."
+
+      - alert: PuppetForgeTargetDown
+        expr: up{job=~".*puppet-forge.*"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Puppet Forge target is down for {{ $labels.job }}"
+          description: "Prometheus has not been able to scrape {{ $labels.instance }} for at least 5 minutes."
+
+      - alert: PuppetForgePublishErrors
+        expr: job:puppet_forge_publish_errors:rate5m > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge publish errors on {{ $labels.job }}"
+          description: "Module publish attempts have been failing for at least 10 minutes."
+
+      - alert: PuppetForgeDeleteErrors
+        expr: job:puppet_forge_delete_errors:rate5m > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge delete errors on {{ $labels.job }}"
+          description: "Module or release delete attempts have been failing for at least 10 minutes."
+
+      - alert: PuppetForgeReleaseUsageMarkErrors
+        expr: job:puppet_forge_release_usage_mark_errors:rate5m > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge release usage tracking errors on {{ $labels.job }}"
+          description: "Release usage marks have been failing for at least 10 minutes, so active release protection may become stale."
+
+      - alert: PuppetForgeUpstreamSingleSyncErrors
+        expr: job_trigger:puppet_forge_upstream_sync_errors:rate5m{trigger="single"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge upstream on-demand sync is failing on {{ $labels.job }}"
+          description: "On-demand upstream module sync attempts have been failing for at least 10 minutes."
+
+      - alert: PuppetForgeUpstreamRefreshErrors
+        expr: job:puppet_forge_upstream_refresh_cycle_errors:rate5m > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge upstream refresh is failing on {{ $labels.job }}"
+          description: "Upstream refresh cycles have produced errors for at least 15 minutes."
+
+      - alert: PuppetForgeUpstreamRefreshPartialFailure
+        expr: puppet_forge_upstream_refresh_modules{result="error"} > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge upstream refresh is partially failing on {{ $labels.job }}"
+          description: "The last upstream refresh cycle reported one or more per-module errors."
+
+      - alert: PuppetForgeNoSuccessfulUpstreamRefresh
+        expr: |
+          time() - puppet_forge_upstream_refresh_last_success_timestamp_seconds > 86400
+          and
+          puppet_forge_upstream_refresh_modules{result="attempted"} > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge has no successful upstream refresh on {{ $labels.job }}"
+          description: "No fully successful upstream refresh cycle has been recorded for more than 24 hours."
+
+      - alert: PuppetForgeLowUpstreamCacheHitRatio
+        expr: |
+          job_kind:puppet_forge_upstream_cache_hit_ratio5m{kind="json"} < 0.30
+          and
+          job_kind:puppet_forge_upstream_cache_requests:rate5m{kind="json"} > 0.1
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge upstream JSON cache hit ratio is low on {{ $labels.job }}"
+          description: "The upstream JSON cache hit ratio has been below 30% for at least 30 minutes."
+
+      - alert: PuppetForgeNoIndexedModules
+        expr: |
+          up{job=~".*puppet-forge.*"} == 1
+          unless on (job)
+          job:puppet_forge_indexed_modules > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge has no indexed modules on {{ $labels.job }}"
+          description: "The service is scrapeable, but no indexed modules have been exported for at least 30 minutes."
+
+      - alert: PuppetForgeHighInFlightRequests
+        expr: puppet_forge_http_in_flight_requests > 50
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge has many in-flight requests on {{ $labels.job }}"
+          description: "More than 50 HTTP requests have been in flight for at least 15 minutes."
+
+      - alert: PuppetForgeScrapeNearTimeout
+        expr: scrape_duration_seconds{job=~".*puppet-forge.*"} / scrape_timeout_seconds{job=~".*puppet-forge.*"} > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge scrape is near timeout for {{ $labels.job }}"
+          description: "Prometheus scrape duration has used more than 80% of the configured scrape timeout for at least 10 minutes."
+
+      - alert: PuppetForgeFileDescriptorsNearLimit
+        expr: process_open_fds{job=~".*puppet-forge.*"} / process_max_fds{job=~".*puppet-forge.*"} > 0.8
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge file descriptors are near the limit on {{ $labels.job }}"
+          description: "Open file descriptor usage has been above 80% of the process limit for at least 15 minutes."

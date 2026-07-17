@@ -1,0 +1,208 @@
+---
+
+name: Checks
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        type: string
+        default: "1.26.5"
+      release-platforms:
+        type: string
+        default: "linux/amd64 linux/arm64 darwin/amd64 darwin/arm64"
+      run-build:
+        type: boolean
+        default: false
+      check-compose:
+        type: boolean
+        default: false
+      upload-release-archives:
+        type: boolean
+        default: false
+      upload-helm-chart:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  go-check:
+    name: Go Check
+    runs-on: ubuntu-24.04
+    container:
+      image: golang:${{ inputs.go-version }}-alpine
+
+    steps:
+      - name: Prepare Alpine
+        shell: sh
+        run: apk add --no-cache bash build-base ca-certificates git make tar
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Download Go Modules
+        run: make mod-download
+
+      - name: Check Formatting
+        run: make fmt-check
+
+      - name: Vet
+        run: make vet
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+
+      - name: Coverage Check
+        run: make coverage-check
+
+  build:
+    name: Build Binary
+    if: inputs.run-build
+    runs-on: ubuntu-24.04
+    container:
+      image: golang:${{ inputs.go-version }}-alpine
+    needs:
+      - go-check
+
+    steps:
+      - name: Prepare Alpine
+        shell: sh
+        run: apk add --no-cache bash ca-certificates git make
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Build
+        run: make build
+
+      - name: Release Smoke
+        run: make release-smoke PLATFORMS="${{ inputs.release-platforms }}"
+
+      - name: Upload Release Archives
+        if: inputs.upload-release-archives
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-archives
+          path: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          if-no-files-found: error
+
+  postgres-parity:
+    name: PostgreSQL Parity
+    runs-on: ubuntu-24.04
+    container:
+      image: golang:${{ inputs.go-version }}-alpine
+    needs:
+      - go-check
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: forge
+          POSTGRES_USER: forge
+          POSTGRES_PASSWORD: forge
+        options: >-
+          --health-cmd "pg_isready -U forge -d forge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Prepare Alpine
+        shell: sh
+        run: apk add --no-cache bash build-base ca-certificates git make
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Run PostgreSQL Parity Tests
+        env:
+          PUPPET_FORGE_TEST_POSTGRES_DSN: postgres://forge:forge@postgres:5432/forge?sslmode=disable
+        run: make test-postgres
+
+  docker-check:
+    name: Docker Check
+    runs-on: ubuntu-24.04
+    needs:
+      - go-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Docker Compose Config
+        if: inputs.check-compose
+        run: make compose-config
+
+      - name: Docker Build
+        run: make docker-build
+
+  helm-check:
+    name: Helm Check
+    runs-on: ubuntu-24.04
+    needs:
+      - go-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+
+      - name: Helm Lint
+        run: make helm-lint
+
+      - name: Helm Package
+        run: make helm-package
+
+      - name: Upload Helm Chart
+        if: inputs.upload-helm-chart
+        uses: actions/upload-artifact@v7
+        with:
+          name: helm-chart
+          path: dist/charts/*.tgz
+          if-no-files-found: error
+
+  race:
+    name: Race Tests
+    runs-on: ubuntu-24.04
+    container:
+      image: golang:${{ inputs.go-version }}-alpine
+    needs:
+      - go-check
+
+    steps:
+      - name: Prepare Alpine
+        shell: sh
+        run: apk add --no-cache bash build-base ca-certificates git make
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Run Race Tests
+        run: make test-race

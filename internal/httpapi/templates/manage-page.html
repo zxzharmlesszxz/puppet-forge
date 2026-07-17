@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manage Modules</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3f0ea;
+      --panel: #ffffff;
+      --ink: #1f2428;
+      --muted: #66717a;
+      --accent: #2f6f73;
+      --line: #d9e0e2;
+      --danger: #a33a32;
+      --ok: #2e7146;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    main {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 32px 20px 56px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 20px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 32px;
+      line-height: 1.15;
+    }
+    h2 {
+      margin: 0 0 16px;
+      font-size: 20px;
+    }
+    .meta {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .header-links {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .header-links > * + *::before {
+      content: "·";
+      color: var(--muted);
+      margin-right: 8px;
+    }
+    .header-links form {
+      margin: 0;
+    }
+    a, .link-button {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 700;
+    }
+    .link-button {
+      border: 0;
+      background: transparent;
+      padding: 0;
+      cursor: pointer;
+      font: inherit;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      margin-top: 18px;
+      box-shadow: 0 10px 30px rgba(31, 36, 40, 0.05);
+    }
+    .notice {
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 14px;
+    }
+    .notice.ok {
+      color: var(--ok);
+      background: rgba(46, 113, 70, 0.1);
+    }
+    .notice.error {
+      color: var(--danger);
+      background: rgba(163, 58, 50, 0.1);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .field-full {
+      grid-column: 1 / -1;
+    }
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    label {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font: inherit;
+      background: white;
+    }
+    textarea {
+      min-height: 72px;
+      resize: vertical;
+    }
+    .primary {
+      height: 42px;
+      padding: 0 18px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--accent);
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .release-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .release-version {
+      display: inline-flex;
+      gap: 7px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 5px 8px;
+      white-space: nowrap;
+    }
+    .release-version.is-latest {
+      border-color: #2f6f95;
+      background: #e6f3f9;
+      color: #153f58;
+    }
+    .release-version.is-active {
+      border-color: #6f5aa8;
+      background: #eeeafd;
+      color: #3d2d75;
+    }
+    .usage-badge {
+      color: currentColor;
+      font-size: 12px;
+      opacity: 0.72;
+    }
+    details {
+      margin-top: 14px;
+    }
+    summary.catalog-item {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 6px 0;
+      list-style: none;
+    }
+    summary.catalog-item::before {
+      content: "▶";
+      font-size: 12px;
+      color: var(--muted);
+      transition: transform 0.15s;
+    }
+    details[open] summary.catalog-item::before {
+      content: "▼";
+    }
+    summary.catalog-item::-webkit-details-marker {
+      display: none;
+    }
+    .item-title {
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .item-subtitle {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 20px;
+      background: rgba(47, 111, 115, 0.1);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .catalog-filter {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .catalog-filter input {
+      flex: 1;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font: inherit;
+      background: white;
+    }
+    .filter-clear {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      border-radius: 6px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 20px;
+      text-decoration: none;
+    }
+    .delete-form {
+      margin-top: 14px;
+    }
+    .danger {
+      color: var(--danger);
+    }
+    .empty {
+      color: var(--muted);
+      padding: 16px 0 0;
+    }
+    @media (max-width: 720px) {
+      header, .header-links {
+        display: block;
+      }
+      .header-links {
+        margin-top: 12px;
+      }
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Manage Modules</h1>
+        <div class="meta">
+          Team: {{.Principal.Team}}
+          {{if .Principal.CanAdmin}}
+          · admin
+          {{else}}
+          · spaces:
+          {{range $i, $owner := .Owners}}
+          {{if $i}}, {{end}}{{$owner}}
+          {{end}}
+          {{end}}
+        </div>
+      </div>
+      <div class="header-links">
+        <a href="/">Public modules</a>
+        <a href="/manage">Manage</a>
+        {{if or .Principal.CanAdmin .Principal.CanManageTeam}}<a href="/manage/access">Access</a>{{end}}
+        {{if .Principal.CanAdmin}}<a href="/manage/access/add">Add team</a>{{end}}
+        <form method="post" action="/manage/logout">{{csrfInput $.CSRFToken}}<button class="link-button" type="submit">Sign out</button></form>
+      </div>
+    </header>
+
+    {{if .Message}}<div class="notice ok">{{.Message}}</div>{{end}}
+    {{if .Error}}<div class="notice error">{{.Error}}</div>{{end}}
+
+    {{if .Principal.CanPublish}}
+    <section class="panel">
+      <h2>Upload or Update</h2>
+      <form method="post" action="/manage/modules" enctype="multipart/form-data">
+        {{csrfInput $.CSRFToken}}
+        <div class="grid">
+          <div>
+            {{if .Principal.CanAdmin}}
+            <label for="publish-owner-input">Owner</label>
+            <input id="publish-owner-input" name="owner" placeholder="team">
+            {{else}}
+            <label for="publish-owner-select">Owner</label>
+            <select id="publish-owner-select" name="owner">
+              {{range .Owners}}
+              <option value="{{.}}">{{.}}</option>
+              {{end}}
+            </select>
+            {{end}}
+          </div>
+          <div>
+            <label for="module-name-input">Name</label>
+            <input id="module-name-input" name="name" placeholder="module">
+          </div>
+          <div>
+            <label for="module-version-input">Version</label>
+            <input id="module-version-input" name="version" placeholder="1.2.3">
+          </div>
+          <div>
+            <label for="module-archive-input">Archive</label>
+            <input id="module-archive-input" name="file" type="file" accept=".gz,.tgz,.tar.gz" required>
+          </div>
+          <div class="field-full">
+            <label for="module-description-input">Description</label>
+            <input id="module-description-input" name="description" placeholder="Optional override">
+          </div>
+          <div class="field-full">
+            <label for="module-metadata-input">Metadata JSON</label>
+            <textarea id="module-metadata-input" name="metadata" placeholder="{&quot;source&quot;:&quot;web&quot;}"></textarea>
+          </div>
+        </div>
+        <button class="primary" type="submit">Publish</button>
+      </form>
+    </section>
+    {{end}}
+
+    {{if .Principal.CanAdmin}}
+    <section class="panel">
+      <h2>Add Upstream Module</h2>
+      <form method="post" action="/manage/upstream">
+        {{csrfInput $.CSRFToken}}
+        <div class="grid">
+          <div class="field-full">
+            <label for="upstream-input">Module</label>
+            <input id="upstream-input" name="module" placeholder="puppetlabs/apache or puppetlabs-apache" required>
+          </div>
+        </div>
+        <button class="primary" type="submit">Add Upstream Module</button>
+      </form>
+    </section>
+    {{end}}
+
+    <section class="panel">
+      <h2>Owned Modules</h2>
+      <form class="catalog-filter" method="get" action="/manage">
+        <label class="visually-hidden" for="catalog-query">Filter modules</label>
+        <input id="catalog-query" name="q" placeholder="Filter by owner/name…" value="{{.Query}}">
+        {{if .Query}}<a class="filter-clear" href="/manage">×</a>{{end}}
+      </form>
+      {{if .Modules}}
+      {{range .Modules}}
+      {{$row := .}}
+      {{$owner := .Module.Owner}}
+      {{$name := .Module.Name}}
+      {{$latest := .Module.LatestVersion}}
+      <details id="item-{{$owner}}-{{$name}}" data-section-key="{{$owner}}/{{$name}}">
+        <summary class="catalog-item">
+          <span class="item-title">{{$owner}}/{{$name}}</span>
+          <span class="item-subtitle">
+            {{if $latest}}{{$latest}}{{else}}none{{end}}
+          </span>
+          <span class="badge">
+            {{len .Versions}} version{{if ne (len .Versions) 1}}s{{end}}
+          </span>
+        </summary>
+        <div class="release-list">
+          {{range .Versions}}
+          <div class="release-version{{if .Latest}} is-latest{{else if .Active}} is-active{{end}}">
+            {{.Version}}
+            {{if .Latest}}
+            <span class="usage-badge">latest</span>
+            {{end}}
+            {{if .Active}}
+            <span class="usage-badge">in use</span>
+            {{end}}
+            {{if and (not .Latest) (not .Active) (or $.Principal.CanAdmin $.Principal.CanManageTeam)}}
+            <form method="post" action="/manage/modules/{{$row.Module.Owner}}/{{$row.Module.Name}}/versions/{{.Version}}/delete">
+              {{csrfInput $.CSRFToken}}
+              <button class="link-button danger" type="submit">delete</button>
+            </form>
+            {{end}}
+          </div>
+          {{end}}
+        </div>
+        {{if .CanDelete}}
+        <form class="delete-form" method="post" action="/manage/modules/{{$owner}}/{{$name}}/delete">
+          {{csrfInput $.CSRFToken}}
+          <button class="link-button danger" type="submit">delete module</button>
+        </form>
+        {{end}}
+      </details>
+      {{end}}
+      {{else}}
+      <div class="empty">No modules in this scope.</div>
+      {{end}}
+    </section>
+  </main>
+  <script>
+    (() => {
+      const storageKey = "puppet-forge:manage:open-sections";
+      const sections = Array.from(document.querySelectorAll("details[data-section-key]"));
+      if (!sections.length) {
+        return;
+      }
+      const loadOpenSections = () => {
+        try {
+          const raw = window.localStorage.getItem(storageKey);
+          return raw ? new Set(JSON.parse(raw)) : new Set();
+        } catch {
+          return new Set();
+        }
+      };
+      const saveOpenSections = () => {
+        const open = sections
+          .filter((section) => section.open)
+          .map((section) => section.dataset.sectionKey);
+        window.localStorage.setItem(storageKey, JSON.stringify(open));
+      };
+      const openSections = loadOpenSections();
+      sections.forEach((section) => {
+        if (openSections.has(section.dataset.sectionKey)) {
+          section.open = true;
+        }
+        section.addEventListener("toggle", saveOpenSections);
+      });
+      document.addEventListener("submit", saveOpenSections);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+.idea/
+.vscode/
+.DS_Store
+.cache/
+tmp/
+bin/
+dist/
+.env
+coverage.out
+coverage.txt
+
+# Build outputs
+/puppet-forge
+*.test
+*.out
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go workspace file
+go.work
+
+# Stakpak session files
+.stakpak/session*
