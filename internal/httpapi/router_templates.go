@@ -59,6 +59,37 @@ type manageAccessAddTeamData struct {
 	Error     string
 }
 
+type manageTeamsData struct {
+	Principal auth.Principal
+	Teams     []manageTeamSummary
+	Message   string
+	Error     string
+	CSRFToken string
+}
+
+type manageTeamData struct {
+	Principal     auth.Principal
+	Team          accessTeamFormRow
+	Spaces        []string
+	PublishSpaces []string
+	Modules       []manageModuleRow
+	Message       string
+	Error         string
+	CSRFToken     string
+	Query         string
+}
+
+type manageTeamSummary struct {
+	Team            string
+	Spaces          []string
+	ModuleCount     int
+	ReadTokens      int
+	PublishTokens   int
+	PublishGroups   int
+	TeamAdminUsers  int
+	TeamAdminGroups int
+}
+
 type accessTeamFormRow struct {
 	Team                string
 	ReadTokens          string
@@ -106,6 +137,10 @@ var managePageTemplate = mustParseCSRFTemplate("manage-page.html")
 var manageAccessTemplate = mustParseCSRFTemplate("manage-access.html")
 
 var manageAccessAddTeamTemplate = mustParseCSRFTemplate("manage-access-add-team.html")
+
+var manageTeamsTemplate = mustParseCSRFTemplate("manage-teams.html")
+
+var manageTeamTemplate = mustParseCSRFTemplate("manage-team.html")
 
 var indexPageTemplate = mustParseTemplate("index-page.html")
 

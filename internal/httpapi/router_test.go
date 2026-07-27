@@ -2636,6 +2636,137 @@ func TestManageAccessRemembersOpenSections(t *testing.T) {
 	}
 }
 
+func TestManageAccessJSONEditorRendersEmptyField(t *testing.T) {
+	t.Parallel()
+
+	st := newHTTPAPITestStore(t)
+	router := &Router{modules: service.NewModuleService(st, testArtifactStorage{}, "modules", nil)}
+	rec := httptest.NewRecorder()
+	router.renderManageAccess(rec, httptest.NewRequest(http.MethodGet, "/manage/access", nil), auth.Principal{CanAdmin: true}, "")
+	body := rec.Body.String()
+
+	if !strings.Contains(body, `<textarea id="access-config-json" name="config" spellcheck="false"></textarea>`) {
+		t.Fatalf("empty access config does not render an empty JSON editor:\n%s", body)
+	}
+	if strings.Contains(body, `>null</textarea>`) || strings.Contains(body, `>[]</textarea>`) {
+		t.Fatalf("empty access config renders a JSON placeholder value:\n%s", body)
+	}
+	if !strings.Contains(body, "Saving replaces the complete access configuration. At least one team is required.") {
+		t.Fatalf("advanced JSON editor warning is missing:\n%s", body)
+	}
+}
+
+func TestManageTeamSummariesRespectPrincipalScope(t *testing.T) {
+	t.Parallel()
+
+	configs := []auth.TeamConfig{
+		{Team: "platform-admin", OIDCAdminGroups: []string{"forge-admins"}},
+		{
+			Team:                "teamname",
+			ReadTokens:          []string{"read-token"},
+			PublishTokens:       []string{"publish-token"},
+			PublishOwners:       []string{"teamname", "shared"},
+			OIDCGroups:          []string{"teamname-publishers"},
+			OIDCTeamAdminEmails: []string{"owner@example.com"},
+			OIDCTeamAdminGroups: []string{"teamname-admins"},
+		},
+		{Team: "alpha", PublishOwners: []string{"alpha"}},
+	}
+	modules := []domain.Module{
+		{Owner: "teamname", Name: "apache"},
+		{Owner: "shared", Name: "stdlib"},
+		{Owner: "alpha", Name: "nginx"},
+	}
+	principal := auth.Principal{
+		Team:          "teamname",
+		CanManageTeam: true,
+		ManagedTeams:  map[string]struct{}{"teamname": {}},
+	}
+
+	rows := manageTeamSummaries(configs, modules, principal)
+	if len(rows) != 1 || rows[0].Team != "teamname" {
+		t.Fatalf("team admin sees unexpected teams: %#v", rows)
+	}
+	row := rows[0]
+	if row.ModuleCount != 2 || row.ReadTokens != 1 || row.PublishTokens != 1 {
+		t.Fatalf("unexpected team summary counts: %#v", row)
+	}
+	if row.PublishGroups != 1 || row.TeamAdminUsers != 1 || row.TeamAdminGroups != 1 {
+		t.Fatalf("unexpected team OIDC summary counts: %#v", row)
+	}
+	if len(row.Spaces) != 2 || row.Spaces[0] != "shared" || row.Spaces[1] != "teamname" {
+		t.Fatalf("unexpected sorted team spaces: %#v", row.Spaces)
+	}
+}
+
+func TestManageTeamsPagesGroupAccessAndModules(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	createModuleRelease(t, st, "teamname", "apache", "1.2.3")
+	createModuleRelease(t, st, "shared", "stdlib", "2.0.0")
+	configs := []auth.TeamConfig{
+		{Team: "platform-admin", OIDCAdminGroups: []string{"forge-admins"}},
+		{
+			Team:          "teamname",
+			ReadTokens:    []string{"read-token"},
+			PublishTokens: []string{"publish-token"},
+			PublishOwners: []string{"teamname", "shared"},
+		},
+	}
+	client, serverURL := newAccessManageClient(t, st, ctx, configs)
+
+	listBody := getBody(t, client, serverURL+"/manage/teams")
+	if !strings.Contains(listBody, `href="/manage/teams/teamname"`) || !strings.Contains(listBody, "2</strong><span>modules") {
+		t.Fatalf("teams page misses team summary or module count:\n%s", listBody)
+	}
+	if strings.Contains(listBody, `href="/manage/teams/platform-admin"`) {
+		t.Fatalf("teams page exposes global admin pseudo-team:\n%s", listBody)
+	}
+
+	detailBody := getBody(t, client, serverURL+"/manage/teams/teamname")
+	for _, want := range []string{
+		`name="next" value="/manage/teams/teamname"`,
+		`name="read_tokens"`,
+		`teamname/apache`,
+		`shared/stdlib`,
+		`.header-links .link-button { min-height: 0; margin: 0;`,
+	} {
+		if !strings.Contains(detailBody, want) {
+			t.Fatalf("team detail page misses %q:\n%s", want, detailBody)
+		}
+	}
+	if strings.Contains(detailBody, "Upload or Update") {
+		t.Fatalf("global admin token without publish permission sees upload form:\n%s", detailBody)
+	}
+}
+
+func TestManageReturnPathAllowsOnlyTeamManagementPages(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		next     string
+		fallback string
+		want     string
+	}{
+		{name: "team list", next: "/manage/teams", fallback: "/manage", want: "/manage/teams"},
+		{name: "team detail", next: "/manage/teams/teamname?q=apache", fallback: "/manage", want: "/manage/teams/teamname?q=apache"},
+		{name: "external URL", next: "https://example.com/manage/teams/teamname", fallback: "/manage", want: "/manage"},
+		{name: "scheme relative URL", next: "//example.com/manage/teams/teamname", fallback: "/manage", want: "/manage"},
+		{name: "unrelated manage page", next: "/manage/access", fallback: "/manage", want: "/manage"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := formRequest(url.Values{"next": {tc.next}})
+			if got := manageReturnPath(req, tc.fallback); got != tc.want {
+				t.Fatalf("manageReturnPath() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestManageAccessAllowsSharedOIDCGroupMapping(t *testing.T) {
 	t.Parallel()
 

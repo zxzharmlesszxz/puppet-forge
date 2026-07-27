@@ -251,6 +251,7 @@
       <div class="header-links">
         <a href="/">Public modules</a>
         <a href="/manage">Manage</a>
+        <a href="/manage/teams">Teams</a>
         <a href="/manage/access">Access</a>
         {{if .CanAdmin}}<a href="/manage/access/add">Add Team</a>{{end}}
         <form method="post" action="/manage/logout">{{csrfInput $.CSRFToken}}<button class="link-button" type="submit">Sign out</button></form>
@@ -356,7 +357,7 @@
     <details data-access-section="advanced-json">
       <summary>Advanced JSON editor</summary>
       <section class="panel json">
-        <p class="muted">JSON replace overwrites all access teams.</p>
+        <p class="muted">Saving replaces the complete access configuration. At least one team is required.</p>
       <form method="post" action="/manage/access">
         {{csrfInput $.CSRFToken}}
         <input type="hidden" name="action" value="replace_json">

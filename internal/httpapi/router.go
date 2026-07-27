@@ -123,6 +123,8 @@ func NewRouter(config RouterConfig, opts ...RouterOption) http.Handler {
 	mux.HandleFunc("/manage/logout", r.manageLogoutPage)
 	mux.HandleFunc("/manage/access", r.manageAccessPage)
 	mux.HandleFunc("/manage/access/add", r.manageAccessAddPage)
+	mux.HandleFunc("/manage/teams", r.manageTeamsPage)
+	mux.HandleFunc("/manage/teams/", r.manageTeamPage)
 	mux.HandleFunc("/manage/upstream", r.manageUpstreamModule)
 	mux.HandleFunc("/manage/modules", r.manageModules)
 	mux.HandleFunc("/manage/modules/", r.manageModuleAction)

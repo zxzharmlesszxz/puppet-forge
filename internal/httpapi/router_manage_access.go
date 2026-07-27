@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
@@ -31,14 +30,22 @@ func (r *Router) manageAccessPage(w http.ResponseWriter, req *http.Request) {
 		}
 		configs, message, err := r.accessConfigsFromForm(req, principal)
 		if err != nil {
+			if next := manageReturnPath(req, ""); next != "" {
+				redirectManageResult(w, req, next, "error", err.Error())
+				return
+			}
 			r.renderManageAccess(w, req, principal, err.Error())
 			return
 		}
 		if err := r.saveAccessConfigs(req.Context(), configs); err != nil {
+			if next := manageReturnPath(req, ""); next != "" {
+				redirectManageResult(w, req, next, "error", err.Error())
+				return
+			}
 			r.renderManageAccess(w, req, principal, err.Error())
 			return
 		}
-		http.Redirect(w, req, "/manage/access?message="+url.QueryEscape(message), http.StatusFound)
+		redirectManageResult(w, req, "/manage/access", "message", message)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 	}
@@ -200,9 +207,13 @@ func (r *Router) renderManageAccess(w http.ResponseWriter, req *http.Request, pr
 	if err != nil && errorMessage == "" {
 		errorMessage = err.Error()
 	}
-	raw, marshalErr := json.MarshalIndent(configs, "", "  ")
-	if marshalErr != nil && errorMessage == "" {
-		errorMessage = marshalErr.Error()
+	var raw []byte
+	if len(configs) > 0 {
+		var marshalErr error
+		raw, marshalErr = json.MarshalIndent(configs, "", "  ")
+		if marshalErr != nil && errorMessage == "" {
+			errorMessage = marshalErr.Error()
+		}
 	}
 	adminGroups, adminEmails, adminSubjects := globalAdminFormValues(configs)
 	csrfToken, csrfErr := r.ensureManageCSRFToken(w, req)

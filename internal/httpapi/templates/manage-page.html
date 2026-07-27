@@ -395,6 +395,7 @@
       <div class="header-links">
         <a href="/">Public modules</a>
         <a href="/manage">Manage</a>
+        {{if or .Principal.CanAdmin .Principal.CanManageTeam}}<a href="/manage/teams">Teams</a>{{end}}
         {{if or .Principal.CanAdmin .Principal.CanManageTeam}}<a href="/manage/access">Access</a>{{end}}
         {{if .Principal.CanAdmin}}<a href="/manage/access/add">Add team</a>{{end}}
         <form method="post" action="/manage/logout">{{csrfInput $.CSRFToken}}<button class="link-button" type="submit">Sign out</button></form>
