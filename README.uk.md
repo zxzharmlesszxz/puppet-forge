@@ -26,6 +26,7 @@
 - `GET /modules/{owner}/{name}` для HTML-сторінки модуля з markdown README, dropdown вибору версії та інструкціями встановлення;
 - `GET /v3/*` і `HEAD /v3/*` для reverse proxy на офіційний Puppet Forge API;
 - `/manage` для публікації, видалення й імпорту upstream-модулів через web UI;
+- `/manage/teams` для спільного керування access settings, publishing spaces і модулями кожної доступної team;
 - `/manage/access` для DB-backed access config;
 - `ADMIN_TOKEN` для bootstrap/break-glass доступу;
 - OIDC login для global admins, team admins і командних publish-груп;
@@ -244,45 +245,45 @@ puppet-forge \
 
 Environment variables:
 
-| Змінна | За замовчуванням | Обов'язкова | Опис |
-| --- | --- | --- | --- |
-| `APP_ENV` | `dev` | ні | Назва runtime-оточення для логів і діагностики. |
-| `HTTP_ADDR` | `:8080` | ні | Адреса, на якій HTTP server слухає запити всередині контейнера або процесу. |
-| `READ_TIMEOUT` | `10s` | ні | Максимальний час читання HTTP request. Формат Go duration, наприклад `10s`, `1m`. |
-| `WRITE_TIMEOUT` | `30s` | ні | Максимальний час запису HTTP response. |
-| `SHUTDOWN_TIMEOUT` | `10s` | ні | Graceful shutdown timeout. |
-| `DATABASE_DSN` | порожньо | так | DSN metadata store. `postgres://...` вмикає PostgreSQL, `sqlite:///path/file.db` вмикає SQLite. |
-| `ADMIN_TOKEN` | порожньо | для порожньої БД | Runtime bootstrap/break-glass admin token. Не зберігається в БД; потрібен, щоб на чистому старті зайти в `/manage/access`. |
-| `MANAGE_SESSION_SECRET` | порожньо | ні | Shared secret для encrypted `/manage` token sessions. Задай його для multi-replica deployments. Якщо порожній, сервіс використовує fallback: `OIDC_COOKIE_SECRET`, потім `ADMIN_TOKEN`, потім per-process random secret. |
-| `ARTIFACT_BACKEND` | `gcs` | ні | Backend для tarball артефактів: `gcs` або `s3`. |
-| `ARTIFACT_ENDPOINT` | `https://storage.googleapis.com` | для `s3`; опційно для `gcs` | Endpoint object storage. Для `gcs` можна вказати emulator/custom host; для `s3` це S3-compatible endpoint, наприклад MinIO. |
-| `ARTIFACT_BUCKET` | порожньо | так | Bucket/container для module tarballs і upstream artifact cache. |
-| `ARTIFACT_PROJECT` | порожньо | для `gcs` | GCP project для GCS bucket operations. Для `s3` не використовується. |
-| `ARTIFACT_PREFIX` | `modules` | ні | Prefix усередині bucket для локально опублікованих модулів. |
-| `ARTIFACT_REGION` | `us-east-1` | ні | Region для S3-compatible клієнта. |
-| `ARTIFACT_ACCESS_KEY_ID` | порожньо | для приватного `s3` | Access key для S3-compatible storage. |
-| `ARTIFACT_SECRET_ACCESS_KEY` | порожньо | для приватного `s3` | Secret key для S3-compatible storage. |
-| `ARTIFACT_PATH_STYLE` | `true` | ні | Вмикає path-style S3 URLs. Корисно для MinIO, GCS interoperability і локальних endpoint-ів. |
-| `PUBLIC_BASE_URL` | порожньо | ні | Optional fallback для побудови absolute URLs. Якщо порожній, сервіс бере URL із `Host`, `X-Forwarded-*` або `Forwarded` headers поточного request. |
-| `PUBLIC_MODULE_ACCESS` | `false` | ні | Якщо `true`, API читання, downloads і `/v3/*` відкриті без token. Якщо `false`, ці install/API routes потребують read/publish/admin token. HTML-каталог `/` і `/modules/...` лишається інформаційно доступним. Publish/delete/manage завжди закриті. |
-| `ACTIVE_RELEASE_TTL` | `720h` | ні | Скільки часу release вважається active/in-use після запиту r10k або `puppet module install`; active/latest версії не можна видалити через API або `/manage`. |
-| `SECURITY_HSTS_ENABLED` | `false` | ні | Вмикає response header `Strict-Transport-Security`. Для локального HTTP лишай вимкненим; вмикай лише коли публічний endpoint завжди HTTPS. |
-| `WEB_AUTH_MODE` | `none` | ні | Web auth режим: `none` або `oidc`. Token auth для API працює незалежно від цього. |
-| `OIDC_ISSUER_URL` | порожньо | для `WEB_AUTH_MODE=oidc` | OIDC issuer discovery URL, наприклад Authentik application provider URL. |
-| `OIDC_CLIENT_ID` | порожньо | для `WEB_AUTH_MODE=oidc` | OIDC client id. |
-| `OIDC_CLIENT_SECRET` | порожньо | для `WEB_AUTH_MODE=oidc` | OIDC client secret. |
-| `OIDC_REDIRECT_URL` | порожньо | ні | Explicit callback URL. Якщо порожній, callback будується з поточного request base URL як `/auth/callback`; для multi-ingress це рекомендований режим. |
-| `OIDC_LOGOUT_URL` | auto-discovery/порожньо | ні | Provider end-session URL. Якщо не задано, сервіс пробує взяти `end_session_endpoint` із OIDC discovery. |
-| `OIDC_COOKIE_SECRET` | порожньо | для `WEB_AUTH_MODE=oidc` | Secret для підпису web session/state cookies. Має бути стабільним між рестартами pod-ів. |
-| `UPSTREAM_URL` | `https://forgeapi.puppetlabs.com` | ні | Upstream Puppet Forge API, куди proxy ходить для модулів, яких немає локально. |
-| `UPSTREAM_PROXY_JSON_CACHE_TTL` | `5m` | ні | TTL in-memory cache для JSON GET/HEAD відповідей upstream proxy (`/v3/modules/...`, `/v3/releases/...`). Не керує object-storage cache tarball-ів із `/v3/files/...`. `0s` фактично вимикає JSON response cache. |
-| `UPSTREAM_PROXY_JSON_STALE_TTL` | `1h` | ні | Максимальний час після завершення `UPSTREAM_PROXY_JSON_CACHE_TTL`, протягом якого proxy може віддати stale JSON cache, якщо upstream Forge повернув помилку або недоступний. `0s` вимикає stale fallback. |
-| `FORGE_CACHE_MAX_BODY_BYTES` | `1048576` | ні | Максимальний розмір upstream JSON response body, який можна покласти в in-memory proxy cache. |
-| `MODULE_UPLOAD_MAX_BYTES` | `134217728` | ні | Максимальний розмір publish upload request у байтах. Перевищення повертає `413 Request Entity Too Large` і не читається повністю в пам'ять. |
-| `UPSTREAM_ARTIFACT_MAX_BYTES` | `134217728` | ні | Максимальний розмір upstream tarball-артефакту з `/v3/files/...`, який proxy дозволяє завантажити (як для object-storage cache, так і для bypass-шляху без artifact storage). Перевищення повертає `413 Request Entity Too Large`. |
-| `UPSTREAM_SYNC_INTERVAL` | `0s` | ні | Інтервал background refresh уже закешованих upstream-модулів. `0s` вимикає фоновий refresh. |
-| `UPSTREAM_SYNC_LIMIT` | `1000` | ні | Максимальна кількість upstream-модулів, які refresh cycle обробляє за один запуск. |
-| `METRICS_MODULE_LIMIT` | `10000` | ні | Максимальна кількість модулів, які inventory metrics експортують за один прохід збору. |
+| Змінна                          | За замовчуванням                  | Обов'язкова                 | Опис                                                                                                                                                                                                                                                 |
+|---------------------------------|-----------------------------------|-----------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `APP_ENV`                       | `dev`                             | ні                          | Назва runtime-оточення для логів і діагностики.                                                                                                                                                                                                      |
+| `HTTP_ADDR`                     | `:8080`                           | ні                          | Адреса, на якій HTTP server слухає запити всередині контейнера або процесу.                                                                                                                                                                          |
+| `READ_TIMEOUT`                  | `10s`                             | ні                          | Максимальний час читання HTTP request. Формат Go duration, наприклад `10s`, `1m`.                                                                                                                                                                    |
+| `WRITE_TIMEOUT`                 | `30s`                             | ні                          | Максимальний час запису HTTP response.                                                                                                                                                                                                               |
+| `SHUTDOWN_TIMEOUT`              | `10s`                             | ні                          | Graceful shutdown timeout.                                                                                                                                                                                                                           |
+| `DATABASE_DSN`                  | порожньо                          | так                         | DSN metadata store. `postgres://...` вмикає PostgreSQL, `sqlite:///path/file.db` вмикає SQLite.                                                                                                                                                      |
+| `ADMIN_TOKEN`                   | порожньо                          | для порожньої БД            | Runtime bootstrap/break-glass admin token. Не зберігається в БД; потрібен, щоб на чистому старті зайти в `/manage/access`.                                                                                                                           |
+| `MANAGE_SESSION_SECRET`         | порожньо                          | ні                          | Shared secret для encrypted `/manage` token sessions. Задай його для multi-replica deployments. Якщо порожній, сервіс використовує fallback: `OIDC_COOKIE_SECRET`, потім `ADMIN_TOKEN`, потім per-process random secret.                             |
+| `ARTIFACT_BACKEND`              | `gcs`                             | ні                          | Backend для tarball артефактів: `gcs` або `s3`.                                                                                                                                                                                                      |
+| `ARTIFACT_ENDPOINT`             | `https://storage.googleapis.com`  | для `s3`; опційно для `gcs` | Endpoint object storage. Для `gcs` можна вказати emulator/custom host; для `s3` це S3-compatible endpoint, наприклад MinIO.                                                                                                                          |
+| `ARTIFACT_BUCKET`               | порожньо                          | так                         | Bucket/container для module tarballs і upstream artifact cache.                                                                                                                                                                                      |
+| `ARTIFACT_PROJECT`              | порожньо                          | для `gcs`                   | GCP project для GCS bucket operations. Для `s3` не використовується.                                                                                                                                                                                 |
+| `ARTIFACT_PREFIX`               | `modules`                         | ні                          | Prefix усередині bucket для локально опублікованих модулів.                                                                                                                                                                                          |
+| `ARTIFACT_REGION`               | `us-east-1`                       | ні                          | Region для S3-compatible клієнта.                                                                                                                                                                                                                    |
+| `ARTIFACT_ACCESS_KEY_ID`        | порожньо                          | для приватного `s3`         | Access key для S3-compatible storage.                                                                                                                                                                                                                |
+| `ARTIFACT_SECRET_ACCESS_KEY`    | порожньо                          | для приватного `s3`         | Secret key для S3-compatible storage.                                                                                                                                                                                                                |
+| `ARTIFACT_PATH_STYLE`           | `true`                            | ні                          | Вмикає path-style S3 URLs. Корисно для MinIO, GCS interoperability і локальних endpoint-ів.                                                                                                                                                          |
+| `PUBLIC_BASE_URL`               | порожньо                          | ні                          | Optional fallback для побудови absolute URLs. Якщо порожній, сервіс бере URL із `Host`, `X-Forwarded-*` або `Forwarded` headers поточного request.                                                                                                   |
+| `PUBLIC_MODULE_ACCESS`          | `false`                           | ні                          | Якщо `true`, API читання, downloads і `/v3/*` відкриті без token. Якщо `false`, ці install/API routes потребують read/publish/admin token. HTML-каталог `/` і `/modules/...` лишається інформаційно доступним. Publish/delete/manage завжди закриті. |
+| `ACTIVE_RELEASE_TTL`            | `720h`                            | ні                          | Скільки часу release вважається active/in-use після запиту r10k або `puppet module install`; active/latest версії не можна видалити через API або `/manage`.                                                                                         |
+| `SECURITY_HSTS_ENABLED`         | `false`                           | ні                          | Вмикає response header `Strict-Transport-Security`. Для локального HTTP лишай вимкненим; вмикай лише коли публічний endpoint завжди HTTPS.                                                                                                           |
+| `WEB_AUTH_MODE`                 | `none`                            | ні                          | Web auth режим: `none` або `oidc`. Token auth для API працює незалежно від цього.                                                                                                                                                                    |
+| `OIDC_ISSUER_URL`               | порожньо                          | для `WEB_AUTH_MODE=oidc`    | OIDC issuer discovery URL, наприклад Authentik application provider URL.                                                                                                                                                                             |
+| `OIDC_CLIENT_ID`                | порожньо                          | для `WEB_AUTH_MODE=oidc`    | OIDC client id.                                                                                                                                                                                                                                      |
+| `OIDC_CLIENT_SECRET`            | порожньо                          | для `WEB_AUTH_MODE=oidc`    | OIDC client secret.                                                                                                                                                                                                                                  |
+| `OIDC_REDIRECT_URL`             | порожньо                          | ні                          | Explicit callback URL. Якщо порожній, callback будується з поточного request base URL як `/auth/callback`; для multi-ingress це рекомендований режим.                                                                                                |
+| `OIDC_LOGOUT_URL`               | auto-discovery/порожньо           | ні                          | Provider end-session URL. Якщо не задано, сервіс пробує взяти `end_session_endpoint` із OIDC discovery.                                                                                                                                              |
+| `OIDC_COOKIE_SECRET`            | порожньо                          | для `WEB_AUTH_MODE=oidc`    | Secret для підпису web session/state cookies. Має бути стабільним між рестартами pod-ів.                                                                                                                                                             |
+| `UPSTREAM_URL`                  | `https://forgeapi.puppetlabs.com` | ні                          | Upstream Puppet Forge API, куди proxy ходить для модулів, яких немає локально.                                                                                                                                                                       |
+| `UPSTREAM_PROXY_JSON_CACHE_TTL` | `5m`                              | ні                          | TTL in-memory cache для JSON GET/HEAD відповідей upstream proxy (`/v3/modules/...`, `/v3/releases/...`). Не керує object-storage cache tarball-ів із `/v3/files/...`. `0s` фактично вимикає JSON response cache.                                     |
+| `UPSTREAM_PROXY_JSON_STALE_TTL` | `1h`                              | ні                          | Максимальний час після завершення `UPSTREAM_PROXY_JSON_CACHE_TTL`, протягом якого proxy може віддати stale JSON cache, якщо upstream Forge повернув помилку або недоступний. `0s` вимикає stale fallback.                                            |
+| `FORGE_CACHE_MAX_BODY_BYTES`    | `1048576`                         | ні                          | Максимальний розмір upstream JSON response body, який можна покласти в in-memory proxy cache.                                                                                                                                                        |
+| `MODULE_UPLOAD_MAX_BYTES`       | `134217728`                       | ні                          | Максимальний розмір publish upload request у байтах. Перевищення повертає `413 Request Entity Too Large` і не читається повністю в пам'ять.                                                                                                          |
+| `UPSTREAM_ARTIFACT_MAX_BYTES`   | `134217728`                       | ні                          | Максимальний розмір upstream tarball-артефакту з `/v3/files/...`, який proxy дозволяє завантажити (як для object-storage cache, так і для bypass-шляху без artifact storage). Перевищення повертає `413 Request Entity Too Large`.                   |
+| `UPSTREAM_SYNC_INTERVAL`        | `0s`                              | ні                          | Інтервал background refresh уже закешованих upstream-модулів. `0s` вимикає фоновий refresh.                                                                                                                                                          |
+| `UPSTREAM_SYNC_LIMIT`           | `1000`                            | ні                          | Максимальна кількість upstream-модулів, які refresh cycle обробляє за один запуск.                                                                                                                                                                   |
+| `METRICS_MODULE_LIMIT`          | `10000`                           | ні                          | Максимальна кількість модулів, які inventory metrics експортують за один прохід збору.                                                                                                                                                               |
 
 Artifact storage backends:
 
@@ -310,7 +311,7 @@ Access control:
 - `ADMIN_TOKEN` це runtime bootstrap/break-glass токен, який не пишеться в БД;
 - якщо БД порожня і `ADMIN_TOKEN` не заданий, сервіс не стартує;
 - на чистому старті увійди в `/manage` через `ADMIN_TOKEN`, відкрий `/manage/access` і налаштуй teams, tokens, OIDC groups та OIDC team admins;
-- веб-інтерфейс (`/` і `/modules/...`) лишається відкритим для інформаційного перегляду локальних модулів незалежно від `PUBLIC_MODULE_ACCESS`;
+- вебінтерфейс (`/` і `/modules/...`) лишається відкритим для інформаційного перегляду локальних модулів незалежно від `PUBLIC_MODULE_ACCESS`;
 - `read_tokens` дають доступ до API читання, download і `/v3/*`;
 - `publish_tokens` дають доступ до читання й публікації/оновлення лише в дозволені publish spaces, але не дають права видаляти модулі;
 - видалення модулів і версій доступне global admins у будь-якому namespace і OIDC team admins тільки у primary space своєї team; `Extra publish spaces` дозволяють publish/update, але не дають delete ownership;
@@ -322,7 +323,7 @@ Access control:
 
 Web auth:
 
-- `WEB_AUTH_MODE=oidc` вмикає session login для веб-інтерфейсу через OIDC/Authenik;
+- `WEB_AUTH_MODE=oidc` вмикає session login для вебінтерфейсу через OIDC/Authenik;
 - API при цьому лишається на token auth для команд;
 - потрібні `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_COOKIE_SECRET`;
 - `OIDC_REDIRECT_URL` можна задати явно, але зазвичай краще лишити порожнім: сервіс побудує redirect URL із поточного request host/proto і додасть `/auth/callback`;
@@ -334,6 +335,7 @@ Web auth:
 Командний web UI:
 
 - `/manage` відкриває web-сторінку для командного керування модулями;
+- `/manage/teams` показує тільки доступні користувачу teams, а `/manage/teams/{team}` об'єднує publishing, access settings і модулі вибраної team;
 - `/manage/access` доступний global admin-користувачам для повного керування access config;
 - team admin-користувачі також можуть відкривати `/manage/access`, але бачать тільки свою team і можуть редагувати тільки свої `read_tokens`, `publish_tokens`, `oidc_groups`, `oidc_team_admin_emails` і `oidc_team_admin_groups`;
 - team admin-користувачі не можуть перейменовувати team, видаляти teams, змінювати `Extra publish spaces`, редагувати global admins, відкривати JSON editor або змінювати чужі teams;
@@ -343,7 +345,7 @@ Web auth:
 - без OIDC або як fallback можна увійти через існуючий `publish_token` з БД або через runtime `ADMIN_TOKEN`;
 - OIDC identity або publish token бачить і змінює тільки publish space з назвою `Team` і додаткові spaces з `Extra publish spaces`;
 - publish token не може видаляти модулі або версії;
-- OIDC team admin може видаляти модулі й версії тільки у своїх publish spaces;
+- OIDC team admin може видаляти модулі й версії тільки у primary space своєї team;
 - `ADMIN_TOKEN` або OIDC admin mapping можуть видаляти модулі й версії в будь-якому namespace;
 - версії, які завантажували r10k або `puppet module install` протягом `ACTIVE_RELEASE_TTL`, позначаються як `in use`, і кнопка видалення для них у `/manage` не показується;
 - `ACTIVE_RELEASE_TTL` за замовчуванням дорівнює `720h` / 30 днів і задається при старті сервісу;
@@ -413,7 +415,7 @@ Logout із `/manage` чистить локальні token/OIDC cookies. Якщ
 }
 ```
 
-Користувач із email `owner@example.com` або з групи `teamname-admins` може зайти в `/manage/access`, але побачить тільки `teamname` і не зможе змінити інші teams, global admins, JSON config або extra publish spaces. У `/manage` такий team admin може видаляти модулі й версії тільки в primary space своєї team. `Extra publish spaces` лишаються publish/update scope, а видаляти там може тільки global admin.
+Користувач з email `owner@example.com` або з групи `teamname-admins` може зайти в `/manage/teams` і на сторінку `teamname`, де разом доступні publishing, access settings і модулі цієї team. У `/manage/access` він побачить тільки `teamname` і не зможе змінити інші teams, global admins, JSON config або extra publish spaces. Такий team admin може видаляти модулі й версії тільки в primary space своєї team. `Extra publish spaces` лишаються publish/update scope, а видаляти там може тільки global admin.
 
 Один OIDC team-admin email або group можна додати в кілька teams. Тоді користувач побачить і зможе редагувати всі ці teams у `/manage/access`, але все одно не матиме доступу до чужих teams або global admin settings.
 
@@ -496,9 +498,9 @@ Standalone `r10k` перевірка з compose:
 
 1. Підніми стенд:
 
-```bash
-docker compose up --build
-```
+    ```bash
+    docker compose up --build
+    ```
 
 2. Переконайся, що потрібні модулі доступні локально. Для upstream-модулів r10k-запит до `/v3/*` сам проіндексує metadata і закешує артефакт.
 
@@ -506,9 +508,9 @@ docker compose up --build
 
 4. Запусти `r10k` one-shot контейнер:
 
-```bash
-docker compose up r10k
-```
+    ```bash
+    docker compose up r10k
+    ```
 
 Після завершення:
 

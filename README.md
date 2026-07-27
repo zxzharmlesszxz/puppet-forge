@@ -31,6 +31,7 @@ Implemented:
 - `GET /modules/{owner}/{name}` renders a module page with README Markdown, version selector, and install snippets;
 - `GET /v3/*` and `HEAD /v3/*` reverse-proxy the official Puppet Forge API;
 - `/manage` provides the module management UI for publishing, deleting, and importing upstream modules;
+- `/manage/teams` groups each manageable team's access settings, publishing spaces, and modules on one page;
 - `/manage/access` provides DB-backed access configuration;
 - `ADMIN_TOKEN` provides bootstrap/break-glass access;
 - OIDC login supports global admins, team admins, and OIDC groups that grant publishing rights;
@@ -258,7 +259,7 @@ To let a team manage its own tokens and OIDC groups, add `OIDC team admins`. For
 }
 ```
 
-A user with email `owner@example.com` or group `teamname-admins` can open `/manage/access`, but sees only the `teamname` team and cannot edit other teams, global admins, JSON config, or extra publishing spaces. In `/manage`, that team admin can delete modules and versions only in the team's primary space. Extra publishing spaces remain publishing and update scope only; deletion there is global-admin-only.
+A user with email `owner@example.com` or group `teamname-admins` can open `/manage/teams` and the detail page for `teamname`, where access settings, publishing, and scoped modules are managed together. The same user can open `/manage/access`, but sees only `teamname` and cannot edit other teams, global admins, JSON config, or extra publishing spaces. Team admins can delete modules and versions only in the team's primary space. Extra publishing spaces remain publishing and update scope only; deletion there is global-admin-only.
 
 The same OIDC team-admin email or group can be added to multiple teams. The user will be able to edit all mapped teams in `/manage/access`, but still cannot access unrelated teams or global admin settings.
 
@@ -273,7 +274,7 @@ Global OIDC admin access is configured in the `Global OIDC Admins` block:
 
 Users in `forge-admins` can open `/manage/access` and delete modules/versions in any namespace. Publishing access is not automatically granted by global admin groups.
 
-If an OIDC user belongs to a team group such as `teamname-devops` and also matches `oidc_admin_groups`, `oidc_admin_emails`, or `oidc_admin_subjects`, the admin mapping wins.
+If an OIDC user belongs to a team group such as `teamname-devops` and also matches `oidc_admin_groups`, `oidc_admin_emails`, or `oidc_admin_subjects`, the service combines both mappings. Global administration therefore does not remove team publishing or team-management capabilities.
 
 To add yourself as an admin after the first startup:
 

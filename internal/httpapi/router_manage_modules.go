@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -26,65 +27,12 @@ func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	modules, err := r.modules.ListModules(req.Context(), 1000)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	allReleases, err := r.modules.ListAllReleases(req.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	releasesByModule := make(map[struct{ owner, name string }][]store.ReleaseSummary, len(modules))
-	for _, rel := range allReleases {
-		key := struct{ owner, name string }{rel.Owner, rel.Name}
-		releasesByModule[key] = append(releasesByModule[key], rel)
-	}
-	activeSince := time.Now().Add(-r.activeReleaseTTL)
-	activeReleases, err := r.modules.ListActiveReleases(req.Context(), activeSince)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	activeReleaseSet := make(map[struct{ owner, name, version string }]struct{}, len(activeReleases))
-	for _, rel := range activeReleases {
-		key := struct{ owner, name, version string }{rel.Owner, rel.Name, rel.Version}
-		activeReleaseSet[key] = struct{}{}
-	}
-
 	owners := manageableOwners(principal)
 	query := strings.TrimSpace(req.URL.Query().Get("q"))
-	queryLower := strings.ToLower(query)
-	rows := make([]manageModuleRow, 0, len(modules))
-	for _, module := range modules {
-		if !principal.CanAdmin && !ownerAllowed(principal, module.Owner) {
-			continue
-		}
-		if query != "" {
-			ownerName := strings.ToLower(module.Owner + "/" + module.Name)
-			if !strings.Contains(ownerName, queryLower) {
-				continue
-			}
-		}
-		key := struct{ owner, name string }{module.Owner, module.Name}
-		versions := releasesByModule[key]
-		versionRows := make([]manageVersionRow, 0, len(versions))
-		for _, version := range versions {
-			_, active := activeReleaseSet[struct{ owner, name, version string }{module.Owner, module.Name, version.Version}]
-			latest := version.Version == module.LatestVersion
-			versionRows = append(versionRows, manageVersionRow{
-				Version: version.Version,
-				Active:  active,
-				Latest:  latest,
-			})
-		}
-		rows = append(rows, manageModuleRow{
-			Module:    module,
-			Versions:  versionRows,
-			CanDelete: canDeleteInSpace(principal, module.Owner),
-		})
+	rows, err := r.loadManageModuleRows(req.Context(), principal, nil, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
 	}
 
 	csrfToken, err := r.ensureManageCSRFToken(w, req)
@@ -105,6 +53,63 @@ func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Principal, allowedOwners map[string]struct{}, query string) ([]manageModuleRow, error) {
+	modules, err := r.modules.ListModules(ctx, 1000)
+	if err != nil {
+		return nil, err
+	}
+	allReleases, err := r.modules.ListAllReleases(ctx)
+	if err != nil {
+		return nil, err
+	}
+	releasesByModule := make(map[struct{ owner, name string }][]store.ReleaseSummary, len(modules))
+	for _, rel := range allReleases {
+		key := struct{ owner, name string }{rel.Owner, rel.Name}
+		releasesByModule[key] = append(releasesByModule[key], rel)
+	}
+	activeReleases, err := r.modules.ListActiveReleases(ctx, time.Now().Add(-r.activeReleaseTTL))
+	if err != nil {
+		return nil, err
+	}
+	activeReleaseSet := make(map[struct{ owner, name, version string }]struct{}, len(activeReleases))
+	for _, rel := range activeReleases {
+		key := struct{ owner, name, version string }{rel.Owner, rel.Name, rel.Version}
+		activeReleaseSet[key] = struct{}{}
+	}
+
+	queryLower := strings.ToLower(strings.TrimSpace(query))
+	rows := make([]manageModuleRow, 0, len(modules))
+	for _, module := range modules {
+		if allowedOwners != nil {
+			if _, allowed := allowedOwners[module.Owner]; !allowed {
+				continue
+			}
+		} else if !principal.CanAdmin && !ownerAllowed(principal, module.Owner) {
+			continue
+		}
+		if queryLower != "" && !strings.Contains(strings.ToLower(module.Owner+"/"+module.Name), queryLower) {
+			continue
+		}
+		key := struct{ owner, name string }{module.Owner, module.Name}
+		versions := releasesByModule[key]
+		versionRows := make([]manageVersionRow, 0, len(versions))
+		for _, version := range versions {
+			_, active := activeReleaseSet[struct{ owner, name, version string }{module.Owner, module.Name, version.Version}]
+			versionRows = append(versionRows, manageVersionRow{
+				Version: version.Version,
+				Active:  active,
+				Latest:  version.Version == module.LatestVersion,
+			})
+		}
+		rows = append(rows, manageModuleRow{
+			Module:    module,
+			Versions:  versionRows,
+			CanDelete: canDeleteInSpace(principal, module.Owner),
+		})
+	}
+	return rows, nil
 }
 
 func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
@@ -150,7 +155,7 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 		redirectManageError(w, req, err)
 		return
 	}
-	http.Redirect(w, req, "/manage?message=module+published", http.StatusFound)
+	redirectManageResult(w, req, "/manage", "message", "module published")
 }
 
 func (r *Router) manageUpstreamModule(w http.ResponseWriter, req *http.Request) {
@@ -215,7 +220,7 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 			redirectManageError(w, req, err)
 			return
 		}
-		http.Redirect(w, req, "/manage?message=module+deleted", http.StatusFound)
+		redirectManageResult(w, req, "/manage", "message", "module deleted")
 		return
 	}
 	if len(parts) == 5 && parts[2] == "versions" && parts[4] == "delete" {
@@ -232,7 +237,7 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 			redirectManageError(w, req, err)
 			return
 		}
-		http.Redirect(w, req, "/manage?message=version+deleted", http.StatusFound)
+		redirectManageResult(w, req, "/manage", "message", "version deleted")
 		return
 	}
 
@@ -268,7 +273,27 @@ func parseUpstreamModuleFormValue(raw string) (string, string, error) {
 }
 
 func redirectManageError(w http.ResponseWriter, req *http.Request, err error) {
-	http.Redirect(w, req, "/manage?error="+url.QueryEscape(err.Error()), http.StatusFound)
+	redirectManageResult(w, req, "/manage", "error", err.Error())
+}
+
+func redirectManageResult(w http.ResponseWriter, req *http.Request, fallback, key, message string) {
+	target := manageReturnPath(req, fallback)
+	separator := "?"
+	if strings.Contains(target, "?") {
+		separator = "&"
+	}
+	http.Redirect(w, req, target+separator+url.QueryEscape(key)+"="+url.QueryEscape(message), http.StatusFound)
+}
+
+func manageReturnPath(req *http.Request, fallback string) string {
+	next := strings.TrimSpace(req.FormValue("next"))
+	if next == "/manage/teams" || strings.HasPrefix(next, "/manage/teams/") {
+		parsed, err := url.ParseRequestURI(next)
+		if err == nil && !parsed.IsAbs() && parsed.Host == "" && !strings.HasPrefix(next, "//") {
+			return next
+		}
+	}
+	return fallback
 }
 
 func ownerAllowed(principal auth.Principal, owner string) bool {
