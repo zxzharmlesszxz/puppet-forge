@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 )
@@ -68,6 +67,14 @@ func (p Principal) CanDeleteOwner(owner string) bool {
 	return p.Team == owner
 }
 
+func (p Principal) CanPublishOwner(owner string) bool {
+	if !p.CanPublish {
+		return false
+	}
+	_, ok := p.PublishOwners[owner]
+	return ok
+}
+
 type Authorizer struct {
 	enabled      bool
 	tokens       map[string]Principal
@@ -87,13 +94,16 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 	oidcSubjects := make(map[string]Principal)
 	oidcDomains := make(map[string]Principal)
 	oidcGroups := make(map[string]Principal)
+	registerOIDCPrincipal := func(mapping map[string]Principal, key string, principal Principal) {
+		if existing, exists := mapping[key]; exists {
+			principal = mergePrincipals(existing, principal)
+		}
+		mapping[key] = principal
+	}
 
 	for _, cfg := range configs {
 		if strings.TrimSpace(cfg.Team) == "" {
 			return nil, errors.New("team is required in access config")
-		}
-		if err := validateTeamOIDCGroupRoles(cfg); err != nil {
-			return nil, err
 		}
 
 		ownerSet := make(map[string]struct{}, len(cfg.PublishOwners)+1)
@@ -156,52 +166,28 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 			if normalized == "" {
 				continue
 			}
-			if existing, exists := oidcEmails[normalized]; exists {
-				if existing.CanAdmin {
-					continue
-				}
-				return nil, fmt.Errorf("OIDC email %q is configured for both %q and %q", normalized, existing.Team, cfg.Team)
-			}
-			oidcEmails[normalized] = webPrincipal
+			registerOIDCPrincipal(oidcEmails, normalized, webPrincipal)
 		}
 		for _, subject := range cfg.OIDCSubjects {
 			subject = strings.TrimSpace(subject)
 			if subject == "" {
 				continue
 			}
-			if existing, exists := oidcSubjects[subject]; exists {
-				if existing.CanAdmin {
-					continue
-				}
-				return nil, fmt.Errorf("OIDC subject %q is configured for both %q and %q", subject, existing.Team, cfg.Team)
-			}
-			oidcSubjects[subject] = webPrincipal
+			registerOIDCPrincipal(oidcSubjects, subject, webPrincipal)
 		}
 		for _, domain := range cfg.OIDCDomains {
 			normalized := normalizeDomain(domain)
 			if normalized == "" {
 				continue
 			}
-			if existing, exists := oidcDomains[normalized]; exists {
-				if existing.CanAdmin {
-					continue
-				}
-				return nil, fmt.Errorf("OIDC domain %q is configured for both %q and %q", normalized, existing.Team, cfg.Team)
-			}
-			oidcDomains[normalized] = webPrincipal
+			registerOIDCPrincipal(oidcDomains, normalized, webPrincipal)
 		}
 		for _, group := range cfg.OIDCGroups {
 			normalized := normalizeGroup(group)
 			if normalized == "" {
 				continue
 			}
-			if existing, exists := oidcGroups[normalized]; exists {
-				if existing.CanAdmin {
-					continue
-				}
-				return nil, fmt.Errorf("OIDC group %q is configured for both %q and %q", normalized, existing.Team, cfg.Team)
-			}
-			oidcGroups[normalized] = webPrincipal
+			registerOIDCPrincipal(oidcGroups, normalized, webPrincipal)
 		}
 
 		teamAdminPrincipal := Principal{
@@ -218,65 +204,42 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 			if normalized == "" {
 				continue
 			}
-			if existing, exists := oidcEmails[normalized]; exists {
-				if existing.CanAdmin {
-					continue
-				}
-				merged, ok := mergeTeamAdminPrincipals(existing, teamAdminPrincipal)
-				if !ok {
-					return nil, fmt.Errorf("OIDC email %q is configured for both %q and %q", normalized, existing.Team, cfg.Team)
-				}
-				oidcEmails[normalized] = merged
-				continue
-			}
-			oidcEmails[normalized] = teamAdminPrincipal
+			registerOIDCPrincipal(oidcEmails, normalized, teamAdminPrincipal)
 		}
 		for _, group := range cfg.OIDCTeamAdminGroups {
 			normalized := normalizeGroup(group)
 			if normalized == "" {
 				continue
 			}
-			if existing, exists := oidcGroups[normalized]; exists {
-				if existing.CanAdmin {
-					continue
-				}
-				merged, ok := mergeTeamAdminPrincipals(existing, teamAdminPrincipal)
-				if !ok {
-					return nil, fmt.Errorf("OIDC group %q is configured for both %q and %q", normalized, existing.Team, cfg.Team)
-				}
-				oidcGroups[normalized] = merged
-				continue
-			}
-			oidcGroups[normalized] = teamAdminPrincipal
+			registerOIDCPrincipal(oidcGroups, normalized, teamAdminPrincipal)
 		}
 
 		adminPrincipal := Principal{
-			Team:          cfg.Team,
-			CanRead:       true,
-			CanPublish:    false,
-			CanAdmin:      true,
-			PublishOwners: ownerSet,
+			Team:       cfg.Team,
+			CanRead:    true,
+			CanPublish: false,
+			CanAdmin:   true,
 		}
 		for _, email := range cfg.OIDCAdminEmails {
 			normalized := normalizeEmail(email)
 			if normalized == "" {
 				continue
 			}
-			oidcEmails[normalized] = adminPrincipal
+			registerOIDCPrincipal(oidcEmails, normalized, adminPrincipal)
 		}
 		for _, subject := range cfg.OIDCAdminSubjects {
 			subject = strings.TrimSpace(subject)
 			if subject == "" {
 				continue
 			}
-			oidcSubjects[subject] = adminPrincipal
+			registerOIDCPrincipal(oidcSubjects, subject, adminPrincipal)
 		}
 		for _, group := range cfg.OIDCAdminGroups {
 			normalized := normalizeGroup(group)
 			if normalized == "" {
 				continue
 			}
-			oidcGroups[normalized] = adminPrincipal
+			registerOIDCPrincipal(oidcGroups, normalized, adminPrincipal)
 		}
 	}
 
@@ -288,27 +251,6 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 		oidcDomains:  oidcDomains,
 		oidcGroups:   oidcGroups,
 	}, nil
-}
-
-func validateTeamOIDCGroupRoles(cfg TeamConfig) error {
-	publishGroups := make(map[string]struct{}, len(cfg.OIDCGroups))
-	for _, group := range cfg.OIDCGroups {
-		normalized := normalizeGroup(group)
-		if normalized == "" {
-			continue
-		}
-		publishGroups[normalized] = struct{}{}
-	}
-	for _, group := range cfg.OIDCTeamAdminGroups {
-		normalized := normalizeGroup(group)
-		if normalized == "" {
-			continue
-		}
-		if _, exists := publishGroups[normalized]; exists {
-			return fmt.Errorf("OIDC group %q cannot be configured as both publish group and team admin group for team %q", normalized, cfg.Team)
-		}
-	}
-	return nil
 }
 
 func (a *Authorizer) Enabled() bool {
@@ -332,24 +274,12 @@ func (a *Authorizer) AuthenticateOIDC(email, subject string, groups []string) (P
 	var first Principal
 	var found bool
 	addCandidate := func(principal Principal) {
-		if principal.CanAdmin {
-			first = principal
-			found = true
-			return
-		}
-		if principal.CanManageTeam && found && first.CanManageTeam {
-			first, _ = mergeTeamAdminPrincipals(first, principal)
-			return
-		}
-		if principal.CanManageTeam && (!found || !first.CanAdmin) {
-			first = principal
-			found = true
-			return
-		}
 		if !found {
 			first = principal
 			found = true
+			return
 		}
+		first = mergePrincipals(first, principal)
 	}
 
 	for _, group := range groups {
@@ -379,26 +309,18 @@ func (a *Authorizer) AuthenticateOIDC(email, subject string, groups []string) (P
 	return first, found
 }
 
-func mergeTeamAdminPrincipals(left, right Principal) (Principal, bool) {
-	if !left.CanManageTeam || !right.CanManageTeam || left.CanAdmin || right.CanAdmin {
-		return Principal{}, false
-	}
-
+func mergePrincipals(left, right Principal) Principal {
 	merged := left
 	merged.CanRead = left.CanRead || right.CanRead
 	merged.CanPublish = left.CanPublish || right.CanPublish
+	merged.CanManageTeam = left.CanManageTeam || right.CanManageTeam
+	merged.CanAdmin = left.CanAdmin || right.CanAdmin
 	merged.PublishOwners = mergeStringSets(left.PublishOwners, right.PublishOwners)
 	merged.ManagedTeams = mergeStringSets(left.ManagedTeams, right.ManagedTeams)
-	if len(merged.ManagedTeams) == 0 {
-		merged.ManagedTeams = map[string]struct{}{}
-		if strings.TrimSpace(left.Team) != "" {
-			merged.ManagedTeams[left.Team] = struct{}{}
-		}
-		if strings.TrimSpace(right.Team) != "" {
-			merged.ManagedTeams[right.Team] = struct{}{}
-		}
+	if right.CanAdmin && !left.CanAdmin {
+		merged.Team = right.Team
 	}
-	return merged, true
+	return merged
 }
 
 func mergeStringSets(left, right map[string]struct{}) map[string]struct{} {
@@ -436,7 +358,7 @@ func (a *Authorizer) RequirePublish(w http.ResponseWriter, req *http.Request, ow
 		return Principal{}, false
 	}
 
-	if _, allowed := principal.PublishOwners[owner]; !allowed {
+	if !principal.CanPublishOwner(owner) {
 		writeAuthError(w, http.StatusForbidden, "token is not allowed to publish to this space")
 		return Principal{}, false
 	}

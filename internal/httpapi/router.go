@@ -131,6 +131,7 @@ func NewRouter(config RouterConfig, opts ...RouterOption) http.Handler {
 	mux.HandleFunc("/readyz", r.readyz)
 	mux.HandleFunc("/api/v1/modules", r.modulesCollection)
 	mux.HandleFunc("/api/v1/modules/", r.moduleItem)
+	mux.HandleFunc("/api/v1/manage/publish-spaces", r.publishSpaces)
 	mux.HandleFunc("/modules/", r.modulePage)
 	if config.ForgeProxy != nil {
 		mux.Handle("/v3/", r.requireRead(http.HandlerFunc(r.v3Handler)))

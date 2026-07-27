@@ -15,12 +15,13 @@
 Поточна реалізація покриває:
 
 - `POST /api/v1/modules` для завантаження нової версії модуля;
+- `GET /api/v1/manage/publish-spaces` для списку spaces, доступних authenticated publish principal;
 - `GET /api/v1/modules?limit=20&offset=0` для списку модулів; відповідь містить `items`, `limit`, `offset` і `total`;
 - `GET /api/v1/modules/{owner}/{name}` для картки модуля;
 - `DELETE /api/v1/modules/{owner}/{name}` для видалення модуля через admin/team-admin доступ;
 - `GET /api/v1/modules/{owner}/{name}/versions/{version}` для конкретного релізу;
 - `DELETE /api/v1/modules/{owner}/{name}/versions/{version}` для видалення окремої версії через admin/team-admin доступ;
-- `GET /api/v1/modules/{owner}/{name}/versions/{version}/download` для редіректу на об'єкт у GCS;
+- `GET /api/v1/modules/{owner}/{name}/versions/{version}/download` для завантаження збереженого артефакту через сервіс;
 - `GET /` для HTML index-сторінки зі списком локально опублікованих модулів;
 - `GET /modules/{owner}/{name}` для HTML-сторінки модуля з markdown README, dropdown вибору версії та інструкціями встановлення;
 - `GET /v3/*` і `HEAD /v3/*` для reverse proxy на офіційний Puppet Forge API;
@@ -49,11 +50,11 @@
 
 Потік публікації:
 
-1. Клієнт надсилає multipart-запит із tar.gz артефактом і метаданими.
-2. Сервіс валідує owner/name/version.
-3. Назва артефакту нормалізується до `<owner>-<name>-<version>.tar.gz`, а файл завантажується в storage prefix `modules/<owner>/<name>/`.
-4. Метадані релізу записуються в обраний SQL backend.
-5. API повертає опис створеного релізу.
+1. Клієнт надсилає multipart-запит із вибраним `space` та tar.gz артефактом.
+2. Сервіс перевіряє право authenticated principal публікувати в цей space.
+3. Identity та metadata читаються з архіву, а namespace має збігатися з вибраним space.
+4. Назва артефакту нормалізується до `<owner>-<name>-<version>.tar.gz`, а файл завантажується в storage prefix `modules/<owner>/<name>/`.
+5. Метадані релізу записуються в SQL backend і повертаються клієнту.
 
 Потік проксіювання:
 
@@ -64,7 +65,7 @@
 
 ## Конфігурація
 
-Див. [`.env.example`](./.env.example).
+Див. [`.env.example`](.env.example).
 
 ## Локальний старт
 
@@ -85,9 +86,10 @@ make test-postgres
 
 Мінімальні вимоги до модуля:
 
-- у корені модуля має бути валідний `metadata.json`;
+- в архіві має бути рівно один валідний `metadata.json`;
 - `metadata.json.name` має бути у форматі `<owner>-<name>`, наприклад `teamname-apache`;
-- версія береться з `metadata.json.version`, якщо її не передати окремо в form fields;
+- у `metadata.json.version` має бути версія;
+- namespace із `metadata.json.name` має збігатися з вибраним `space`;
 - README бажано покласти в `README.md`, тоді він з'явиться на HTML-сторінці модуля.
 
 Приклад структури:
@@ -120,7 +122,7 @@ puppet module build
 
 Після цього Puppet зазвичай покладе артефакт у `pkg/teamname-apache-1.2.3.tar.gz`.
 
-Рекомендований варіант: сервіс сам вичитає `owner`, `name`, `version` і `description` з архіву.
+Для публікації передаються тільки цільовий space та архів.
 
 ```bash
 export FORGE_URL="https://forge.example.com"
@@ -128,28 +130,23 @@ export PUBLISH_TOKEN="replace-me"
 
 curl -X POST "${FORGE_URL}/api/v1/modules" \
   -H "Authorization: Bearer ${PUBLISH_TOKEN}" \
-  -F "file=@pkg/teamname-apache-1.2.3.tar.gz" \
-  -F 'metadata={"source":"internal-ci"}'
+  -F "space=teamname" \
+  -F "file=@pkg/teamname-apache-1.2.3.tar.gz"
 ```
 
 Важливо:
 
-- для звичайної публікації достатньо передати тільки `file`;
-- `owner`, `name`, `version`, `description` сервіс дістане з архіву;
-- якщо передати ці поля у form fields, вони перекриють значення з архіву;
+- для публікації потрібні тільки поля `space` і `file`;
+- owner, name, version, summary, description та metadata беруться виключно з `metadata.json`;
+- ручні identity або metadata override fields відхиляються;
+- namespace архіву має збігатися з вибраним space;
 - токен має бути в `publish_tokens` і мати право на потрібний publish space. У structured UI space з назвою `Team` додається автоматично; додаткові spaces додаються через `Extra publish spaces`.
 
-Ручний варіант: можна явно передати form fields, якщо треба перевизначити значення з архіву або дописати службові metadata.
+Переглянути spaces, доступні publish token:
 
 ```bash
-curl -X POST "${FORGE_URL}/api/v1/modules" \
-  -H "Authorization: Bearer ${PUBLISH_TOKEN}" \
-  -F "file=@pkg/teamname-apache-1.2.3.tar.gz" \
-  -F "owner=teamname" \
-  -F "name=apache" \
-  -F "version=1.2.3" \
-  -F "description=Apache module" \
-  -F 'metadata={"source":"internal-ci","git_sha":"abc123"}'
+curl "${FORGE_URL}/api/v1/manage/publish-spaces" \
+  -H "Authorization: Bearer ${PUBLISH_TOKEN}"
 ```
 
 Швидка перевірка після публікації:
@@ -213,7 +210,7 @@ Metrics:
 
 Це дозволяє будувати запити на кшталт "що зараз pinned у Puppetfile, але вже відстає від останньої версії у внутрішньому forge".
 
-Повний опис метрик див. у [METRICS.md](./METRICS.md).
+Повний опис метрик див. у [METRICS.md](METRICS.md).
 
 Runtime parameters can be passed either through environment variables or command-line flags. Environment variables are still supported, and command-line flags override environment values when both are set.
 
@@ -352,7 +349,7 @@ Web auth:
 - `ACTIVE_RELEASE_TTL` за замовчуванням дорівнює `720h` / 30 днів і задається при старті сервісу;
 - видалені upstream-версії записуються в tombstone-таблицю `deleted_releases`, тому наступний upstream sync не створює їх знову;
 - видалення всього модуля очищає tombstones і release usage для цього module, тому після повторного upstream sync модуль можна створити заново з усіма доступними upstream-релізами;
-- upload форми використовує ті самі правила, що й `POST /api/v1/modules`: owner/name/version можна взяти з `metadata.json` архіву або перевизначити form fields.
+- upload форма використовує ті самі правила, що й `POST /api/v1/modules`: користувач вибирає дозволений space та файл, а identity і metadata беруться з `metadata.json`.
 
 Для `docker-compose.yml` OIDC можна ввімкнути через env:
 
@@ -369,7 +366,7 @@ export ADMIN_TOKEN="replace-me-bootstrap-token"
 docker compose up
 ```
 
-У локальному [`docker-compose.yml`](./docker-compose.yml) ці значення беруться з env або `.env`, а runtime також підтримує відповідні CLI flags. Приклад без секретів лежить у [`.env.example`](./.env.example). За замовчуванням Compose стартує з `WEB_AUTH_MODE=none`, щоб випадково не тримати OIDC secrets у YAML.
+У локальному [`docker-compose.yml`](docker-compose.yml) ці значення беруться з env або `.env`, а runtime також підтримує відповідні CLI flags. Приклад без секретів лежить у [`.env.example`](.env.example). За замовчуванням Compose стартує з `WEB_AUTH_MODE=none`, щоб випадково не тримати OIDC secrets у YAML.
 
 Для локального Authentik часто краще не використовувати `localhost` у redirect URI. Задай локальний DNS hostname, який відкривається в браузері, наприклад:
 
@@ -470,7 +467,7 @@ Logout із `/manage` чистить локальні token/OIDC cookies. Якщ
 Helm chart також підтримує ресурси Prometheus Operator, але за замовчуванням вони вимкнені:
 
 - `serviceMonitor.enabled=true` створює `ServiceMonitor`;
-- `prometheusRule.enabled=true` створює `PrometheusRule` із тими ж recording і alert rules, що й [examples/prometheus/alerts/puppet-forge.yml](./examples/prometheus/alerts/puppet-forge.yml).
+- `prometheusRule.enabled=true` створює `PrometheusRule` із тими ж recording і alert rules, що й [examples/prometheus/alerts/puppet-forge.yml](examples/prometheus/alerts/puppet-forge.yml).
 
 ## Docker Compose
 
@@ -523,7 +520,7 @@ docker compose logs r10k
 
 ## Makefile
 
-Для стандартних локальних команд є [`Makefile`](./Makefile):
+Для стандартних локальних команд є [`Makefile`](Makefile):
 
 ```bash
 make help
@@ -547,7 +544,7 @@ GO=go GOLANGCI_LINT=golangci-lint make check
 
 ## Kubernetes
 
-Helm chart лежить у [`deploy/puppet-forge`](./deploy/puppet-forge).
+Helm chart лежить у [`deploy/puppet-forge`](deploy/puppet-forge).
 
 Приклад:
 
@@ -570,9 +567,9 @@ Prometheus Operator ресурси вимкнені за замовчуванн�
 
 ## GitHub Actions
 
-Workflow [`CI`](./.github/workflows/ci.yml) запускається для pull request і push у будь-яку branch. Він викликає reusable workflow [`Checks`](./.github/workflows/checks.yml), який перевіряє форматування, `go vet`, `golangci-lint`, coverage threshold, Docker Compose config, Helm lint/package, release archive smoke, Docker image dry-build і race tests.
+Workflow [`CI`](.github/workflows/ci.yml) запускається для pull request і push у будь-яку branch. Він викликає reusable workflow [`Checks`](.github/workflows/checks.yml), який перевіряє форматування, `go vet`, `golangci-lint`, coverage threshold, Docker Compose config, Helm lint/package, release archive smoke, Docker image dry-build і race tests.
 
-Workflow [`Release`](./.github/workflows/release.yml) запускається тільки для тегів `v*.*.*`. Перед публікацією він викликає той самий reusable checks workflow, але без локальної Docker Compose config перевірки, а для тегу `v1.2.3` будує:
+Workflow [`Release`](.github/workflows/release.yml) запускається тільки для тегів `v*.*.*`. Перед публікацією він викликає той самий reusable checks workflow, але без локальної Docker Compose config перевірки, а для тегу `v1.2.3` будує:
 
 - GitHub Release assets з binary archives у `dist/*.tar.gz` і `dist/checksums.txt`;
 - multi-arch Docker image `ghcr.io/<owner>/<repo>:v1.2.3` і `:latest`;
@@ -591,7 +588,7 @@ helm upgrade --install puppet-forge puppet-forge/puppet-forge
 
 ## Додаткова документація
 
-- Метрики: [METRICS.md](./METRICS.md)
-- Архітектура: [ARCHITECTURE.md](./ARCHITECTURE.md)
-- Grafana dashboard: [examples/grafana/puppet-forge-dashboard.json](./examples/grafana/puppet-forge-dashboard.json)
-- Prometheus rules: [examples/prometheus/alerts/puppet-forge.yml](./examples/prometheus/alerts/puppet-forge.yml)
+- Метрики: [METRICS.md](METRICS.md)
+- Архітектура: [ARCHITECTURE.md](ARCHITECTURE.md)
+- Grafana dashboard: [examples/grafana/puppet-forge-dashboard.json](examples/grafana/puppet-forge-dashboard.json)
+- Prometheus rules: [examples/prometheus/alerts/puppet-forge.yml](examples/prometheus/alerts/puppet-forge.yml)

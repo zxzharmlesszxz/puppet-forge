@@ -407,46 +407,22 @@
     {{if .Principal.CanPublish}}
     <section class="panel">
       <h2>Upload or Update</h2>
-      <p class="section-lead">Choose the target space and upload a Puppet module archive. Leave override fields empty to use values from the archive metadata.</p>
+      <p class="section-lead">Choose an allowed target space and upload a Puppet module archive. Module identity and metadata are read from metadata.json.</p>
       <form method="post" action="/manage/modules" enctype="multipart/form-data">
         {{csrfInput $.CSRFToken}}
         <div class="grid">
           <div>
-            {{if .Principal.CanAdmin}}
-            <div class="label-row"><label for="publish-owner-input">Space</label><span class="field-pill">Required</span></div>
-            <input id="publish-owner-input" name="owner" placeholder="platform" required>
-            {{else}}
-            <div class="label-row"><label for="publish-owner-select">Space</label><span class="field-pill">Required</span></div>
-            <select id="publish-owner-select" name="owner" required>
+            <div class="label-row"><label for="publish-space-select">Space</label><span class="field-pill">Required</span></div>
+            <select id="publish-space-select" name="space" required>
               {{range .Owners}}
               <option value="{{.}}">{{.}}</option>
               {{end}}
             </select>
-            {{end}}
           </div>
           <div>
-            <div class="label-row"><label for="module-name-input">Name</label><span class="field-pill optional">Optional</span></div>
-            <input id="module-name-input" name="name" placeholder="optional override, e.g. apache">
-            <p class="field-hint">Defaults to the module name from metadata.json.</p>
-          </div>
-          <div>
-            <div class="label-row"><label for="module-version-input">Version</label><span class="field-pill optional">Optional</span></div>
-            <input id="module-version-input" name="version" placeholder="optional override, e.g. 1.2.3">
-            <p class="field-hint">Defaults to the archive version.</p>
-          </div>
-          <div>
-            <div class="label-row"><label for="module-archive-input">Archive</label><span class="field-pill optional">Tarball</span></div>
-            <input id="module-archive-input" name="file" type="file" accept=".gz,.tgz,.tar.gz">
+            <div class="label-row"><label for="module-archive-input">Archive</label><span class="field-pill">Required</span></div>
+            <input id="module-archive-input" name="file" type="file" accept=".gz,.tgz,.tar.gz" required>
             <p class="field-hint">Use a Puppet module .tar.gz archive.</p>
-          </div>
-          <div class="field-full">
-            <div class="label-row"><label for="module-description-input">Description</label><span class="field-pill optional">Optional</span></div>
-            <input id="module-description-input" name="description" placeholder="optional description override">
-          </div>
-          <div class="field-full">
-            <div class="label-row"><label for="module-metadata-input">Metadata JSON</label><span class="field-pill optional">Optional</span></div>
-            <textarea id="module-metadata-input" name="metadata" placeholder="{&quot;source&quot;:&quot;manual&quot;}"></textarea>
-            <p class="field-hint">Merged over metadata.json from the archive.</p>
           </div>
         </div>
         <button class="primary" type="submit">Publish</button>

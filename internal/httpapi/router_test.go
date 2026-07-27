@@ -2636,7 +2636,7 @@ func TestManageAccessRemembersOpenSections(t *testing.T) {
 	}
 }
 
-func TestManageAccessRejectsDuplicateOIDCMapping(t *testing.T) {
+func TestManageAccessAllowsSharedOIDCGroupMapping(t *testing.T) {
 	t.Parallel()
 
 	st := newHTTPAPITestStore(t)
@@ -2664,16 +2664,57 @@ func TestManageAccessRejectsDuplicateOIDCMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadAll() error = %v", err)
 	}
-	if !strings.Contains(string(body), "OIDC group") || !strings.Contains(string(body), "teamname") || !strings.Contains(string(body), "alpha") {
-		t.Fatalf("expected duplicate OIDC group validation error, got body:\n%s", string(body))
+	if !strings.Contains(string(body), "team access saved") {
+		t.Fatalf("expected shared OIDC group mapping to be saved, got body:\n%s", string(body))
 	}
 
 	saved, err := st.LoadTeamConfigs(ctx)
 	if err != nil {
 		t.Fatalf("LoadTeamConfigs() error = %v", err)
 	}
-	if findTeamConfig(saved, "alpha") != nil {
-		t.Fatalf("invalid alpha config was persisted: %#v", saved)
+	if findTeamConfig(saved, "alpha") == nil {
+		t.Fatalf("alpha config was not persisted: %#v", saved)
+	}
+	authorizer, err := auth.NewAuthorizer(saved)
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
+	}
+	principal, ok := authorizer.AuthenticateOIDC("", "", []string{"teamname-devops"})
+	if !ok || !principal.CanPublishOwner("teamname") || !principal.CanPublishOwner("alpha") {
+		t.Fatalf("shared OIDC mapping did not grant both spaces: %#v ok=%v", principal, ok)
+	}
+}
+
+func TestPublishSpacesEndpointReturnsOnlyPrincipalSpaces(t *testing.T) {
+	t.Parallel()
+
+	authorizer := newAdminAuthorizer(t, auth.TeamConfig{
+		Team:          "teamname",
+		PublishTokens: []string{"publish-token"},
+		PublishOwners: []string{"shared"},
+	})
+	_, server := newHTTPAPIAccessMatrixServer(t, authorizer)
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/manage/publish-spaces", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer publish-token")
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET publish spaces error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("publish spaces status = %d", resp.StatusCode)
+	}
+	var payload struct {
+		Spaces []string `json:"spaces"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if len(payload.Spaces) != 2 || payload.Spaces[0] != "shared" || payload.Spaces[1] != "teamname" {
+		t.Fatalf("unexpected publish spaces: %#v", payload.Spaces)
 	}
 }
 
@@ -2835,42 +2876,37 @@ func TestManageModulesNavStaysInManage(t *testing.T) {
 	}
 }
 
-func TestManagePublishFormRequiresOnlySpaceInBrowser(t *testing.T) {
+func TestManagePublishFormAcceptsOnlySpaceAndArchive(t *testing.T) {
 	t.Parallel()
 
 	var rec bytes.Buffer
 	err := managePageTemplate.Execute(&rec, managePageData{
-		Principal: auth.Principal{CanAdmin: true, CanPublish: true},
+		Principal: auth.Principal{CanAdmin: true, CanPublish: true, CanManageTeam: true, PublishOwners: map[string]struct{}{"teamname": {}}},
+		Owners:    []string{"teamname"},
 		CSRFToken: "csrf",
 	})
 	if err != nil {
 		t.Fatalf("managePageTemplate.Execute() error = %v", err)
 	}
 	body := rec.String()
-	if !strings.Contains(body, `<label for="publish-owner-input">Space</label>`) {
-		t.Fatalf("manage publish form does not label owner as space:\n%s", body)
-	}
 	for _, want := range []string{
-		`<input id="publish-owner-input" name="owner" placeholder="platform" required>`,
-		`placeholder="optional override, e.g. apache"`,
-		`placeholder="optional override, e.g. 1.2.3"`,
-		`placeholder="optional description override"`,
-		`placeholder="{&quot;source&quot;:&quot;manual&quot;}"`,
-		`<span class="field-pill">Required</span>`,
-		`Leave override fields empty to use values from the archive metadata.`,
-		`Defaults to the module name from metadata.json.`,
-		`Merged over metadata.json from the archive.`,
+		`<label for="publish-space-select">Space</label>`,
+		`<select id="publish-space-select" name="space" required>`,
+		`<option value="teamname">teamname</option>`,
+		`id="module-archive-input" name="file" type="file" accept=".gz,.tgz,.tar.gz" required`,
+		`Module identity and metadata are read from metadata.json.`,
+		`<a href="/manage/access/add">Add team</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("manage publish form missing expected helper %q:\n%s", want, body)
 		}
 	}
 	for _, forbidden := range []string{
-		`id="module-name-input" name="name" placeholder="module" required`,
-		`id="module-version-input" name="version" placeholder="1.2.3" required`,
-		`id="module-archive-input" name="file" type="file" accept=".gz,.tgz,.tar.gz" required`,
-		`id="module-description-input" name="description" placeholder="Optional override" required`,
-		`id="module-metadata-input" name="metadata" placeholder="{&#34;source&#34;:&#34;web&#34;}" required`,
+		`name="owner"`,
+		`name="name"`,
+		`name="version"`,
+		`name="description"`,
+		`name="metadata"`,
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("manage publish form marks optional field as browser-required %q:\n%s", forbidden, body)
@@ -2937,8 +2973,8 @@ func TestReadPublishInputReportsMissingArchive(t *testing.T) {
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	if err := writer.WriteField("owner", "teamname"); err != nil {
-		t.Fatalf("WriteField(owner) error = %v", err)
+	if err := writer.WriteField("space", "teamname"); err != nil {
+		t.Fatalf("WriteField(space) error = %v", err)
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatalf("multipart Close() error = %v", err)
@@ -3134,27 +3170,27 @@ func TestRenderMarkdownSanitizesUnsafeLinks(t *testing.T) {
 	}
 }
 
-func TestParseMetadata(t *testing.T) {
+func TestReadPublishInputRejectsManualMetadataFields(t *testing.T) {
 	t.Parallel()
 
-	metadata, err := parseMetadata([]string{`{"source":"test"}`})
-	if err != nil {
-		t.Fatalf("parseMetadata() error = %v", err)
-	}
-	if metadata["source"] != "test" {
-		t.Fatalf("unexpected metadata: %#v", metadata)
-	}
-
-	metadata, err = parseMetadata(nil)
-	if err != nil {
-		t.Fatalf("parseMetadata(nil) error = %v", err)
-	}
-	if len(metadata) != 0 {
-		t.Fatalf("expected empty metadata, got %#v", metadata)
-	}
-
-	if _, err := parseMetadata([]string{"{"}); err == nil {
-		t.Fatal("expected invalid metadata error")
+	for _, field := range []string{"owner", "name", "version", "summary", "description", "metadata"} {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		if err := writer.WriteField("space", "teamname"); err != nil {
+			t.Fatalf("WriteField(space) error = %v", err)
+		}
+		if err := writer.WriteField(field, "override"); err != nil {
+			t.Fatalf("WriteField(%s) error = %v", field, err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatalf("multipart Close() error = %v", err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", &body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		_, err := readPublishInput(httptest.NewRecorder(), req, 0)
+		if err == nil || !strings.Contains(err.Error(), `manual field "`+field+`" is not allowed`) {
+			t.Fatalf("field %s error = %v", field, err)
+		}
 	}
 }
 
@@ -3273,9 +3309,7 @@ func buildPublishMultipart(t *testing.T, owner, name, version string, archive []
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	fields := map[string]string{
-		"owner":   owner,
-		"name":    name,
-		"version": version,
+		"space": owner,
 	}
 	if csrfToken != "" {
 		fields["csrf_token"] = csrfToken

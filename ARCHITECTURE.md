@@ -37,13 +37,13 @@ The service separates:
 
 ### Module Publishing Flow
 
-1. Client sends `POST /api/v1/modules` with multipart form data and a module archive.
-2. `internal/httpapi` reads the uploaded file and optional form fields.
-3. `internal/service` inspects the archive and fills missing `owner`, `name`, `version`, `description`, `README`, and metadata from `metadata.json`.
-4. The service validates owner/name slugs and version presence.
+1. Client sends `POST /api/v1/modules` with multipart `space` and `file` fields.
+2. `internal/httpapi` authenticates the principal and verifies publish permission for the selected space.
+3. `internal/service` requires exactly one `metadata.json` and reads owner, name, version, description, README, and metadata from the archive.
+4. The service verifies that the archive namespace matches the selected space and validates the resulting identity.
 5. Artifact storage writes the archive to `<prefix>/<owner>/<name>/<owner>-<name>-<version>.tar.gz`.
 6. SQL store upserts the module and persists the release metadata.
-7. API returns the created release payload.
+7. API returns the created release payload. Manual identity and metadata form overrides are rejected.
 
 ### Read Flow
 
@@ -124,7 +124,7 @@ Both SQLite and PostgreSQL stores create the required operational schema in code
 
 HTML UI can additionally use OIDC session auth when `WEB_AUTH_MODE=oidc`. Structured team access maps OIDC identities to team principals with publishing rights through `oidc_groups`. Delegated team admin principals map through `oidc_team_admin_emails` or `oidc_team_admin_groups` and may edit only their own team's tokens and OIDC groups, and may delete modules/releases only inside their own publishing spaces. Global admin principals are managed separately through `oidc_admin_groups`, `oidc_admin_emails`, or `oidc_admin_subjects`.
 
-When a single OIDC identity matches several mappings, global admin wins over team admin, and team admin wins over ordinary publishing rights. This keeps admin access usable for users who are also members of ordinary team groups.
+When a single OIDC identity matches several mappings, the service unions all capabilities and team scopes. Global administration therefore does not remove team administration or publishing rights. A global-admin mapping alone does not grant publishing rights; content permissions still come from publisher or team-admin mappings.
 
 `/manage/access` is the access-management UI for live access changes. Global admins can create, rename, delete, and bulk-replace teams; edit optional extra publishing spaces; and manage global OIDC admin mappings. Team admins can open the same page but see only their own team and can edit only read tokens, publishing tokens, OIDC publishing groups, OIDC team admin emails, and OIDC team admin groups. In the structured form, each team can publish to the space matching `team` by default; extra spaces extend that list and remain global-admin-only. Delete is allowed for global admins across all spaces and for team admins only inside their managed primary team spaces; extra publishing spaces allow publishing/updating but not deletion. Ordinary publishing tokens cannot delete. Latest releases and releases active within `ACTIVE_RELEASE_TTL` cannot be deleted through API or `/manage`; module deletion is rejected while the module contains protected releases. If SQL access config is empty, startup requires `ADMIN_TOKEN`; the operator logs in with that token and creates the initial access model through `/manage/access`.
 

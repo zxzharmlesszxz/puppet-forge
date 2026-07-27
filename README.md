@@ -1,6 +1,6 @@
 # Puppet Forge Service
 
-[Українська версія](./README.uk.md)
+[Українська версія](README.uk.md)
 
 Go service for running an internal Puppet Forge-compatible module registry.
 
@@ -20,12 +20,13 @@ It provides:
 Implemented:
 
 - `POST /api/v1/modules` uploads a new module version;
+- `GET /api/v1/manage/publish-spaces` lists spaces available to the authenticated publish principal;
 - `GET /api/v1/modules?limit=20&offset=0` lists modules and returns `items`, `limit`, `offset`, and `total`;
 - `GET /api/v1/modules/{owner}/{name}` returns a module card;
 - `DELETE /api/v1/modules/{owner}/{name}` deletes a module through global-admin or team-admin access;
 - `GET /api/v1/modules/{owner}/{name}/versions/{version}` returns a specific release;
 - `DELETE /api/v1/modules/{owner}/{name}/versions/{version}` deletes a specific release through global-admin or team-admin access;
-- `GET /api/v1/modules/{owner}/{name}/versions/{version}/download` redirects to the stored artifact;
+- `GET /api/v1/modules/{owner}/{name}/versions/{version}/download` serves the stored artifact;
 - `GET /` renders the public HTML module index;
 - `GET /modules/{owner}/{name}` renders a module page with README Markdown, version selector, and install snippets;
 - `GET /v3/*` and `HEAD /v3/*` reverse-proxy the official Puppet Forge API;
@@ -54,11 +55,11 @@ Not implemented:
 
 Publish flow:
 
-1. A client sends a multipart request containing a `.tar.gz` module artifact.
-2. The service validates `owner`, `name`, and `version`.
-3. The artifact filename is normalized to `<owner>-<name>-<version>.tar.gz` and uploaded under `modules/<owner>/<name>/`.
-4. Release metadata is written to the selected SQL backend.
-5. The API returns the created release description.
+1. A client sends a multipart request containing the selected `space` and a `.tar.gz` module artifact.
+2. The service verifies that the authenticated principal may publish to that space.
+3. The service reads identity and metadata from the archive and requires its namespace to match the selected space.
+4. The artifact filename is normalized to `<owner>-<name>-<version>.tar.gz` and uploaded under `modules/<owner>/<name>/`.
+5. Release metadata is written to the selected SQL backend and returned to the client.
 
 Proxy flow:
 
@@ -69,7 +70,7 @@ Proxy flow:
 
 ## Configuration
 
-See [`.env.example`](./.env.example).
+See [`.env.example`](.env.example).
 
 Runtime parameters can be passed either through environment variables or command-line flags. Environment variables are still supported, and command-line flags override environment values when both are set.
 
@@ -314,9 +315,10 @@ The service accepts Puppet module `.tar.gz` archives through `POST /api/v1/modul
 
 Minimum module requirements:
 
-- the archive root contains a valid `metadata.json`;
+- the archive contains exactly one valid `metadata.json`;
 - `metadata.json.name` uses the `<owner>-<name>` format, for example `teamname-apache`;
-- `version` is read from `metadata.json.version` unless overridden by form fields;
+- `metadata.json.version` is present;
+- the namespace in `metadata.json.name` matches the selected `space`;
 - putting `README.md` in the module is recommended because it is rendered on the HTML module page.
 
 Example layout:
@@ -349,7 +351,7 @@ puppet module build
 
 Puppet usually writes the artifact to `pkg/teamname-apache-1.2.3.tar.gz`.
 
-Recommended upload: let the service read `owner`, `name`, `version`, and `description` from the archive:
+Publishing accepts only the target space and archive:
 
 ```bash
 export FORGE_URL="https://forge.example.com"
@@ -357,28 +359,23 @@ export PUBLISH_TOKEN="replace-me"
 
 curl -X POST "${FORGE_URL}/api/v1/modules" \
   -H "Authorization: Bearer ${PUBLISH_TOKEN}" \
-  -F "file=@pkg/teamname-apache-1.2.3.tar.gz" \
-  -F 'metadata={"source":"internal-ci"}'
+  -F "space=teamname" \
+  -F "file=@pkg/teamname-apache-1.2.3.tar.gz"
 ```
 
 Important details:
 
-- normal publishing only needs the `file` field;
-- `owner`, `name`, `version`, and `description` are read from the archive;
-- form fields override archive values when provided;
+- publishing requires only the `space` and `file` fields;
+- owner, module name, version, summary, description, and stored metadata are read exclusively from `metadata.json`;
+- manual identity or metadata override fields are rejected;
+- the archive namespace must equal the selected space;
 - the token must be a `publish_token` with access to the target publishing space. In the structured UI, the space named after `Team` is added automatically, and additional spaces are configured as extra publishing spaces.
 
-Manual upload with explicit overrides:
+List the spaces available to a publish token:
 
 ```bash
-curl -X POST "${FORGE_URL}/api/v1/modules" \
-  -H "Authorization: Bearer ${PUBLISH_TOKEN}" \
-  -F "file=@pkg/teamname-apache-1.2.3.tar.gz" \
-  -F "owner=teamname" \
-  -F "name=apache" \
-  -F "version=1.2.3" \
-  -F "description=Apache module" \
-  -F 'metadata={"source":"internal-ci","git_sha":"abc123"}'
+curl "${FORGE_URL}/api/v1/manage/publish-spaces" \
+  -H "Authorization: Bearer ${PUBLISH_TOKEN}"
 ```
 
 Quick verification:
@@ -418,8 +415,8 @@ The service provides:
 
 - structured HTTP logging for all requests;
 - Prometheus metrics on `GET /metrics`;
-- Grafana dashboard example in [examples/grafana/puppet-forge-dashboard.json](./examples/grafana/puppet-forge-dashboard.json);
-- Prometheus alert rules in [examples/prometheus/alerts/puppet-forge.yml](./examples/prometheus/alerts/puppet-forge.yml).
+- Grafana dashboard example in [examples/grafana/puppet-forge-dashboard.json](examples/grafana/puppet-forge-dashboard.json);
+- Prometheus alert rules in [examples/prometheus/alerts/puppet-forge.yml](examples/prometheus/alerts/puppet-forge.yml).
 
 Inventory metrics:
 
@@ -458,7 +455,7 @@ Metric notes:
 - `latest_version` from the local Forge;
 - shared `owner` and `name` labels.
 
-See [METRICS.md](./METRICS.md) for the full metrics reference.
+See [METRICS.md](METRICS.md) for the full metrics reference.
 
 ## Local Development
 
@@ -550,7 +547,7 @@ GO=go GOLANGCI_LINT=golangci-lint make check
 
 ## Kubernetes
 
-The Helm chart is in [deploy/puppet-forge](./deploy/puppet-forge).
+The Helm chart is in [deploy/puppet-forge](deploy/puppet-forge).
 
 Example:
 
@@ -572,13 +569,13 @@ When `autoscaling.enabled=true`, the Deployment does not render `spec.replicas`;
 The chart supports Prometheus Operator resources, disabled by default:
 
 - `serviceMonitor.enabled=true` creates a `ServiceMonitor`;
-- `prometheusRule.enabled=true` creates a `PrometheusRule` with the same recording and alert rules as [examples/prometheus/alerts/puppet-forge.yml](./examples/prometheus/alerts/puppet-forge.yml).
+- `prometheusRule.enabled=true` creates a `PrometheusRule` with the same recording and alert rules as [examples/prometheus/alerts/puppet-forge.yml](examples/prometheus/alerts/puppet-forge.yml).
 
 ## GitHub Actions
 
-Workflow [`CI`](./.github/workflows/ci.yml) runs on pull requests and branch pushes. It calls reusable workflow [`Checks`](./.github/workflows/checks.yml) to run formatting, `go vet`, `golangci-lint`, coverage threshold, Docker Compose config, Helm lint/package, release archive smoke, Docker image dry-build, and race tests.
+Workflow [`CI`](.github/workflows/ci.yml) runs on pull requests and branch pushes. It calls reusable workflow [`Checks`](.github/workflows/checks.yml) to run formatting, `go vet`, `golangci-lint`, coverage threshold, Docker Compose config, Helm lint/package, release archive smoke, Docker image dry-build, and race tests.
 
-Workflow [`Release`](./.github/workflows/release.yml) runs only for tags matching `v*.*.*`. It calls the same reusable checks before publishing, without the local Docker Compose config check. For tag `v1.2.3`, it builds:
+Workflow [`Release`](.github/workflows/release.yml) runs only for tags matching `v*.*.*`. It calls the same reusable checks before publishing, without the local Docker Compose config check. For tag `v1.2.3`, it builds:
 
 - GitHub Release assets with binary archives in `dist/*.tar.gz` and `dist/checksums.txt`;
 - multi-arch Docker images `ghcr.io/<owner>/<repo>:v1.2.3` and `:latest`;
@@ -597,7 +594,7 @@ helm upgrade --install puppet-forge puppet-forge/puppet-forge
 
 ## Additional Documentation
 
-- Metrics: [METRICS.md](./METRICS.md)
-- Architecture: [ARCHITECTURE.md](./ARCHITECTURE.md)
-- Grafana dashboard: [examples/grafana/puppet-forge-dashboard.json](./examples/grafana/puppet-forge-dashboard.json)
-- Prometheus rules: [examples/prometheus/alerts/puppet-forge.yml](./examples/prometheus/alerts/puppet-forge.yml)
+- Metrics: [METRICS.md](METRICS.md)
+- Architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
+- Grafana dashboard: [examples/grafana/puppet-forge-dashboard.json](examples/grafana/puppet-forge-dashboard.json)
+- Prometheus rules: [examples/prometheus/alerts/puppet-forge.yml](examples/prometheus/alerts/puppet-forge.yml)
