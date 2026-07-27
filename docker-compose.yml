@@ -157,7 +157,7 @@ configs:
       cachedir: '/tmp/r10k-cache'
 
       forge:
-        baseurl: 'http://app'
+        baseurl: 'http://app:8080'
         authorization_token: 'Bearer ${ADMIN_TOKEN:-forge-admin-token-local}'
 
 volumes:
