@@ -17,7 +17,7 @@ func FirstHeaderValue(value string) string {
 
 func ForwardedParam(value, key string) string {
 	value = FirstHeaderValue(value)
-	for _, part := range strings.Split(value, ";") {
+	for part := range strings.SplitSeq(value, ";") {
 		name, raw, ok := strings.Cut(strings.TrimSpace(part), "=")
 		if !ok || !strings.EqualFold(name, key) {
 			continue

@@ -22,7 +22,6 @@ type parityStore interface {
 
 func TestStoreParityLifecycle(t *testing.T) {
 	for _, tc := range parityStoreCases(t) {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			st := tc.open(t)
@@ -86,7 +85,6 @@ func TestStoreParityLifecycle(t *testing.T) {
 
 func TestStoreParityTombstonesAndUsage(t *testing.T) {
 	for _, tc := range parityStoreCases(t) {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			st := tc.open(t)
@@ -175,16 +173,14 @@ func TestPostgresStoreConcurrentSchemaSetup(t *testing.T) {
 	errs := make(chan error, workers)
 	var wg sync.WaitGroup
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			st, err := NewPostgresStore(context.Background(), dsn)
 			if err != nil {
 				errs <- err
 				return
 			}
 			st.Close()
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)
@@ -195,7 +191,6 @@ func TestPostgresStoreConcurrentSchemaSetup(t *testing.T) {
 
 func TestStoreParityAccessConfigRoundTrip(t *testing.T) {
 	for _, tc := range parityStoreCases(t) {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			st := tc.open(t)

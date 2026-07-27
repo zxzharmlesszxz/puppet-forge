@@ -13,6 +13,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -126,7 +127,6 @@ func TestValidModuleFilePath(t *testing.T) {
 		{name: "nul byte", path: "manifests/init.pp\x00", want: false},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -1468,7 +1468,6 @@ func TestHTTPAPIAccessMatrix(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -2376,13 +2375,13 @@ func TestTeamAdminCanManageOnlyOwnTeamAccess(t *testing.T) {
 	if len(teamname.PublishTokens) != 1 || teamname.PublishTokens[0] != "new-publish" {
 		t.Fatalf("unexpected teamname publish tokens: %#v", teamname.PublishTokens)
 	}
-	if len(teamname.PublishOwners) != 2 || !containsString(teamname.PublishOwners, "teamname") || !containsString(teamname.PublishOwners, "shared") {
+	if len(teamname.PublishOwners) != 2 || !slices.Contains(teamname.PublishOwners, "teamname") || !slices.Contains(teamname.PublishOwners, "shared") {
 		t.Fatalf("team admin changed publish owners: %#v", teamname.PublishOwners)
 	}
 	if len(teamname.OIDCGroups) != 1 || teamname.OIDCGroups[0] != "teamname-publishers" {
 		t.Fatalf("unexpected teamname oidc groups: %#v", teamname.OIDCGroups)
 	}
-	if len(teamname.OIDCTeamAdminEmails) != 2 || !containsString(teamname.OIDCTeamAdminEmails, "owner@example.com") || !containsString(teamname.OIDCTeamAdminEmails, "backup@example.com") {
+	if len(teamname.OIDCTeamAdminEmails) != 2 || !slices.Contains(teamname.OIDCTeamAdminEmails, "owner@example.com") || !slices.Contains(teamname.OIDCTeamAdminEmails, "backup@example.com") {
 		t.Fatalf("unexpected teamname team admin emails: %#v", teamname.OIDCTeamAdminEmails)
 	}
 	if len(teamname.OIDCTeamAdminGroups) != 2 || teamname.OIDCTeamAdminGroups[1] != "teamname-owners" {
@@ -2542,7 +2541,7 @@ func TestManageAccessStructuredRenameTeam(t *testing.T) {
 	if renamed == nil {
 		t.Fatalf("renamed team was not saved: %#v", saved)
 	}
-	if len(renamed.PublishOwners) != 2 || !containsString(renamed.PublishOwners, "teamname-platform") || !containsString(renamed.PublishOwners, "platform") {
+	if len(renamed.PublishOwners) != 2 || !slices.Contains(renamed.PublishOwners, "teamname-platform") || !slices.Contains(renamed.PublishOwners, "platform") {
 		t.Fatalf("unexpected renamed owners: %#v", renamed.PublishOwners)
 	}
 	if len(renamed.OIDCGroups) != 1 || renamed.OIDCGroups[0] != "teamname-platform-devops" {
@@ -3423,15 +3422,6 @@ func findTeamConfig(configs []auth.TeamConfig, team string) *auth.TeamConfig {
 		}
 	}
 	return nil
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }
 
 func buildPublishMultipart(t *testing.T, owner, name, version string, archive []byte, csrfToken string) (*bytes.Buffer, string) {
