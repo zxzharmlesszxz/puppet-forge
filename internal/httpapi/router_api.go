@@ -2,13 +2,13 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +28,28 @@ func (r *Router) modulesCollection(w http.ResponseWriter, req *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 	}
+}
+
+func (r *Router) publishSpaces(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		return
+	}
+	authorizer := r.currentAuthorizer(req.Context())
+	if authorizer == nil {
+		writeError(w, http.StatusInternalServerError, errors.New("authorizer is not configured"))
+		return
+	}
+	principal, ok := authorizer.RequirePublishAny(w, req)
+	if !ok {
+		return
+	}
+	spaces := make([]string, 0, len(principal.PublishOwners))
+	for space := range principal.PublishOwners {
+		spaces = append(spaces, space)
+	}
+	sort.Strings(spaces)
+	writeJSON(w, http.StatusOK, map[string]any{"spaces": spaces})
 }
 
 func (r *Router) moduleItem(w http.ResponseWriter, req *http.Request) {
@@ -405,18 +427,15 @@ func (r *Router) publishModule(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if authorizer.Enabled() && !principal.CanPublishOwner(input.Owner) {
+		writeError(w, http.StatusForbidden, errors.New("token is not allowed to publish to this space"))
+		return
+	}
 	input, err = r.modules.NormalizePublishInput(input)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if authorizer.Enabled() {
-		if _, allowed := principal.PublishOwners[input.Owner]; !allowed {
-			writeError(w, http.StatusForbidden, errors.New("token is not allowed to publish to this space"))
-			return
-		}
-	}
-
 	release, err := r.modules.Publish(req.Context(), input)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -432,6 +451,15 @@ func readPublishInput(w http.ResponseWriter, req *http.Request, maxBytes int64) 
 	}
 	if err := req.ParseMultipartForm(64 << 20); err != nil {
 		return domain.PublishModuleInput{}, fmt.Errorf("parse multipart form: %w", err)
+	}
+	for _, field := range []string{"owner", "name", "version", "summary", "description", "metadata"} {
+		if _, exists := req.MultipartForm.Value[field]; exists {
+			return domain.PublishModuleInput{}, fmt.Errorf("manual field %q is not allowed; use space and file only", field)
+		}
+	}
+	space := strings.TrimSpace(req.FormValue("space"))
+	if space == "" {
+		return domain.PublishModuleInput{}, errors.New("space is required")
 	}
 
 	file, header, err := req.FormFile("file")
@@ -455,20 +483,11 @@ func readPublishInput(w http.ResponseWriter, req *http.Request, maxBytes int64) 
 		return domain.PublishModuleInput{}, fmt.Errorf("close file: %w", closeErr)
 	}
 
-	metadata, err := parseMetadata(req.MultipartForm.Value["metadata"])
-	if err != nil {
-		return domain.PublishModuleInput{}, err
-	}
-
 	input := domain.PublishModuleInput{
-		Owner:       req.FormValue("owner"),
-		Name:        req.FormValue("name"),
-		Version:     req.FormValue("version"),
-		Description: req.FormValue("description"),
+		Owner:       space,
 		FileName:    header.Filename,
 		ContentType: header.Header.Get("Content-Type"),
 		FileBytes:   body,
-		Metadata:    metadata,
 	}
 
 	if input.ContentType == "" {
@@ -483,17 +502,4 @@ func isRequestTooLarge(err error) bool {
 	}
 	var uploadErr requestTooLargeError
 	return errors.As(err, &uploadErr)
-}
-
-func parseMetadata(values []string) (map[string]any, error) {
-	if len(values) == 0 || strings.TrimSpace(values[0]) == "" {
-		return map[string]any{}, nil
-	}
-
-	var metadata map[string]any
-	if err := json.Unmarshal([]byte(values[0]), &metadata); err != nil {
-		return nil, fmt.Errorf("parse metadata json: %w", err)
-	}
-
-	return metadata, nil
 }

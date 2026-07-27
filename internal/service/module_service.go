@@ -145,6 +145,10 @@ func (s *ModuleService) Publish(ctx context.Context, input domain.PublishModuleI
 }
 
 func (s *ModuleService) NormalizePublishInput(input domain.PublishModuleInput) (domain.PublishModuleInput, error) {
+	input.Owner = strings.TrimSpace(input.Owner)
+	if input.Owner == "" {
+		return input, errors.New("space is required")
+	}
 	if len(input.FileBytes) == 0 {
 		return input, errors.New("artifact file is required")
 	}
@@ -157,20 +161,23 @@ func (s *ModuleService) NormalizePublishInput(input domain.PublishModuleInput) (
 		return input, fmt.Errorf("inspect module archive: %w", err)
 	}
 
-	if input.Owner == "" {
-		input.Owner = archiveInfo.Owner
+	if archiveInfo.Owner == "" {
+		return input, errors.New("metadata.json name must include a module namespace")
 	}
-	if input.Name == "" {
-		input.Name = archiveInfo.Name
+	if archiveInfo.Name == "" {
+		return input, errors.New("metadata.json module name is required")
 	}
-	if input.Version == "" {
-		input.Version = archiveInfo.Version
+	if archiveInfo.Version == "" {
+		return input, errors.New("metadata.json version is required")
 	}
-	if input.Description == "" {
-		input.Description = archiveInfo.Description
+	if archiveInfo.Owner != input.Owner {
+		return input, fmt.Errorf("module namespace %q does not match selected space %q", archiveInfo.Owner, input.Owner)
 	}
+	input.Name = archiveInfo.Name
+	input.Version = archiveInfo.Version
+	input.Description = archiveInfo.Description
 	input.Readme = archiveInfo.Readme
-	input.Metadata = mergeMetadata(archiveInfo.Metadata, input.Metadata)
+	input.Metadata = archiveInfo.Metadata
 
 	return input, nil
 }
@@ -557,10 +564,14 @@ func inspectModuleArchive(archive []byte) (inspectedModuleArchive, error) {
 	info := inspectedModuleArchive{
 		Metadata: map[string]any{},
 	}
+	metadataFound := false
 	entryCount := 0
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
+			if !metadataFound {
+				return inspectedModuleArchive{}, errors.New("metadata.json is required")
+			}
 			return info, nil
 		}
 		if err != nil {
@@ -586,6 +597,10 @@ func inspectModuleArchive(archive []byte) (inspectedModuleArchive, error) {
 			}
 			info.Readme = string(body)
 		case base == "metadata.json":
+			if metadataFound {
+				return inspectedModuleArchive{}, errors.New("archive contains multiple metadata.json files")
+			}
+			metadataFound = true
 			body, err := readLimitedArchiveEntry(tarReader, header, maxArchiveMetadataSize)
 			if err != nil {
 				return inspectedModuleArchive{}, err
@@ -738,21 +753,6 @@ func splitModuleIdentity(raw string) (owner, name string) {
 		return left, right
 	}
 	return "", raw
-}
-
-func mergeMetadata(base, override map[string]any) map[string]any {
-	if len(base) == 0 && len(override) == 0 {
-		return map[string]any{}
-	}
-
-	merged := make(map[string]any, len(base)+len(override))
-	for key, value := range base {
-		merged[key] = value
-	}
-	for key, value := range override {
-		merged[key] = value
-	}
-	return merged
 }
 
 func releaseArchiveFileName(owner, name, version string) string {

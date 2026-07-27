@@ -367,7 +367,7 @@ func TestAuthenticateOIDCMergesMultipleTeamAdminMappings(t *testing.T) {
 	}
 }
 
-func TestAuthenticateOIDCPrefersAdminMappingOverTeamGroup(t *testing.T) {
+func TestAuthenticateOIDCCombinesAdminAndPublishMappings(t *testing.T) {
 	t.Parallel()
 
 	authorizer, err := NewAuthorizer([]TeamConfig{
@@ -389,12 +389,15 @@ func TestAuthenticateOIDCPrefersAdminMappingOverTeamGroup(t *testing.T) {
 	if !ok {
 		t.Fatal("expected OIDC principal")
 	}
-	if principal.Team != "platform-admin" || !principal.CanAdmin || principal.CanPublish {
-		t.Fatalf("expected admin principal to win over team group, got %#v", principal)
+	if principal.Team != "platform-admin" || !principal.CanAdmin || !principal.CanPublish {
+		t.Fatalf("expected combined admin and publisher principal, got %#v", principal)
+	}
+	if !principal.CanPublishOwner("teamname") {
+		t.Fatalf("combined principal lost team publish space: %#v", principal)
 	}
 }
 
-func TestAuthenticateOIDCPrefersAdminMappingOverSameTeamAdminIdentity(t *testing.T) {
+func TestAuthenticateOIDCCombinesGlobalAndTeamAdminMappings(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -444,17 +447,23 @@ func TestAuthenticateOIDCPrefersAdminMappingOverSameTeamAdminIdentity(t *testing
 			if !ok {
 				t.Fatal("expected OIDC principal")
 			}
-			if principal.Team != "platform-admin" || !principal.CanAdmin || principal.CanPublish || principal.CanManageTeam {
-				t.Fatalf("expected global admin principal to win, got %#v", principal)
+			if principal.Team != "platform-admin" || !principal.CanAdmin || !principal.CanPublish || !principal.CanManageTeam {
+				t.Fatalf("expected combined global and team admin principal, got %#v", principal)
+			}
+			if _, ok := principal.ManagedTeams["teamname"]; !ok {
+				t.Fatalf("combined principal lost managed team: %#v", principal)
+			}
+			if !principal.CanPublishOwner("teamname") || principal.CanPublishOwner("platform-admin") {
+				t.Fatalf("combined principal has incorrect publish spaces: %#v", principal)
 			}
 		})
 	}
 }
 
-func TestNewAuthorizerRejectsDuplicateOIDCEmail(t *testing.T) {
+func TestNewAuthorizerCombinesDuplicateOIDCEmailMappings(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewAuthorizer([]TeamConfig{
+	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
 			Team:       "teamname",
 			OIDCEmails: []string{"dev@example.com"},
@@ -464,15 +473,19 @@ func TestNewAuthorizerRejectsDuplicateOIDCEmail(t *testing.T) {
 			OIDCEmails: []string{"DEV@example.com"},
 		},
 	})
-	if err == nil {
-		t.Fatal("expected duplicate OIDC email error")
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
+	}
+	principal, ok := authorizer.AuthenticateOIDC("dev@example.com", "", nil)
+	if !ok || !principal.CanPublishOwner("teamname") || !principal.CanPublishOwner("carbon") {
+		t.Fatalf("duplicate email mappings were not combined: %#v ok=%v", principal, ok)
 	}
 }
 
-func TestNewAuthorizerRejectsDuplicateOIDCGroup(t *testing.T) {
+func TestNewAuthorizerCombinesDuplicateOIDCGroupMappings(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewAuthorizer([]TeamConfig{
+	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
 			Team:       "teamname",
 			OIDCGroups: []string{"forge-publishers"},
@@ -482,26 +495,31 @@ func TestNewAuthorizerRejectsDuplicateOIDCGroup(t *testing.T) {
 			OIDCGroups: []string{"FORGE-PUBLISHERS"},
 		},
 	})
-	if err == nil {
-		t.Fatal("expected duplicate OIDC group error")
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
+	}
+	principal, ok := authorizer.AuthenticateOIDC("", "", []string{"forge-publishers"})
+	if !ok || !principal.CanPublishOwner("teamname") || !principal.CanPublishOwner("carbon") {
+		t.Fatalf("duplicate group mappings were not combined: %#v ok=%v", principal, ok)
 	}
 }
 
-func TestNewAuthorizerRejectsOIDCGroupUsedForPublishAndTeamAdmin(t *testing.T) {
+func TestNewAuthorizerCombinesPublishAndTeamAdminGroup(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewAuthorizer([]TeamConfig{
+	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
 			Team:                "teamname",
 			OIDCGroups:          []string{"Forge-Team"},
 			OIDCTeamAdminGroups: []string{" forge-team "},
 		},
 	})
-	if err == nil {
-		t.Fatal("expected OIDC group role conflict error")
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
 	}
-	if !strings.Contains(err.Error(), "cannot be configured as both publish group and team admin group") {
-		t.Fatalf("unexpected error: %v", err)
+	principal, ok := authorizer.AuthenticateOIDC("", "", []string{"forge-team"})
+	if !ok || !principal.CanPublish || !principal.CanManageTeam || principal.CanAdmin {
+		t.Fatalf("publish and team-admin group roles were not combined: %#v ok=%v", principal, ok)
 	}
 }
 

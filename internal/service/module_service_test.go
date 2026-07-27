@@ -144,14 +144,14 @@ func TestPublish(t *testing.T) {
 
 	release, err := service.Publish(context.Background(), domain.PublishModuleInput{
 		Owner:       "acme",
-		Name:        "apache",
-		Version:     "1.2.3",
-		Description: "Apache module",
+		Name:        "ignored-name",
+		Version:     "9.9.9",
+		Description: "ignored description",
 		FileName:    "acme-apache-1.2.3.tar.gz",
 		ContentType: "application/gzip",
 		FileBytes:   archive,
 		Metadata: map[string]any{
-			"dependencies": []string{"stdlib"},
+			"source": "ignored",
 		},
 	})
 	if err != nil {
@@ -164,6 +164,12 @@ func TestPublish(t *testing.T) {
 
 	if release.FileName != "acme-apache-1.2.3.tar.gz" {
 		t.Fatalf("unexpected release file name: %s", release.FileName)
+	}
+	if release.Name != "apache" || release.Version != "1.2.3" || release.Description != "Apache module" {
+		t.Fatalf("archive metadata was not authoritative: %#v", release)
+	}
+	if _, exists := release.Metadata["source"]; exists {
+		t.Fatalf("manual metadata override was preserved: %#v", release.Metadata)
 	}
 
 	if release.DownloadURL != "https://example.invalid/modules/acme/apache/acme-apache-1.2.3.tar.gz" {
@@ -375,7 +381,7 @@ func TestPublishRejectsInvalidOwner(t *testing.T) {
 	t.Parallel()
 
 	archive, err := testutil.BuildTarGz(map[string]string{
-		"metadata.json": `{"name":"acme-apache","version":"1.2.3"}`,
+		"metadata.json": `{"name":"ACME-apache","version":"1.2.3"}`,
 	})
 	if err != nil {
 		t.Fatalf("testutil.BuildTarGz() error = %v", err)
@@ -443,6 +449,7 @@ func TestPublishUsesMetadataJSONAsSourceOfTruth(t *testing.T) {
 	service := NewModuleService(moduleStore, artifacts, "modules", nil)
 
 	release, err := service.Publish(context.Background(), domain.PublishModuleInput{
+		Owner:       "teamname",
 		FileName:    "uploaded-archive.tar.gz",
 		ContentType: "application/gzip",
 		FileBytes:   archive,
@@ -465,6 +472,70 @@ func TestPublishUsesMetadataJSONAsSourceOfTruth(t *testing.T) {
 	}
 }
 
+func TestNormalizePublishInputRejectsInvalidArchiveIdentity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		space   string
+		entries map[string]string
+		wantErr string
+	}{
+		{
+			name:    "missing metadata",
+			space:   "teamname",
+			entries: map[string]string{"README.md": "# Module"},
+			wantErr: "metadata.json is required",
+		},
+		{
+			name:  "multiple metadata files",
+			space: "teamname",
+			entries: map[string]string{
+				"one/metadata.json": `{"name":"teamname-one","version":"1.0.0"}`,
+				"two/metadata.json": `{"name":"teamname-two","version":"1.0.0"}`,
+			},
+			wantErr: "multiple metadata.json files",
+		},
+		{
+			name:    "missing namespace",
+			space:   "teamname",
+			entries: map[string]string{"metadata.json": `{"name":"apache","version":"1.0.0"}`},
+			wantErr: "name must include a module namespace",
+		},
+		{
+			name:    "missing version",
+			space:   "teamname",
+			entries: map[string]string{"metadata.json": `{"name":"teamname-apache"}`},
+			wantErr: "version is required",
+		},
+		{
+			name:    "namespace mismatch",
+			space:   "teamname",
+			entries: map[string]string{"metadata.json": `{"name":"carbon-apache","version":"1.0.0"}`},
+			wantErr: `module namespace "carbon" does not match selected space "teamname"`,
+		},
+	}
+
+	service := NewModuleService(&testModuleStore{}, &testArtifactStorage{}, "modules", nil)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			archive, err := testutil.BuildTarGz(tc.entries)
+			if err != nil {
+				t.Fatalf("testutil.BuildTarGz() error = %v", err)
+			}
+			_, err = service.NormalizePublishInput(domain.PublishModuleInput{
+				Owner:     tc.space,
+				FileName:  "module.tar.gz",
+				FileBytes: archive,
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("NormalizePublishInput() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestPublishNormalizesUploadedArchiveFileName(t *testing.T) {
 	t.Parallel()
 
@@ -480,6 +551,7 @@ func TestPublishNormalizesUploadedArchiveFileName(t *testing.T) {
 	service := NewModuleService(moduleStore, artifacts, "modules", nil)
 
 	release, err := service.Publish(context.Background(), domain.PublishModuleInput{
+		Owner:     "teamname",
 		FileName:  "build.tar.gz",
 		FileBytes: archive,
 	})

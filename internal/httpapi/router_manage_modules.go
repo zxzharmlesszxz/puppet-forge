@@ -137,16 +137,15 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 		redirectManageError(w, req, err)
 		return
 	}
+	if !principal.CanPublishOwner(input.Owner) {
+		redirectManageError(w, req, errors.New("token is not allowed to publish to this space"))
+		return
+	}
 	input, err = r.modules.NormalizePublishInput(input)
 	if err != nil {
 		redirectManageError(w, req, err)
 		return
 	}
-	if !principal.CanPublish || !ownerAllowed(principal, input.Owner) {
-		redirectManageError(w, req, errors.New("token is not allowed to publish to this space"))
-		return
-	}
-
 	if _, err := r.modules.Publish(req.Context(), input); err != nil {
 		redirectManageError(w, req, err)
 		return
@@ -298,9 +297,6 @@ func canDeleteInSpace(principal auth.Principal, owner string) bool {
 }
 
 func manageableOwners(principal auth.Principal) []string {
-	if principal.CanAdmin {
-		return nil
-	}
 	owners := make([]string, 0, len(principal.PublishOwners))
 	for owner := range principal.PublishOwners {
 		owners = append(owners, owner)
