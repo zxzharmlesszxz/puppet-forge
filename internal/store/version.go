@@ -59,11 +59,8 @@ func compareVersions(left, right string) int {
 
 	leftParts := strings.Split(leftCore, ".")
 	rightParts := strings.Split(rightCore, ".")
-	maxParts := len(leftParts)
-	if len(rightParts) > maxParts {
-		maxParts = len(rightParts)
-	}
-	for i := 0; i < maxParts; i++ {
+	maxParts := max(len(leftParts), len(rightParts))
+	for i := range maxParts {
 		leftPart := versionPart(leftParts, i)
 		rightPart := versionPart(rightParts, i)
 		if leftPart != rightPart {
@@ -87,11 +84,8 @@ func compareVersions(left, right string) int {
 
 	leftIDs := strings.Split(leftPre, ".")
 	rightIDs := strings.Split(rightPre, ".")
-	maxIDs := len(leftIDs)
-	if len(rightIDs) > maxIDs {
-		maxIDs = len(rightIDs)
-	}
-	for i := 0; i < maxIDs; i++ {
+	maxIDs := max(len(leftIDs), len(rightIDs))
+	for i := range maxIDs {
 		var leftID, rightID string
 		if i < len(leftIDs) {
 			leftID = leftIDs[i]

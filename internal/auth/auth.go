@@ -100,6 +100,15 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 		}
 		mapping[key] = principal
 	}
+	registerOIDCValues := func(mapping map[string]Principal, values []string, normalize func(string) string, principal Principal) {
+		for _, value := range values {
+			normalized := normalize(value)
+			if normalized == "" {
+				continue
+			}
+			registerOIDCPrincipal(mapping, normalized, principal)
+		}
+	}
 
 	for _, cfg := range configs {
 		if strings.TrimSpace(cfg.Team) == "" {
@@ -161,34 +170,10 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 			CanAdmin:      false,
 			PublishOwners: ownerSet,
 		}
-		for _, email := range cfg.OIDCEmails {
-			normalized := normalizeEmail(email)
-			if normalized == "" {
-				continue
-			}
-			registerOIDCPrincipal(oidcEmails, normalized, webPrincipal)
-		}
-		for _, subject := range cfg.OIDCSubjects {
-			subject = strings.TrimSpace(subject)
-			if subject == "" {
-				continue
-			}
-			registerOIDCPrincipal(oidcSubjects, subject, webPrincipal)
-		}
-		for _, domain := range cfg.OIDCDomains {
-			normalized := normalizeDomain(domain)
-			if normalized == "" {
-				continue
-			}
-			registerOIDCPrincipal(oidcDomains, normalized, webPrincipal)
-		}
-		for _, group := range cfg.OIDCGroups {
-			normalized := normalizeGroup(group)
-			if normalized == "" {
-				continue
-			}
-			registerOIDCPrincipal(oidcGroups, normalized, webPrincipal)
-		}
+		registerOIDCValues(oidcEmails, cfg.OIDCEmails, normalizeEmail, webPrincipal)
+		registerOIDCValues(oidcSubjects, cfg.OIDCSubjects, strings.TrimSpace, webPrincipal)
+		registerOIDCValues(oidcDomains, cfg.OIDCDomains, normalizeDomain, webPrincipal)
+		registerOIDCValues(oidcGroups, cfg.OIDCGroups, normalizeGroup, webPrincipal)
 
 		teamAdminPrincipal := Principal{
 			Team:          cfg.Team,
@@ -199,20 +184,8 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 			PublishOwners: ownerSet,
 			ManagedTeams:  map[string]struct{}{cfg.Team: {}},
 		}
-		for _, email := range cfg.OIDCTeamAdminEmails {
-			normalized := normalizeEmail(email)
-			if normalized == "" {
-				continue
-			}
-			registerOIDCPrincipal(oidcEmails, normalized, teamAdminPrincipal)
-		}
-		for _, group := range cfg.OIDCTeamAdminGroups {
-			normalized := normalizeGroup(group)
-			if normalized == "" {
-				continue
-			}
-			registerOIDCPrincipal(oidcGroups, normalized, teamAdminPrincipal)
-		}
+		registerOIDCValues(oidcEmails, cfg.OIDCTeamAdminEmails, normalizeEmail, teamAdminPrincipal)
+		registerOIDCValues(oidcGroups, cfg.OIDCTeamAdminGroups, normalizeGroup, teamAdminPrincipal)
 
 		adminPrincipal := Principal{
 			Team:       cfg.Team,
@@ -220,27 +193,9 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 			CanPublish: false,
 			CanAdmin:   true,
 		}
-		for _, email := range cfg.OIDCAdminEmails {
-			normalized := normalizeEmail(email)
-			if normalized == "" {
-				continue
-			}
-			registerOIDCPrincipal(oidcEmails, normalized, adminPrincipal)
-		}
-		for _, subject := range cfg.OIDCAdminSubjects {
-			subject = strings.TrimSpace(subject)
-			if subject == "" {
-				continue
-			}
-			registerOIDCPrincipal(oidcSubjects, subject, adminPrincipal)
-		}
-		for _, group := range cfg.OIDCAdminGroups {
-			normalized := normalizeGroup(group)
-			if normalized == "" {
-				continue
-			}
-			registerOIDCPrincipal(oidcGroups, normalized, adminPrincipal)
-		}
+		registerOIDCValues(oidcEmails, cfg.OIDCAdminEmails, normalizeEmail, adminPrincipal)
+		registerOIDCValues(oidcSubjects, cfg.OIDCAdminSubjects, strings.TrimSpace, adminPrincipal)
+		registerOIDCValues(oidcGroups, cfg.OIDCAdminGroups, normalizeGroup, adminPrincipal)
 	}
 
 	return &Authorizer{

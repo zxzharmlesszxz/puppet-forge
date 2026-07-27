@@ -123,7 +123,7 @@ func TestForgeProxyCachesJSONResponses(t *testing.T) {
 	server := httptest.NewServer(proxy.Handler())
 	defer server.Close()
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		resp, err := http.Get(server.URL + "/v3/modules/puppetlabs-apache")
 		if err != nil {
 			t.Fatalf("GET error = %v", err)
@@ -289,7 +289,7 @@ func TestForgeProxyObservesCachedGzipModuleResponses(t *testing.T) {
 	defer server.Close()
 
 	client := server.Client()
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		req, err := http.NewRequest(http.MethodGet, server.URL+"/v3/modules/stm-debconf", nil)
 		if err != nil {
 			t.Fatalf("NewRequest() error = %v", err)
@@ -471,7 +471,7 @@ func TestForgeProxyDoesNotCacheFiles(t *testing.T) {
 	server := httptest.NewServer(proxy.Handler())
 	defer server.Close()
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		resp, err := http.Get(server.URL + "/v3/files/puppetlabs-apache-1.0.0.tar.gz")
 		if err != nil {
 			t.Fatalf("GET error = %v", err)

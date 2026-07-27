@@ -174,14 +174,9 @@ func (a *App) startUpstreamRefresh(ctx context.Context, moduleSvc *service.Modul
 	if err != nil || holder == "" {
 		holder = fmt.Sprintf("pid-%d", os.Getpid())
 	}
-	leaseDuration := 2 * interval
-	if leaseDuration < 30*time.Second {
-		leaseDuration = 30 * time.Second
-	}
+	leaseDuration := max(2*interval, 30*time.Second)
 
-	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
+	a.wg.Go(func() {
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Default().Error("upstream refresh worker panicked", "panic", r)
@@ -219,7 +214,7 @@ func (a *App) startUpstreamRefresh(ctx context.Context, moduleSvc *service.Modul
 				}
 			}
 		}
-	}()
+	})
 }
 
 func buildArtifactStorage(ctx context.Context, cfg config.Config) (artifactstorage.ArtifactStorage, *storage.Client, error) {

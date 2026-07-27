@@ -720,7 +720,7 @@ func buildTarGzWithEntries(t *testing.T, entries int) []byte {
 	var buf bytes.Buffer
 	gzipWriter := gzip.NewWriter(&buf)
 	tarWriter := tar.NewWriter(gzipWriter)
-	for i := 0; i < entries; i++ {
+	for i := range entries {
 		body := []byte("x")
 		header := &tar.Header{
 			Name: fmt.Sprintf("module/file-%05d.txt", i),
