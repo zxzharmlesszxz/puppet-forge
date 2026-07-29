@@ -244,6 +244,58 @@ func TestStoreParityAccessConfigRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStoreParityRejectsReusedAccessTokensWithoutReplacingConfig(t *testing.T) {
+	for _, tc := range parityStoreCases(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := tc.open(t)
+			t.Cleanup(st.Close)
+
+			prefix := "parity-duplicate-" + tc.name + "-"
+			existing, err := st.LoadTeamConfigs(ctx)
+			if err != nil {
+				t.Fatalf("LoadTeamConfigs(before) error = %v", err)
+			}
+			withoutParity := withoutParityTeams(existing, prefix)
+			t.Cleanup(func() {
+				if err := st.ReplaceTeamConfigs(context.Background(), withoutParity); err != nil {
+					t.Errorf("cleanup parity access configs error = %v", err)
+				}
+			})
+
+			valid := append(append([]auth.TeamConfig{}, withoutParity...), auth.TeamConfig{
+				Team:       prefix + "original",
+				ReadTokens: []string{prefix + "read"},
+			})
+			if err := st.ReplaceTeamConfigs(ctx, valid); err != nil {
+				t.Fatalf("ReplaceTeamConfigs(valid) error = %v", err)
+			}
+
+			reusedToken := prefix + "reused"
+			invalid := append(append([]auth.TeamConfig{}, withoutParity...),
+				auth.TeamConfig{Team: prefix + "reader", ReadTokens: []string{reusedToken}},
+				auth.TeamConfig{Team: prefix + "publisher", PublishTokens: []string{reusedToken}},
+			)
+			err = st.ReplaceTeamConfigs(ctx, invalid)
+			if err == nil || !strings.Contains(err.Error(), "tokens must be globally unique") {
+				t.Fatalf("ReplaceTeamConfigs(invalid) error = %v, want reused-token validation", err)
+			}
+			if strings.Contains(err.Error(), reusedToken) {
+				t.Fatalf("ReplaceTeamConfigs(invalid) leaked token in error: %v", err)
+			}
+
+			got, err := st.LoadTeamConfigs(ctx)
+			if err != nil {
+				t.Fatalf("LoadTeamConfigs(after) error = %v", err)
+			}
+			got = filterParityTeams(got, prefix)
+			if len(got) != 1 || got[0].Team != prefix+"original" {
+				t.Fatalf("invalid replacement changed access config: %#v", got)
+			}
+		})
+	}
+}
+
 type parityStoreCase struct {
 	name string
 	open func(t *testing.T) parityStore

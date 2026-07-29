@@ -61,10 +61,6 @@ func (r *Router) manageLoginPage(w http.ResponseWriter, req *http.Request) {
 		if authorizer != nil {
 			principal, ok = authorizer.AuthenticateToken(token)
 		}
-		if authorizer == nil || !authorizer.Enabled() {
-			principal = auth.Principal{Team: "local", CanAdmin: true, CanRead: true, CanPublish: true}
-			ok = true
-		}
 		if !ok || (!principal.CanPublish && !principal.CanAdmin) {
 			r.renderManageLogin(w, "publish or admin token required")
 			return
@@ -142,7 +138,7 @@ func (r *Router) managePrincipal(req *http.Request) (auth.Principal, bool) {
 	r.refreshManageAuthorizer(req.Context())
 	authorizer := r.authorizerSnapshot()
 	if authorizer == nil || !authorizer.Enabled() {
-		return auth.Principal{Team: "local", CanAdmin: true, CanRead: true, CanPublish: true}, true
+		return auth.Principal{}, false
 	}
 
 	cookie, err := req.Cookie(manageTokenCookie)

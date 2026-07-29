@@ -177,8 +177,9 @@ Access configuration is stored only in SQL tables:
 Important rules:
 
 - `ADMIN_TOKEN` is a runtime-only bootstrap/break-glass admin token and is not persisted in SQL.
-- If the DB is empty and `ADMIN_TOKEN` is not set, the service refuses to start.
+- If the DB contains no effective access credential and `ADMIN_TOKEN` is not set, the service refuses to start.
 - On a clean start, log in to `/manage` with `ADMIN_TOKEN`, open `/manage/access`, and configure teams, tokens, OIDC groups, and OIDC team admins.
+- Every token value must be globally unique across teams and access roles. Reusing a read, publish, or admin token is rejected without exposing the token in the error.
 - The web catalog (`/` and `/modules/...`) remains informationally public regardless of `PUBLIC_MODULE_ACCESS`.
 - `read_tokens` allow read API, download, and `/v3/*` access.
 - `publish_tokens` allow read, publish, and update access only within permitted publishing spaces; they do not allow module deletion.

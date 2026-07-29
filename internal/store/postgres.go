@@ -266,6 +266,10 @@ func (s *PostgresStore) LoadTeamConfigs(ctx context.Context) ([]auth.TeamConfig,
 }
 
 func (s *PostgresStore) ReplaceTeamConfigs(ctx context.Context, configs []auth.TeamConfig) error {
+	if _, err := auth.NewAuthorizer(configs); err != nil {
+		return fmt.Errorf("validate access config: %w", err)
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin access tx: %w", err)

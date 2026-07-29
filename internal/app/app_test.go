@@ -45,7 +45,7 @@ func TestNewWithS3BackendAndProxyErrorDoesNotPanicClosingNilGCSClient(t *testing
 	}
 }
 
-func TestNewRequiresAdminTokenWhenAccessConfigIsEmpty(t *testing.T) {
+func TestNewRequiresAccessCredentialWhenAccessConfigIsEmpty(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{
@@ -71,7 +71,7 @@ func TestNewRequiresAdminTokenWhenAccessConfigIsEmpty(t *testing.T) {
 		if app != nil {
 			app.Close()
 		}
-		t.Fatal("expected ADMIN_TOKEN requirement error")
+		t.Fatal("expected access credential requirement error")
 	}
 }
 

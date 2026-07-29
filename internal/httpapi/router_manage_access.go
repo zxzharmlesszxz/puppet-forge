@@ -195,6 +195,9 @@ func (r *Router) saveAccessConfigs(ctx context.Context, configs []auth.TeamConfi
 	if err != nil {
 		return err
 	}
+	if !newAuthorizer.Enabled() {
+		return errors.New("access config must contain at least one access credential")
+	}
 	if err := r.modules.ReplaceTeamConfigs(ctx, configs); err != nil {
 		return err
 	}
