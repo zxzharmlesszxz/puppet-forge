@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,63 @@ func TestSQLiteReleaseMD5MigrationAddsColumnToExistingTable(t *testing.T) {
 	var md5Value string
 	if err := db.QueryRow(`select md5 from releases limit 1`).Scan(&md5Value); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("query migrated md5 column error = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestSQLiteOIDCMigrationRollsBackOnFailure(t *testing.T) {
+	t.Parallel()
+
+	dsn := "sqlite://" + t.TempDir() + "/forge.db"
+	path, err := sqlitePathFromDSN(dsn)
+	if err != nil {
+		t.Fatalf("sqlitePathFromDSN() error = %v", err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	if _, err := db.Exec(`
+		create table access_teams (team text primary key);
+		create table access_oidc_mappings (
+			team text not null,
+			mapping_type text not null
+		);
+	`); err != nil {
+		t.Fatalf("create malformed legacy schema error = %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close malformed legacy db error = %v", err)
+	}
+
+	if _, err := NewSQLiteStore(dsn); err == nil || !strings.Contains(err.Error(), "migrate sqlite oidc mappings") {
+		t.Fatalf("NewSQLiteStore() error = %v, want migration failure", err)
+	}
+
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("reopen sqlite db error = %v", err)
+	}
+	defer func() {
+		_ = db.Close()
+	}()
+	var originalTables int
+	if err := db.QueryRow(`
+		select count(*)
+		from sqlite_master
+		where type = 'table' and name = 'access_oidc_mappings'
+	`).Scan(&originalTables); err != nil {
+		t.Fatalf("query original migration table error = %v", err)
+	}
+	var temporaryTables int
+	if err := db.QueryRow(`
+		select count(*)
+		from sqlite_master
+		where type = 'table' and name = 'access_oidc_mappings_next'
+	`).Scan(&temporaryTables); err != nil {
+		t.Fatalf("query temporary migration table error = %v", err)
+	}
+	if originalTables != 1 || temporaryTables != 0 {
+		t.Fatalf("failed migration was not rolled back: original=%d temporary=%d", originalTables, temporaryTables)
 	}
 }
 
@@ -451,7 +509,6 @@ func TestSQLiteAccessConfigLoadAndReplace(t *testing.T) {
 			OIDCGroups:          []string{"teamname-devops"},
 			OIDCTeamAdminEmails: []string{"owner@example.com"},
 			OIDCTeamAdminGroups: []string{"teamname-admins"},
-			OIDCAdminGroups:     []string{"should-not-be-admin-for-teamname"},
 		},
 	}); err != nil {
 		t.Fatalf("ReplaceTeamConfigs(teamname) error = %v", err)

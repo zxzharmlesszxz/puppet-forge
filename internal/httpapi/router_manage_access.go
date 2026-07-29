@@ -346,7 +346,7 @@ func (r *Router) accessConfigsWithGlobalAdmins(req *http.Request) ([]auth.TeamCo
 	}
 
 	adminCfg := auth.TeamConfig{
-		Team:              "platform-admin",
+		Team:              auth.GlobalAdminTeam,
 		OIDCAdminGroups:   splitLineValues(req.FormValue("oidc_admin_groups")),
 		OIDCAdminEmails:   splitLineValues(req.FormValue("oidc_admin_emails")),
 		OIDCAdminSubjects: splitLineValues(req.FormValue("oidc_admin_subjects")),
@@ -394,8 +394,7 @@ func hasNoAccessConfig(cfg auth.TeamConfig) bool {
 }
 
 func isGlobalAdminConfig(cfg auth.TeamConfig) bool {
-	return hasNoAccessConfig(cfg) &&
-		(len(cfg.OIDCAdminGroups) > 0 || len(cfg.OIDCAdminEmails) > 0 || len(cfg.OIDCAdminSubjects) > 0)
+	return auth.IsGlobalAdminConfig(cfg)
 }
 
 func isEmptyAccessConfig(cfg auth.TeamConfig) bool {

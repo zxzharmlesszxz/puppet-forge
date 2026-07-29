@@ -217,10 +217,10 @@ func TestStoreParityAccessConfigRoundTrip(t *testing.T) {
 					OIDCTeamAdminGroups: []string{"teamname-admins"},
 				},
 				{
-					Team:              prefix + "platform-admin",
-					OIDCAdminEmails:   []string{"admin@example.com"},
-					OIDCAdminSubjects: []string{"admin-subject"},
-					OIDCAdminGroups:   []string{"forge-admins"},
+					Team:         prefix + "secondary",
+					OIDCEmails:   []string{"publisher@example.com"},
+					OIDCSubjects: []string{"publisher-subject"},
+					OIDCDomains:  []string{"example.com"},
 				},
 			}
 

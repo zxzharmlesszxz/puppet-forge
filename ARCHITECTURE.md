@@ -130,6 +130,8 @@ Both SQLite and PostgreSQL stores create the required operational schema in code
 
 HTML UI can additionally use OIDC session auth when `WEB_AUTH_MODE=oidc`. Structured team access maps OIDC identities to team principals with publishing rights through `oidc_groups`. Delegated team admin principals map through `oidc_team_admin_emails` or `oidc_team_admin_groups` and may edit only their own team's tokens and OIDC groups. They may delete modules/releases only inside their managed primary team spaces; extra publishing spaces permit publishing and updates but do not grant delete ownership. Global admin principals are managed separately through `oidc_admin_groups`, `oidc_admin_emails`, or `oidc_admin_subjects`.
 
+`platform-admin` is reserved as the global-admin configuration identity. It may contain only global admin credentials and cannot act as a publishing team or module namespace.
+
 When a single OIDC identity matches several mappings, the service unions all capabilities and team scopes. Global administration therefore does not remove team administration or publishing rights. A global-admin mapping alone does not grant publishing rights; content permissions still come from publisher or team-admin mappings.
 
 `/manage/teams` is the team-centric management entry point. It lists only teams available to the principal and summarizes spaces, modules, tokens, and OIDC mappings. `/manage/teams/{team}` combines publishing, team-scoped access settings, and modules while preserving backend authorization for every operation.

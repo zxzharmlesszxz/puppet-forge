@@ -119,6 +119,11 @@ type SQLiteStore struct {
 	db *sql.DB
 }
 
+type sqliteMigrationExecutor interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
 func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	path, err := sqlitePathFromDSN(dsn)
 	if err != nil {
@@ -139,26 +144,42 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("init sqlite schema: %w", err)
 	}
-	if err := sqliteEnsureReleaseMD5Column(db); err != nil {
+	if err := migrateSQLiteSchema(db); err != nil {
 		_ = db.Close()
 		return nil, err
-	}
-	migrateOIDC, err := sqliteNeedsAccessOIDCMappingsMigration(db)
-	if err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	if migrateOIDC {
-		if _, err := db.Exec(sqliteAccessOIDCMappingsMigration); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("migrate sqlite oidc mappings: %w", err)
-		}
 	}
 
 	return &SQLiteStore{db: db}, nil
 }
 
-func sqliteEnsureReleaseMD5Column(db *sql.DB) error {
+func migrateSQLiteSchema(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin sqlite schema migration: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if err := sqliteEnsureReleaseMD5Column(tx); err != nil {
+		return err
+	}
+	migrateOIDC, err := sqliteNeedsAccessOIDCMappingsMigration(tx)
+	if err != nil {
+		return err
+	}
+	if migrateOIDC {
+		if _, err := tx.Exec(sqliteAccessOIDCMappingsMigration); err != nil {
+			return fmt.Errorf("migrate sqlite oidc mappings: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit sqlite schema migration: %w", err)
+	}
+	return nil
+}
+
+func sqliteEnsureReleaseMD5Column(db sqliteMigrationExecutor) error {
 	rows, err := db.Query(`pragma table_info(releases)`)
 	if err != nil {
 		return fmt.Errorf("check sqlite release checksum migration state: %w", err)
@@ -193,7 +214,7 @@ func sqliteEnsureReleaseMD5Column(db *sql.DB) error {
 	return nil
 }
 
-func sqliteNeedsAccessOIDCMappingsMigration(db *sql.DB) (bool, error) {
+func sqliteNeedsAccessOIDCMappingsMigration(db sqliteMigrationExecutor) (bool, error) {
 	rows, err := db.Query(`
 		pragma table_info(access_oidc_mappings)
 	`)
