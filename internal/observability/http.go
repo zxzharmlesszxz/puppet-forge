@@ -123,6 +123,8 @@ func classifyRoute(path string) string {
 		return "/readyz"
 	case path == "/metrics":
 		return "/metrics"
+	case len(path) >= len("/auth/") && path[:len("/auth/")] == "/auth/":
+		return "/auth/*"
 	case path == "/manage":
 		return "/manage"
 	case len(path) >= len("/manage/") && path[:len("/manage/")] == "/manage/":

@@ -87,7 +87,9 @@ Flag names are the lowercase kebab-case form of the environment variable name:
 ```text
 DATABASE_DSN -> --database-dsn
 MANAGE_SESSION_SECRET -> --manage-session-secret
+TRUSTED_PROXY_CIDRS -> --trusted-proxy-cidrs
 PUBLIC_MODULE_ACCESS -> --public-module-access
+OIDC_SCOPES -> --oidc-scopes
 UPSTREAM_PROXY_JSON_CACHE_TTL -> --upstream-proxy-json-cache-ttl
 UPSTREAM_PROXY_JSON_STALE_TTL -> --upstream-proxy-json-stale-ttl
 ```
@@ -126,6 +128,7 @@ puppet-forge \
 | `ARTIFACT_SECRET_ACCESS_KEY`    | empty                             | for private `s3`               | Secret key for S3-compatible storage.                                                                                                                                                                                                        |
 | `ARTIFACT_PATH_STYLE`           | `true`                            | no                             | Enables path-style S3 URLs. Useful for MinIO, GCS interoperability, and local endpoints.                                                                                                                                                     |
 | `PUBLIC_BASE_URL`               | empty                             | no                             | Optional fallback for building absolute URLs. If empty, the service derives URLs from `Host`, `X-Forwarded-*`, or RFC `Forwarded` headers on the current request.                                                                            |
+| `TRUSTED_PROXY_CIDRS`           | empty                             | no                             | Comma- or space-separated ingress/reverse-proxy CIDRs trusted to supply `X-Forwarded-For` for per-client rate limiting. Forwarded client addresses are ignored when the direct peer is not trusted.                                          |
 | `PUBLIC_MODULE_ACCESS`          | `false`                           | no                             | If `true`, read APIs, downloads, and `/v3/*` are open without a token. If `false`, install/API routes require a read/publish/admin token. HTML catalog pages stay informationally public. Publish/delete/manage routes are always protected. |
 | `ACTIVE_RELEASE_TTL`            | `720h`                            | no                             | How long a release is considered active/in use after an r10k or `puppet module install` request. Active/latest versions cannot be deleted through API or `/manage`.                                                                          |
 | `SECURITY_HSTS_ENABLED`         | `false`                           | no                             | Enables the `Strict-Transport-Security` response header. Keep disabled for local HTTP and enable only when the public endpoint is always HTTPS.                                                                                              |
@@ -136,6 +139,7 @@ puppet-forge \
 | `OIDC_REDIRECT_URL`             | empty                             | no                             | Explicit callback URL. If empty, the callback URL is built from the current request base URL as `/auth/callback`; this is recommended for multi-ingress deployments.                                                                         |
 | `OIDC_LOGOUT_URL`               | auto-discovery/empty              | no                             | Provider end-session URL. If unset, the service tries to read `end_session_endpoint` from OIDC discovery.                                                                                                                                    |
 | `OIDC_COOKIE_SECRET`            | empty                             | for `WEB_AUTH_MODE=oidc`       | Secret used to sign web session/state cookies. Must remain stable across pod restarts.                                                                                                                                                       |
+| `OIDC_SCOPES`                   | `openid profile email`            | no                             | Space-separated OIDC scopes. `openid` is always included; add provider-specific scopes such as `groups` when group claims require one.                                                                                                       |
 | `UPSTREAM_URL`                  | `https://forgeapi.puppetlabs.com` | no                             | Upstream Puppet Forge API used when a module is not available locally.                                                                                                                                                                       |
 | `UPSTREAM_PROXY_JSON_CACHE_TTL` | `5m`                              | no                             | In-memory cache TTL for upstream JSON GET/HEAD responses such as `/v3/modules/...` and `/v3/releases/...`. It does not control object-storage tarball caching for `/v3/files/...`. `0s` effectively disables the JSON response cache.        |
 | `UPSTREAM_PROXY_JSON_STALE_TTL` | `1h`                              | no                             | Maximum time after `UPSTREAM_PROXY_JSON_CACHE_TTL` during which stale JSON may be served if upstream Forge fails or is unavailable. `0s` disables stale fallback.                                                                            |
@@ -198,6 +202,7 @@ Important rules:
 - `WEB_AUTH_MODE=oidc` enables session login for the web UI through OIDC/Authenik.
 - API access remains token-based.
 - Required settings are `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `OIDC_COOKIE_SECRET`.
+- `OIDC_SCOPES` defaults to `openid profile email`; add `groups` when the provider only includes group claims for that scope.
 - `OIDC_REDIRECT_URL` may be set explicitly, but for Kubernetes/multi-ingress deployments it is usually better to leave it empty so the service derives the callback URL from the current request host/proto and appends `/auth/callback`.
 - `PUBLIC_BASE_URL` is optional and is only used as fallback when the request does not contain `Host`, `Forwarded`, or `X-Forwarded-*`.
 - Kubernetes ingress should forward the real host and scheme through `X-Forwarded-Host`/`X-Forwarded-Proto` or RFC `Forwarded`.
@@ -239,6 +244,8 @@ https://forge.dev.example.com/auth/callback
 ```
 
 Logout from `/manage` clears local token/OIDC cookies. If OIDC discovery exposes `end_session_endpoint`, or if `OIDC_LOGOUT_URL` is set, the service also redirects the browser to provider logout so the provider does not silently log the user back in with an old session.
+
+Login and publish rate limits are stored in memory per replica. `TRUSTED_PROXY_CIDRS` lets a replica distinguish clients behind a trusted ingress; leave it empty unless the proxy CIDRs are known. For a strict cluster-wide limit, enforce an additional shared limit at the ingress or API gateway.
 
 For groups, prefer OIDC groups over individual emails:
 

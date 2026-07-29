@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 	"time"
 )
@@ -36,8 +37,51 @@ func TestRateLimitKeyIgnoresSpoofableForwardedFor(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/manage/login", nil)
 	req.RemoteAddr = "10.0.0.10:12345"
 	req.Header.Set("X-Forwarded-For", "192.0.2.10, 10.0.0.10")
+	router := &Router{}
 
-	if got := rateLimitKey(req, "manage-login"); got != "manage-login:10.0.0.10" {
+	if got := router.rateLimitKey(req, "manage-login"); got != "manage-login:10.0.0.10" {
+		t.Fatalf("unexpected rate limit key: %s", got)
+	}
+}
+
+func TestRateLimitKeyUsesForwardedClientFromTrustedProxy(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "/manage/login", nil)
+	req.RemoteAddr = "10.0.0.10:12345"
+	req.Header.Set("X-Forwarded-For", "192.0.2.10")
+	router := &Router{trustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}}
+
+	if got := router.rateLimitKey(req, "manage-login"); got != "manage-login:192.0.2.10" {
+		t.Fatalf("unexpected rate limit key: %s", got)
+	}
+}
+
+func TestRateLimitKeySkipsTrustedForwardingChain(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "/manage/login", nil)
+	req.RemoteAddr = "10.0.0.10:12345"
+	req.Header.Set("X-Forwarded-For", "192.0.2.10, 172.16.1.20, 10.1.2.3")
+	router := &Router{trustedProxyCIDRs: []netip.Prefix{
+		netip.MustParsePrefix("10.0.0.0/8"),
+		netip.MustParsePrefix("172.16.0.0/12"),
+	}}
+
+	if got := router.rateLimitKey(req, "manage-login"); got != "manage-login:192.0.2.10" {
+		t.Fatalf("unexpected rate limit key: %s", got)
+	}
+}
+
+func TestRateLimitKeyFallsBackForMalformedForwardedFor(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "/manage/login", nil)
+	req.RemoteAddr = "[2001:db8::10]:12345"
+	req.Header.Set("X-Forwarded-For", "not-an-address")
+	router := &Router{trustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("2001:db8::/32")}}
+
+	if got := router.rateLimitKey(req, "manage-login"); got != "manage-login:2001:db8::10" {
 		t.Fatalf("unexpected rate limit key: %s", got)
 	}
 }

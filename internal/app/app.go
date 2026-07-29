@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,10 @@ type App struct {
 
 func New(cfg config.Config) (*App, error) {
 	ctx := context.Background()
+	trustedProxyCIDRs, err := config.ParseTrustedProxyCIDRs(cfg.TrustedProxyCIDRs)
+	if err != nil {
+		return nil, err
+	}
 
 	moduleStore, err := store.Open(ctx, cfg.DatabaseDSN)
 	if err != nil {
@@ -88,6 +93,7 @@ func New(cfg config.Config) (*App, error) {
 			LogoutURL:     cfg.OIDCLogoutURL,
 			CookieSecret:  cfg.OIDCCookieSecret,
 			PublicBaseURL: cfg.PublicBaseURL,
+			Scopes:        strings.Fields(cfg.OIDCScopes),
 		})
 		if err != nil {
 			moduleStore.Close()
@@ -111,6 +117,7 @@ func New(cfg config.Config) (*App, error) {
 		Modules:             moduleSvc,
 		ForgeProxy:          forgeProxy.Handler(),
 		PublicBaseURL:       cfg.PublicBaseURL,
+		TrustedProxyCIDRs:   trustedProxyCIDRs,
 		Authorizer:          authorizer,
 		WebAuth:             oidcAuth,
 		AdminToken:          cfg.AdminToken,

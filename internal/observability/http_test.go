@@ -17,6 +17,7 @@ func TestClassifyRoute(t *testing.T) {
 		"/healthz":                        "/healthz",
 		"/readyz":                         "/readyz",
 		"/metrics":                        "/metrics",
+		"/auth/callback":                  "/auth/*",
 		"/manage":                         "/manage",
 		"/manage/login":                   "/manage/*",
 		"/api/v1/modules":                 "/api/v1/modules",

@@ -81,6 +81,7 @@ config:
   ARTIFACT_REGION: us-east-1
   ARTIFACT_PATH_STYLE: "true"
   PUBLIC_BASE_URL: ""
+  TRUSTED_PROXY_CIDRS: ""
   PUBLIC_MODULE_ACCESS: "false"
   ACTIVE_RELEASE_TTL: 720h
   SECURITY_HSTS_ENABLED: "false"
@@ -88,6 +89,7 @@ config:
   OIDC_ISSUER_URL: ""
   OIDC_REDIRECT_URL: ""
   OIDC_LOGOUT_URL: ""
+  OIDC_SCOPES: "openid profile email"
   UPSTREAM_URL: https://forgeapi.puppetlabs.com
   UPSTREAM_PROXY_JSON_CACHE_TTL: 5m
   UPSTREAM_PROXY_JSON_STALE_TTL: 1h

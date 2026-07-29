@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -32,6 +34,7 @@ type Config struct {
 	ArtifactSecretAccessKey   string
 	ArtifactPathStyle         bool
 	PublicBaseURL             string
+	TrustedProxyCIDRs         string
 	SecurityHSTSEnabled       bool
 	WebAuthMode               string
 	OIDCIssuerURL             string
@@ -40,6 +43,7 @@ type Config struct {
 	OIDCRedirectURL           string
 	OIDCLogoutURL             string
 	OIDCCookieSecret          string
+	OIDCScopes                string
 	UpstreamURL               string
 	UpstreamProxyJSONCacheTTL time.Duration
 	UpstreamProxyJSONStaleTTL time.Duration
@@ -87,6 +91,7 @@ func loadArgs(args []string, output io.Writer) (cfg Config, err error) {
 		ArtifactSecretAccessKey:   os.Getenv("ARTIFACT_SECRET_ACCESS_KEY"),
 		ArtifactPathStyle:         getEnv("ARTIFACT_PATH_STYLE", "true") == "true",
 		PublicBaseURL:             os.Getenv("PUBLIC_BASE_URL"),
+		TrustedProxyCIDRs:         os.Getenv("TRUSTED_PROXY_CIDRS"),
 		SecurityHSTSEnabled:       getEnv("SECURITY_HSTS_ENABLED", "false") == "true",
 		WebAuthMode:               getEnv("WEB_AUTH_MODE", "none"),
 		OIDCIssuerURL:             os.Getenv("OIDC_ISSUER_URL"),
@@ -95,6 +100,7 @@ func loadArgs(args []string, output io.Writer) (cfg Config, err error) {
 		OIDCRedirectURL:           os.Getenv("OIDC_REDIRECT_URL"),
 		OIDCLogoutURL:             os.Getenv("OIDC_LOGOUT_URL"),
 		OIDCCookieSecret:          os.Getenv("OIDC_COOKIE_SECRET"),
+		OIDCScopes:                getEnv("OIDC_SCOPES", "openid profile email"),
 		UpstreamURL:               getEnv("UPSTREAM_URL", "https://forgeapi.puppetlabs.com"),
 		ReadTimeout:               mustDuration("READ_TIMEOUT", 10*time.Second),
 		WriteTimeout:              mustDuration("WRITE_TIMEOUT", 30*time.Second),
@@ -146,6 +152,7 @@ func applyFlags(cfg *Config, args []string, output io.Writer) error {
 	flags.StringVar(&cfg.ArtifactSecretAccessKey, "artifact-secret-access-key", cfg.ArtifactSecretAccessKey, "S3-compatible artifact storage secret access key")
 	flags.BoolVar(&cfg.ArtifactPathStyle, "artifact-path-style", cfg.ArtifactPathStyle, "use path-style S3 URLs")
 	flags.StringVar(&cfg.PublicBaseURL, "public-base-url", cfg.PublicBaseURL, "optional public base URL fallback")
+	flags.StringVar(&cfg.TrustedProxyCIDRs, "trusted-proxy-cidrs", cfg.TrustedProxyCIDRs, "comma- or space-separated CIDRs allowed to supply X-Forwarded-For")
 	flags.BoolVar(&cfg.SecurityHSTSEnabled, "security-hsts-enabled", cfg.SecurityHSTSEnabled, "enable Strict-Transport-Security response header")
 	flags.StringVar(&cfg.WebAuthMode, "web-auth-mode", cfg.WebAuthMode, "web auth mode: none or oidc")
 	flags.StringVar(&cfg.OIDCIssuerURL, "oidc-issuer-url", cfg.OIDCIssuerURL, "OIDC issuer URL")
@@ -154,6 +161,7 @@ func applyFlags(cfg *Config, args []string, output io.Writer) error {
 	flags.StringVar(&cfg.OIDCRedirectURL, "oidc-redirect-url", cfg.OIDCRedirectURL, "explicit OIDC redirect URL")
 	flags.StringVar(&cfg.OIDCLogoutURL, "oidc-logout-url", cfg.OIDCLogoutURL, "explicit OIDC logout URL")
 	flags.StringVar(&cfg.OIDCCookieSecret, "oidc-cookie-secret", cfg.OIDCCookieSecret, "OIDC cookie signing secret")
+	flags.StringVar(&cfg.OIDCScopes, "oidc-scopes", cfg.OIDCScopes, "space-separated OIDC scopes")
 	flags.StringVar(&cfg.UpstreamURL, "upstream-url", cfg.UpstreamURL, "upstream Puppet Forge API URL")
 	flags.DurationVar(&cfg.UpstreamProxyJSONCacheTTL, "upstream-proxy-json-cache-ttl", cfg.UpstreamProxyJSONCacheTTL, "upstream JSON proxy cache TTL")
 	flags.DurationVar(&cfg.UpstreamProxyJSONStaleTTL, "upstream-proxy-json-stale-ttl", cfg.UpstreamProxyJSONStaleTTL, "maximum age for stale upstream JSON fallback after cache expiry")
@@ -214,8 +222,25 @@ func validate(cfg Config) error {
 	if cfg.MetricsModuleLimit <= 0 {
 		return errors.New("METRICS_MODULE_LIMIT must be greater than 0")
 	}
-
+	if _, err := ParseTrustedProxyCIDRs(cfg.TrustedProxyCIDRs); err != nil {
+		return err
+	}
 	return nil
+}
+
+func ParseTrustedProxyCIDRs(raw string) ([]netip.Prefix, error) {
+	values := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	})
+	prefixes := make([]netip.Prefix, 0, len(values))
+	for _, value := range values {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid TRUSTED_PROXY_CIDRS entry %q: %w", value, err)
+		}
+		prefixes = append(prefixes, prefix.Masked())
+	}
+	return prefixes, nil
 }
 
 func getEnv(key, fallback string) string {

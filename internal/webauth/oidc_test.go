@@ -179,6 +179,30 @@ func TestEncryptedSessionCookieRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNormalizeScopes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		scopes []string
+		want   []string
+	}{
+		{name: "defaults", want: []string{"openid", "profile", "email"}},
+		{name: "adds openid", scopes: []string{"profile", "groups"}, want: []string{"openid", "profile", "groups"}},
+		{name: "deduplicates", scopes: []string{"openid", "groups", "openid", " groups "}, want: []string{"openid", "groups"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := normalizeScopes(test.scopes)
+			if strings.Join(got, " ") != strings.Join(test.want, " ") {
+				t.Fatalf("normalizeScopes() = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestLogoutRedirectsToProviderEndSessionEndpoint(t *testing.T) {
 	t.Parallel()
 

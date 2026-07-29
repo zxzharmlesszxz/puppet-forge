@@ -47,6 +47,12 @@ func TestLoadGCSConfigWithDefaults(t *testing.T) {
 	if cfg.MetricsModuleLimit != 10000 {
 		t.Fatalf("unexpected METRICS_MODULE_LIMIT default: %d", cfg.MetricsModuleLimit)
 	}
+	if cfg.TrustedProxyCIDRs != "" {
+		t.Fatalf("unexpected TRUSTED_PROXY_CIDRS default: %q", cfg.TrustedProxyCIDRs)
+	}
+	if cfg.OIDCScopes != "openid profile email" {
+		t.Fatalf("unexpected OIDC_SCOPES default: %q", cfg.OIDCScopes)
+	}
 }
 
 func TestLoadReadsAdminToken(t *testing.T) {
@@ -178,6 +184,42 @@ func TestLoadReadsExplicitOIDCRedirectURL(t *testing.T) {
 	}
 }
 
+func TestLoadReadsTrustedProxyCIDRsAndOIDCScopes(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("DATABASE_DSN", "sqlite:///tmp/puppet-forge.db")
+	t.Setenv("ARTIFACT_BUCKET", "forge-artifacts")
+	t.Setenv("ARTIFACT_PROJECT", "local-dev")
+	t.Setenv("TRUSTED_PROXY_CIDRS", "10.0.0.0/8, 2001:db8::/32")
+	t.Setenv("OIDC_SCOPES", "openid profile email groups")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.TrustedProxyCIDRs != "10.0.0.0/8, 2001:db8::/32" {
+		t.Fatalf("unexpected TRUSTED_PROXY_CIDRS: %q", cfg.TrustedProxyCIDRs)
+	}
+	if cfg.OIDCScopes != "openid profile email groups" {
+		t.Fatalf("unexpected OIDC_SCOPES: %q", cfg.OIDCScopes)
+	}
+}
+
+func TestLoadRejectsInvalidTrustedProxyCIDR(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("DATABASE_DSN", "sqlite:///tmp/puppet-forge.db")
+	t.Setenv("ARTIFACT_BUCKET", "forge-artifacts")
+	t.Setenv("ARTIFACT_PROJECT", "local-dev")
+	t.Setenv("TRUSTED_PROXY_CIDRS", "not-a-cidr")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected TRUSTED_PROXY_CIDRS validation error")
+	}
+	if !strings.Contains(err.Error(), "TRUSTED_PROXY_CIDRS") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestLoadAcceptsS3Backend(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("DATABASE_DSN", "postgres://forge:forge@localhost:5432/forge?sslmode=disable")
@@ -240,6 +282,8 @@ func TestLoadArgsOverridesEnvironment(t *testing.T) {
 		"--upstream-proxy-json-stale-ttl", "10m",
 		"--metrics-module-limit", "321",
 		"--manage-session-secret", "flag-session-secret",
+		"--trusted-proxy-cidrs", "192.0.2.0/24",
+		"--oidc-scopes", "profile email groups",
 	})
 	if err != nil {
 		t.Fatalf("LoadArgs() error = %v", err)
@@ -274,6 +318,12 @@ func TestLoadArgsOverridesEnvironment(t *testing.T) {
 	}
 	if cfg.MetricsModuleLimit != 321 {
 		t.Fatalf("unexpected METRICS_MODULE_LIMIT: %d", cfg.MetricsModuleLimit)
+	}
+	if cfg.TrustedProxyCIDRs != "192.0.2.0/24" {
+		t.Fatalf("unexpected TRUSTED_PROXY_CIDRS: %q", cfg.TrustedProxyCIDRs)
+	}
+	if cfg.OIDCScopes != "profile email groups" {
+		t.Fatalf("unexpected OIDC_SCOPES: %q", cfg.OIDCScopes)
 	}
 }
 
@@ -403,6 +453,7 @@ func clearConfigEnv(t *testing.T) {
 		"ARTIFACT_SECRET_ACCESS_KEY",
 		"ARTIFACT_PATH_STYLE",
 		"PUBLIC_BASE_URL",
+		"TRUSTED_PROXY_CIDRS",
 		"SECURITY_HSTS_ENABLED",
 		"WEB_AUTH_MODE",
 		"OIDC_ISSUER_URL",
@@ -411,6 +462,7 @@ func clearConfigEnv(t *testing.T) {
 		"OIDC_REDIRECT_URL",
 		"OIDC_LOGOUT_URL",
 		"OIDC_COOKIE_SECRET",
+		"OIDC_SCOPES",
 		"UPSTREAM_URL",
 		"UPSTREAM_PROXY_JSON_CACHE_TTL",
 		"UPSTREAM_PROXY_JSON_STALE_TTL",
