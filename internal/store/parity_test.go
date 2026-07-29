@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"reflect"
 	"sort"
@@ -130,6 +131,13 @@ func TestStoreParityTombstonesAndUsage(t *testing.T) {
 			}
 			if !hasReleaseSummary(activeReleases, owner, name, "1.0.0") {
 				t.Fatalf("ListActiveReleases() missing active release: %#v", activeReleases)
+			}
+			scopedActive, err := st.ListActiveReleasesForModules(ctx, time.Now().Add(-time.Hour), []domain.Module{module})
+			if err != nil {
+				t.Fatalf("ListActiveReleasesForModules() error = %v", err)
+			}
+			if len(scopedActive) != 1 || !hasReleaseSummary(scopedActive, owner, name, "1.0.0") {
+				t.Fatalf("ListActiveReleasesForModules() = %#v", scopedActive)
 			}
 
 			if err := st.DeleteRelease(ctx, owner, name, "1.0.0"); err != nil {
@@ -292,6 +300,74 @@ func TestStoreParityRejectsReusedAccessTokensWithoutReplacingConfig(t *testing.T
 			got = filterParityTeams(got, prefix)
 			if len(got) != 1 || got[0].Team != prefix+"original" {
 				t.Fatalf("invalid replacement changed access config: %#v", got)
+			}
+		})
+	}
+}
+
+func TestStoreParityFilteredModulePagination(t *testing.T) {
+	for _, tc := range parityStoreCases(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := tc.open(t)
+			t.Cleanup(st.Close)
+
+			prefix := "parity-filter-" + tc.name + "-"
+			owners := []string{prefix + "alpha", prefix + "beta"}
+			for _, moduleIdentity := range []struct {
+				owner string
+				name  string
+			}{
+				{owner: owners[0], name: "service-one"},
+				{owner: owners[0], name: "service-two"},
+				{owner: owners[1], name: "service-three"},
+			} {
+				module, err := st.UpsertModule(ctx, moduleIdentity.owner, moduleIdentity.name)
+				if err != nil {
+					t.Fatalf("UpsertModule(%s/%s) error = %v", moduleIdentity.owner, moduleIdentity.name, err)
+				}
+				if _, err := st.CreateRelease(ctx, domain.Release{
+					ID:          module.ID + ":1.0.0",
+					ModuleID:    module.ID,
+					Owner:       moduleIdentity.owner,
+					Name:        moduleIdentity.name,
+					Source:      "local",
+					Version:     "1.0.0",
+					FileName:    moduleIdentity.owner + "-" + moduleIdentity.name + "-1.0.0.tar.gz",
+					ContentType: "application/gzip",
+					Metadata:    map[string]any{},
+				}); err != nil {
+					t.Fatalf("CreateRelease(%s/%s) error = %v", moduleIdentity.owner, moduleIdentity.name, err)
+				}
+				t.Cleanup(func() {
+					if err := st.DeleteModule(context.Background(), moduleIdentity.owner, moduleIdentity.name); err != nil && !errors.Is(err, ErrNotFound) {
+						t.Errorf("cleanup module %s/%s error = %v", moduleIdentity.owner, moduleIdentity.name, err)
+					}
+				})
+			}
+
+			first, total, err := st.ListModulesPageFiltered(ctx, []string{owners[0]}, "service", 1, 0)
+			if err != nil {
+				t.Fatalf("ListModulesPageFiltered(first) error = %v", err)
+			}
+			if total != 2 || len(first) != 1 || first[0].Owner != owners[0] {
+				t.Fatalf("first filtered page = %#v, total = %d", first, total)
+			}
+
+			second, total, err := st.ListModulesPageFiltered(ctx, []string{owners[0]}, "service", 1, 1)
+			if err != nil {
+				t.Fatalf("ListModulesPageFiltered(second) error = %v", err)
+			}
+			if total != 2 || len(second) != 1 || second[0].Owner != owners[0] || second[0].Name == first[0].Name {
+				t.Fatalf("second filtered page = %#v, total = %d", second, total)
+			}
+
+			matched, total, err := st.ListModulesPageFiltered(ctx, owners, owners[1]+"/service-three", 10, 0)
+			if err != nil {
+				t.Fatalf("ListModulesPageFiltered(exact search) error = %v", err)
+			}
+			if total != 1 || len(matched) != 1 || matched[0].Owner != owners[1] {
+				t.Fatalf("exact filtered page = %#v, total = %d", matched, total)
 			}
 		})
 	}

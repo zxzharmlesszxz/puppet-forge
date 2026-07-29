@@ -679,6 +679,49 @@ func (s *SQLiteStore) ListActiveReleases(ctx context.Context, since time.Time) (
 	return releases, nil
 }
 
+func (s *SQLiteStore) ListActiveReleasesForModules(ctx context.Context, since time.Time, modules []domain.Module) ([]ReleaseSummary, error) {
+	if len(modules) == 0 {
+		return nil, nil
+	}
+	var selected strings.Builder
+	args := make([]any, 0, 1+len(modules)*2)
+	args = append(args, since.UTC().Unix())
+	for i, module := range modules {
+		if i > 0 {
+			selected.WriteString(" or ")
+		}
+		selected.WriteString("(owner = ? and name = ?)")
+		args = append(args, module.Owner, module.Name)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		select owner, name, version, unixepoch(last_used_at)
+		from release_usage
+		where unixepoch(last_used_at) >= ? and (`+selected.String()+`)
+		order by owner, name, version
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list active releases for modules: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var releases []ReleaseSummary
+	for rows.Next() {
+		var release ReleaseSummary
+		var usedAt int64
+		if err := rows.Scan(&release.Owner, &release.Name, &release.Version, &usedAt); err != nil {
+			return nil, fmt.Errorf("scan active release for module: %w", err)
+		}
+		release.CreatedAt = time.Unix(usedAt, 0).UTC()
+		releases = append(releases, release)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read active releases for modules: %w", err)
+	}
+	return releases, nil
+}
+
 func (s *SQLiteStore) PruneReleaseUsageBefore(ctx context.Context, before time.Time) error {
 	if _, err := s.db.ExecContext(ctx, `delete from release_usage where unixepoch(last_used_at) < ?`, before.UTC().Unix()); err != nil {
 		return fmt.Errorf("prune release usage: %w", err)
@@ -735,12 +778,17 @@ func (s *SQLiteStore) ListModules(ctx context.Context, limit int) ([]domain.Modu
 }
 
 func (s *SQLiteStore) ListModulesPage(ctx context.Context, limit, offset int) ([]domain.Module, int, error) {
-	total, err := s.countModulesWithReleases(ctx)
+	return s.ListModulesPageFiltered(ctx, nil, "", limit, offset)
+}
+
+func (s *SQLiteStore) ListModulesPageFiltered(ctx context.Context, owners []string, search string, limit, offset int) ([]domain.Module, int, error) {
+	filter, args := sqliteModuleFilter(owners, search)
+	total, err := s.countFilteredModulesWithReleases(ctx, filter, args)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	query := `
 		select id, owner, name, coalesce(latest_version, ''), unixepoch(created_at), unixepoch(updated_at)
 		from modules
 		where exists (
@@ -748,10 +796,13 @@ func (s *SQLiteStore) ListModulesPage(ctx context.Context, limit, offset int) ([
 			from releases
 			where releases.module_id = modules.id
 		)
+		` + filter + `
 		order by updated_at desc
 		limit ?
 		offset ?
-	`, limit, offset)
+	`
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list modules: %w", err)
 	}
@@ -773,9 +824,9 @@ func (s *SQLiteStore) ListModulesPage(ctx context.Context, limit, offset int) ([
 	return modules, total, nil
 }
 
-func (s *SQLiteStore) countModulesWithReleases(ctx context.Context) (int, error) {
+func (s *SQLiteStore) countFilteredModulesWithReleases(ctx context.Context, filter string, args []any) (int, error) {
 	var total int
-	err := s.db.QueryRowContext(ctx, `
+	query := `
 		select count(*)
 		from modules
 		where exists (
@@ -783,11 +834,66 @@ func (s *SQLiteStore) countModulesWithReleases(ctx context.Context) (int, error)
 			from releases
 			where releases.module_id = modules.id
 		)
-	`).Scan(&total)
+		` + filter
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&total)
 	if err != nil {
 		return 0, fmt.Errorf("count modules: %w", err)
 	}
 	return total, nil
+}
+
+func (s *SQLiteStore) CountModulesByOwner(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select owner, count(*)
+		from modules
+		where exists (
+			select 1
+			from releases
+			where releases.module_id = modules.id
+		)
+		group by owner
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("count modules by owner: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	counts := map[string]int{}
+	for rows.Next() {
+		var owner string
+		var count int
+		if err := rows.Scan(&owner, &count); err != nil {
+			return nil, fmt.Errorf("scan module owner count: %w", err)
+		}
+		counts[owner] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read module owner counts: %w", err)
+	}
+	return counts, nil
+}
+
+func sqliteModuleFilter(owners []string, search string) (string, []any) {
+	var filter strings.Builder
+	args := make([]any, 0, len(owners)+1)
+	if search = strings.TrimSpace(search); search != "" {
+		filter.WriteString(` and instr(lower(owner || '/' || name), ?) > 0`)
+		args = append(args, strings.ToLower(search))
+	}
+	if len(owners) > 0 {
+		filter.WriteString(` and owner in (`)
+		for i, owner := range owners {
+			if i > 0 {
+				filter.WriteString(", ")
+			}
+			filter.WriteByte('?')
+			args = append(args, owner)
+		}
+		filter.WriteByte(')')
+	}
+	return filter.String(), args
 }
 
 func (s *SQLiteStore) ListUpstreamModules(ctx context.Context, limit int) ([]domain.Module, error) {

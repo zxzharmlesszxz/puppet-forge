@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -1748,6 +1749,75 @@ func TestListModulesPaginationMetadata(t *testing.T) {
 	}
 }
 
+func TestLoadManageModuleRowsPaginatesFilteredStoreResults(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	for i := range 55 {
+		name := fmt.Sprintf("module-%02d", i)
+		module, err := st.UpsertModule(ctx, "teamname", name)
+		if err != nil {
+			t.Fatalf("UpsertModule(%s) error = %v", name, err)
+		}
+		if _, err := st.CreateRelease(ctx, domain.Release{
+			ID:          module.ID + ":1.0.0",
+			ModuleID:    module.ID,
+			Owner:       "teamname",
+			Name:        name,
+			Source:      "local",
+			Version:     "1.0.0",
+			FileName:    "teamname-" + name + "-1.0.0.tar.gz",
+			ContentType: "application/gzip",
+			Metadata:    map[string]any{},
+		}); err != nil {
+			t.Fatalf("CreateRelease(%s) error = %v", name, err)
+		}
+	}
+
+	router := &Router{
+		modules:          service.NewModuleService(st, testArtifactStorage{}, "modules", nil),
+		activeReleaseTTL: defaultActiveReleaseTTL,
+	}
+	principal := auth.Principal{
+		Team:          "teamname",
+		CanRead:       true,
+		CanPublish:    true,
+		PublishOwners: map[string]struct{}{"teamname": {}},
+	}
+
+	first, total, err := router.loadManageModuleRows(ctx, principal, nil, "teamname/module-", 1)
+	if err != nil {
+		t.Fatalf("loadManageModuleRows(first) error = %v", err)
+	}
+	if total != 55 || len(first) != manageModulePageSize {
+		t.Fatalf("first manage page rows = %d, total = %d", len(first), total)
+	}
+
+	second, total, err := router.loadManageModuleRows(ctx, principal, nil, "teamname/module-", 2)
+	if err != nil {
+		t.Fatalf("loadManageModuleRows(second) error = %v", err)
+	}
+	if total != 55 || len(second) != 5 {
+		t.Fatalf("second manage page rows = %d, total = %d", len(second), total)
+	}
+}
+
+func TestManagePaginationPreservesSearchQuery(t *testing.T) {
+	t.Parallel()
+
+	pagination := managePagination("/manage", "teamname/web server", 2, 120)
+	if !pagination.HasPrev || !pagination.HasNext || pagination.TotalPages != 3 {
+		t.Fatalf("unexpected pagination metadata: %#v", pagination)
+	}
+	if pagination.PrevURL != "/manage?q=teamname%2Fweb+server" {
+		t.Fatalf("PrevURL = %q", pagination.PrevURL)
+	}
+	if pagination.NextURL != "/manage?page=3&q=teamname%2Fweb+server" {
+		t.Fatalf("NextURL = %q", pagination.NextURL)
+	}
+}
+
 func TestManagePostRequiresCSRFToken(t *testing.T) {
 	t.Parallel()
 
@@ -2704,18 +2774,14 @@ func TestManageTeamSummariesRespectPrincipalScope(t *testing.T) {
 		},
 		{Team: "alpha", PublishOwners: []string{"alpha"}},
 	}
-	modules := []domain.Module{
-		{Owner: "teamname", Name: "apache"},
-		{Owner: "shared", Name: "stdlib"},
-		{Owner: "alpha", Name: "nginx"},
-	}
+	moduleCounts := map[string]int{"teamname": 1, "shared": 1, "alpha": 1}
 	principal := auth.Principal{
 		Team:          "teamname",
 		CanManageTeam: true,
 		ManagedTeams:  map[string]struct{}{"teamname": {}},
 	}
 
-	rows := manageTeamSummaries(configs, modules, principal)
+	rows := manageTeamSummaries(configs, moduleCounts, principal)
 	if len(rows) != 1 || rows[0].Team != "teamname" {
 		t.Fatalf("team admin sees unexpected teams: %#v", rows)
 	}

@@ -33,13 +33,14 @@ type manageLoginData struct {
 }
 
 type managePageData struct {
-	Principal auth.Principal
-	Owners    []string
-	Modules   []manageModuleRow
-	Message   string
-	Error     string
-	CSRFToken string
-	Query     string
+	Principal  auth.Principal
+	Owners     []string
+	Modules    []manageModuleRow
+	Message    string
+	Error      string
+	CSRFToken  string
+	Query      string
+	Pagination paginationData
 }
 
 type manageAccessData struct {
@@ -77,6 +78,7 @@ type manageTeamData struct {
 	Error         string
 	CSRFToken     string
 	Query         string
+	Pagination    paginationData
 }
 
 type manageTeamSummary struct {
@@ -111,6 +113,16 @@ type manageVersionRow struct {
 	Version string
 	Active  bool
 	Latest  bool
+}
+
+type paginationData struct {
+	Page       int
+	Total      int
+	TotalPages int
+	HasPrev    bool
+	HasNext    bool
+	PrevURL    string
+	NextURL    string
 }
 
 var csrfFuncs = template.FuncMap{
