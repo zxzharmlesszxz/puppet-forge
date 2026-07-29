@@ -81,9 +81,9 @@ lint: ## Run golangci-lint.
 test: ## Run Go tests.
 	$(GO) test -buildvcs=false ./...
 
-test-postgres: ## Run store parity tests against PostgreSQL. Override PUPPET_FORGE_TEST_POSTGRES_DSN if needed.
+test-postgres: ## Run store parity and concurrent schema tests against PostgreSQL. Override PUPPET_FORGE_TEST_POSTGRES_DSN if needed.
 	@test -n "$(PUPPET_FORGE_TEST_POSTGRES_DSN)" || (echo "PUPPET_FORGE_TEST_POSTGRES_DSN is required"; exit 1)
-	PUPPET_FORGE_TEST_POSTGRES_DSN="$(PUPPET_FORGE_TEST_POSTGRES_DSN)" $(GO) test -buildvcs=false ./internal/store -run 'TestStoreParity'
+	PUPPET_FORGE_TEST_POSTGRES_DSN="$(PUPPET_FORGE_TEST_POSTGRES_DSN)" $(GO) test -buildvcs=false ./internal/store -run 'TestStoreParity|TestPostgresStoreConcurrentSchemaSetup'
 
 test-race: ## Run Go tests with the race detector.
 	CGO_ENABLED=1 $(GO) test -buildvcs=false -race -ldflags "$(LDFLAGS)" ./...
