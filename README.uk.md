@@ -312,6 +312,7 @@ Access control:
 - якщо БД не містить жодного ефективного access credential і `ADMIN_TOKEN` не заданий, сервіс не стартує;
 - на чистому старті увійди в `/manage` через `ADMIN_TOKEN`, відкрий `/manage/access` і налаштуй teams, tokens, OIDC groups та OIDC team admins;
 - кожне значення токена має бути глобально унікальним для всіх teams і access roles; повторне використання read, publish або admin token відхиляється без виведення самого токена в помилці;
+- `platform-admin` є зарезервованою configuration identity для global admin tokens та OIDC mappings; її не можна створити або використати як publishing team чи module space;
 - вебінтерфейс (`/` і `/modules/...`) лишається відкритим для інформаційного перегляду локальних модулів незалежно від `PUBLIC_MODULE_ACCESS`;
 - `read_tokens` дають доступ до API читання, download і `/v3/*`;
 - `publish_tokens` дають доступ до читання й публікації/оновлення лише в дозволені publish spaces, але не дають права видаляти модулі;

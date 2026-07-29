@@ -181,6 +181,7 @@ Important rules:
 - If the DB contains no effective access credential and `ADMIN_TOKEN` is not set, the service refuses to start.
 - On a clean start, log in to `/manage` with `ADMIN_TOKEN`, open `/manage/access`, and configure teams, tokens, OIDC groups, and OIDC team admins.
 - Every token value must be globally unique across teams and access roles. Reusing a read, publish, or admin token is rejected without exposing the token in the error.
+- `platform-admin` is a reserved configuration identity for global admin tokens and OIDC mappings. It cannot be created or used as a publishing team or module space.
 - The web catalog (`/` and `/modules/...`) remains informationally public regardless of `PUBLIC_MODULE_ACCESS`.
 - `read_tokens` allow read API, download, and `/v3/*` access.
 - `publish_tokens` allow read, publish, and update access only within permitted publishing spaces; they do not allow module deletion.

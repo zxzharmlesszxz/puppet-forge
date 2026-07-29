@@ -568,6 +568,53 @@ func TestNewAuthorizerRejectsReusedTokensAcrossRolesAndTeams(t *testing.T) {
 	}
 }
 
+func TestNewAuthorizerReservesGlobalAdminTeam(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		configs []TeamConfig
+		wantErr string
+	}{
+		{
+			name: "reserved team used for publishing",
+			configs: []TeamConfig{{
+				Team:          GlobalAdminTeam,
+				PublishTokens: []string{"publish-token"},
+			}},
+			wantErr: "reserved for global admin access",
+		},
+		{
+			name: "global mapping on ordinary team",
+			configs: []TeamConfig{{
+				Team:            "teamname",
+				OIDCAdminGroups: []string{"global-admins"},
+			}},
+			wantErr: "must use reserved team",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := NewAuthorizer(tc.configs)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("NewAuthorizer() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+
+	authorizer, err := NewAuthorizer([]TeamConfig{{
+		Team:            GlobalAdminTeam,
+		OIDCAdminGroups: []string{"global-admins"},
+	}})
+	if err != nil {
+		t.Fatalf("NewAuthorizer(valid global admin) error = %v", err)
+	}
+	principal, ok := authorizer.AuthenticateOIDC("", "", []string{"global-admins"})
+	if !ok || !principal.CanAdmin {
+		t.Fatalf("valid global admin mapping was not authorized: %#v ok=%v", principal, ok)
+	}
+}
+
 func TestDisabledAuthorizerFailsClosed(t *testing.T) {
 	t.Parallel()
 

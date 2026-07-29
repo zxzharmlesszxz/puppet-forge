@@ -28,6 +28,8 @@ type TeamConfig struct {
 	OIDCAdminGroups   []string `json:"oidc_admin_groups"`
 }
 
+const GlobalAdminTeam = "platform-admin"
+
 func (cfg *TeamConfig) UnmarshalJSON(data []byte) error {
 	type teamConfigAlias TeamConfig
 	var aux struct {
@@ -125,8 +127,12 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 	}
 
 	for _, cfg := range configs {
-		if strings.TrimSpace(cfg.Team) == "" {
+		cfg.Team = strings.TrimSpace(cfg.Team)
+		if cfg.Team == "" {
 			return nil, errors.New("team is required in access config")
+		}
+		if err := validateTeamConfigRole(cfg); err != nil {
+			return nil, err
 		}
 
 		ownerSet := make(map[string]struct{}, len(cfg.PublishOwners)+1)
@@ -220,6 +226,31 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 		oidcDomains:  oidcDomains,
 		oidcGroups:   oidcGroups,
 	}, nil
+}
+
+func IsGlobalAdminConfig(cfg TeamConfig) bool {
+	return strings.TrimSpace(cfg.Team) == GlobalAdminTeam
+}
+
+func validateTeamConfigRole(cfg TeamConfig) error {
+	if IsGlobalAdminConfig(cfg) {
+		if len(cfg.ReadTokens) > 0 ||
+			len(cfg.PublishTokens) > 0 ||
+			len(cfg.PublishOwners) > 0 ||
+			len(cfg.OIDCEmails) > 0 ||
+			len(cfg.OIDCSubjects) > 0 ||
+			len(cfg.OIDCDomains) > 0 ||
+			len(cfg.OIDCGroups) > 0 ||
+			len(cfg.OIDCTeamAdminEmails) > 0 ||
+			len(cfg.OIDCTeamAdminGroups) > 0 {
+			return fmt.Errorf("%q is reserved for global admin access", GlobalAdminTeam)
+		}
+		return nil
+	}
+	if len(cfg.OIDCAdminEmails) > 0 || len(cfg.OIDCAdminSubjects) > 0 || len(cfg.OIDCAdminGroups) > 0 {
+		return fmt.Errorf("global OIDC admin mappings must use reserved team %q", GlobalAdminTeam)
+	}
+	return nil
 }
 
 func (a *Authorizer) Enabled() bool {
