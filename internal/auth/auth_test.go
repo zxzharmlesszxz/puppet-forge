@@ -523,6 +523,103 @@ func TestNewAuthorizerCombinesPublishAndTeamAdminGroup(t *testing.T) {
 	}
 }
 
+func TestNewAuthorizerRejectsReusedTokensAcrossRolesAndTeams(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		configs []TeamConfig
+	}{
+		{
+			name: "read and publish",
+			configs: []TeamConfig{
+				{Team: "teamname", ReadTokens: []string{"shared-secret"}},
+				{Team: "carbon", PublishTokens: []string{"shared-secret"}},
+			},
+		},
+		{
+			name: "publish and runtime admin",
+			configs: []TeamConfig{
+				{Team: "teamname", PublishTokens: []string{"shared-secret"}},
+				{Team: "bootstrap-admin", AdminTokens: []string{"shared-secret"}},
+			},
+		},
+		{
+			name: "duplicate in one list",
+			configs: []TeamConfig{
+				{Team: "teamname", ReadTokens: []string{"shared-secret", " shared-secret "}},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := NewAuthorizer(tc.configs)
+			if err == nil {
+				t.Fatal("NewAuthorizer() accepted a reused access token")
+			}
+			if strings.Contains(err.Error(), "shared-secret") {
+				t.Fatalf("NewAuthorizer() leaked token value in error: %v", err)
+			}
+			if !strings.Contains(err.Error(), "tokens must be globally unique") {
+				t.Fatalf("NewAuthorizer() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestDisabledAuthorizerFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	authorizer, err := NewAuthorizer([]TeamConfig{{Team: "teamname"}})
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
+	}
+	if authorizer.Enabled() {
+		t.Fatal("empty team config unexpectedly enabled authorizer")
+	}
+
+	for _, tc := range []struct {
+		name string
+		call func(http.ResponseWriter, *http.Request) bool
+	}{
+		{
+			name: "read",
+			call: func(w http.ResponseWriter, req *http.Request) bool {
+				_, ok := authorizer.RequireRead(w, req)
+				return ok
+			},
+		},
+		{
+			name: "publish",
+			call: func(w http.ResponseWriter, req *http.Request) bool {
+				_, ok := authorizer.RequirePublishAny(w, req)
+				return ok
+			},
+		},
+		{
+			name: "delete",
+			call: func(w http.ResponseWriter, req *http.Request) bool {
+				_, ok := authorizer.RequireDelete(w, req, "teamname")
+				return ok
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tc.call(rec, req) {
+				t.Fatal("disabled authorizer allowed protected operation")
+			}
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+			}
+		})
+	}
+}
+
 func TestBearerTokenParsesAuthorizationHeader(t *testing.T) {
 	t.Parallel()
 

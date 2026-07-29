@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -90,6 +91,7 @@ const principalKey contextKey = "principal"
 
 func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 	tokenMap := make(map[string]Principal)
+	tokenSources := make(map[string]string)
 	oidcEmails := make(map[string]Principal)
 	oidcSubjects := make(map[string]Principal)
 	oidcDomains := make(map[string]Principal)
@@ -109,6 +111,18 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 			registerOIDCPrincipal(mapping, normalized, principal)
 		}
 	}
+	registerToken := func(token, source string, principal Principal) error {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			return nil
+		}
+		if existing, exists := tokenSources[token]; exists {
+			return fmt.Errorf("access token is reused by %s and %s; tokens must be globally unique", existing, source)
+		}
+		tokenSources[token] = source
+		tokenMap[token] = principal
+		return nil
+	}
 
 	for _, cfg := range configs {
 		if strings.TrimSpace(cfg.Team) == "" {
@@ -126,40 +140,40 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 		}
 
 		for _, token := range cfg.ReadTokens {
-			if token == "" {
-				continue
-			}
-			tokenMap[token] = Principal{
+			err := registerToken(token, cfg.Team+" read access", Principal{
 				Team:          cfg.Team,
 				CanRead:       true,
 				CanPublish:    false,
 				PublishOwners: ownerSet,
+			})
+			if err != nil {
+				return nil, err
 			}
 		}
 
 		for _, token := range cfg.PublishTokens {
-			if token == "" {
-				continue
-			}
-			tokenMap[token] = Principal{
+			err := registerToken(token, cfg.Team+" publish access", Principal{
 				Team:          cfg.Team,
 				CanRead:       true,
 				CanPublish:    true,
 				CanAdmin:      false,
 				PublishOwners: ownerSet,
+			})
+			if err != nil {
+				return nil, err
 			}
 		}
 
 		for _, token := range cfg.AdminTokens {
-			if token == "" {
-				continue
-			}
-			tokenMap[token] = Principal{
+			err := registerToken(token, cfg.Team+" admin access", Principal{
 				Team:          cfg.Team,
 				CanRead:       true,
 				CanPublish:    false,
 				CanAdmin:      true,
 				PublishOwners: ownerSet,
+			})
+			if err != nil {
+				return nil, err
 			}
 		}
 
@@ -291,7 +305,8 @@ func mergeStringSets(left, right map[string]struct{}) map[string]struct{} {
 
 func (a *Authorizer) RequireRead(w http.ResponseWriter, req *http.Request) (Principal, bool) {
 	if a == nil || !a.enabled {
-		return Principal{}, true
+		writeAuthError(w, http.StatusServiceUnavailable, "access control is not configured")
+		return Principal{}, false
 	}
 
 	principal, ok := a.authenticate(req)
@@ -304,10 +319,6 @@ func (a *Authorizer) RequireRead(w http.ResponseWriter, req *http.Request) (Prin
 }
 
 func (a *Authorizer) RequirePublish(w http.ResponseWriter, req *http.Request, owner string) (Principal, bool) {
-	if a == nil || !a.enabled {
-		return Principal{}, true
-	}
-
 	principal, ok := a.RequirePublishAny(w, req)
 	if !ok {
 		return Principal{}, false
@@ -323,7 +334,8 @@ func (a *Authorizer) RequirePublish(w http.ResponseWriter, req *http.Request, ow
 
 func (a *Authorizer) RequirePublishAny(w http.ResponseWriter, req *http.Request) (Principal, bool) {
 	if a == nil || !a.enabled {
-		return Principal{}, true
+		writeAuthError(w, http.StatusServiceUnavailable, "access control is not configured")
+		return Principal{}, false
 	}
 
 	principal, ok := a.authenticate(req)
@@ -337,7 +349,8 @@ func (a *Authorizer) RequirePublishAny(w http.ResponseWriter, req *http.Request)
 
 func (a *Authorizer) RequireDelete(w http.ResponseWriter, req *http.Request, owner string) (Principal, bool) {
 	if a == nil || !a.enabled {
-		return Principal{}, true
+		writeAuthError(w, http.StatusServiceUnavailable, "access control is not configured")
+		return Principal{}, false
 	}
 
 	principal, ok := a.authenticate(req)

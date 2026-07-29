@@ -67,16 +67,16 @@ func New(cfg config.Config) (*App, error) {
 		closeGCSClient(gcsClient)
 		return nil, err
 	}
-	if len(teamAccess) == 0 && cfg.AdminToken == "" {
-		moduleStore.Close()
-		closeGCSClient(gcsClient)
-		return nil, errors.New("ADMIN_TOKEN is required when access config is empty")
-	}
 	authorizer, err := auth.NewAuthorizer(auth.AccessConfigsWithRuntimeAdmin(teamAccess, cfg.AdminToken))
 	if err != nil {
 		moduleStore.Close()
 		closeGCSClient(gcsClient)
 		return nil, err
+	}
+	if !authorizer.Enabled() {
+		moduleStore.Close()
+		closeGCSClient(gcsClient)
+		return nil, errors.New("at least one access credential or ADMIN_TOKEN is required")
 	}
 	var oidcAuth *webauth.OIDCAuth
 	if cfg.WebAuthMode == "oidc" {

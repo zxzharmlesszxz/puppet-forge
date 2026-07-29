@@ -229,6 +229,10 @@ func (s *SQLiteStore) LoadTeamConfigs(ctx context.Context) ([]auth.TeamConfig, e
 }
 
 func (s *SQLiteStore) ReplaceTeamConfigs(ctx context.Context, configs []auth.TeamConfig) error {
+	if _, err := auth.NewAuthorizer(configs); err != nil {
+		return fmt.Errorf("validate access config: %w", err)
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin access tx: %w", err)
