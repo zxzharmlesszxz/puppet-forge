@@ -3,6 +3,7 @@ package httpapi
 import (
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ type RouterConfig struct {
 	Modules             *service.ModuleService
 	ForgeProxy          http.Handler
 	PublicBaseURL       string
+	TrustedProxyCIDRs   []netip.Prefix
 	Authorizer          *auth.Authorizer
 	WebAuth             *webauth.OIDCAuth
 	AdminToken          string
@@ -67,6 +69,7 @@ type Router struct {
 	adminToken          string
 	manageSessions      *manageSessionStore
 	rateLimiter         *rateLimiter
+	trustedProxyCIDRs   []netip.Prefix
 	publicModuleAccess  bool
 	activeReleaseTTL    time.Duration
 	securityHSTSEnabled bool
@@ -103,6 +106,7 @@ func NewRouter(config RouterConfig, opts ...RouterOption) http.Handler {
 		adminToken:          config.AdminToken,
 		manageSessions:      newManageSessionStore(manageSessionSecret),
 		rateLimiter:         newRateLimiter(time.Now),
+		trustedProxyCIDRs:   append([]netip.Prefix(nil), config.TrustedProxyCIDRs...),
 		publicModuleAccess:  config.PublicModuleAccess,
 		activeReleaseTTL:    config.ActiveReleaseTTL,
 		securityHSTSEnabled: config.SecurityHSTSEnabled,

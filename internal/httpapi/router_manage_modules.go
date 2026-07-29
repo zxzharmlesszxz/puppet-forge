@@ -172,7 +172,7 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 	if !requireManageCSRF(w, req) {
 		return
 	}
-	if !r.rateLimiter.Allow(rateLimitKey(req, "manage-publish"), 60, time.Minute) {
+	if !r.rateLimiter.Allow(r.rateLimitKey(req, "manage-publish"), 60, time.Minute) {
 		redirectManageError(w, req, errors.New("too many publish attempts"))
 		return
 	}

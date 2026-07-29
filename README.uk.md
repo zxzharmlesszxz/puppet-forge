@@ -226,7 +226,9 @@ Flag names are the lowercase kebab-case form of the environment variable name:
 ```text
 DATABASE_DSN -> --database-dsn
 MANAGE_SESSION_SECRET -> --manage-session-secret
+TRUSTED_PROXY_CIDRS -> --trusted-proxy-cidrs
 PUBLIC_MODULE_ACCESS -> --public-module-access
+OIDC_SCOPES -> --oidc-scopes
 UPSTREAM_PROXY_JSON_CACHE_TTL -> --upstream-proxy-json-cache-ttl
 UPSTREAM_PROXY_JSON_STALE_TTL -> --upstream-proxy-json-stale-ttl
 ```
@@ -265,6 +267,7 @@ Environment variables:
 | `ARTIFACT_SECRET_ACCESS_KEY`    | порожньо                          | для приватного `s3`         | Secret key для S3-compatible storage.                                                                                                                                                                                                                |
 | `ARTIFACT_PATH_STYLE`           | `true`                            | ні                          | Вмикає path-style S3 URLs. Корисно для MinIO, GCS interoperability і локальних endpoint-ів.                                                                                                                                                          |
 | `PUBLIC_BASE_URL`               | порожньо                          | ні                          | Optional fallback для побудови absolute URLs. Якщо порожній, сервіс бере URL із `Host`, `X-Forwarded-*` або `Forwarded` headers поточного request.                                                                                                   |
+| `TRUSTED_PROXY_CIDRS`           | порожньо                          | ні                          | Розділений комами або пробілами список CIDR ingress/reverse proxy, яким дозволено передавати `X-Forwarded-For` для rate limit за клієнтом. Якщо direct peer не довірений, forwarded client addresses ігноруються.                                    |
 | `PUBLIC_MODULE_ACCESS`          | `false`                           | ні                          | Якщо `true`, API читання, downloads і `/v3/*` відкриті без token. Якщо `false`, ці install/API routes потребують read/publish/admin token. HTML-каталог `/` і `/modules/...` лишається інформаційно доступним. Publish/delete/manage завжди закриті. |
 | `ACTIVE_RELEASE_TTL`            | `720h`                            | ні                          | Скільки часу release вважається active/in-use після запиту r10k або `puppet module install`; active/latest версії не можна видалити через API або `/manage`.                                                                                         |
 | `SECURITY_HSTS_ENABLED`         | `false`                           | ні                          | Вмикає response header `Strict-Transport-Security`. Для локального HTTP лишай вимкненим; вмикай лише коли публічний endpoint завжди HTTPS.                                                                                                           |
@@ -275,6 +278,7 @@ Environment variables:
 | `OIDC_REDIRECT_URL`             | порожньо                          | ні                          | Explicit callback URL. Якщо порожній, callback будується з поточного request base URL як `/auth/callback`; для multi-ingress це рекомендований режим.                                                                                                |
 | `OIDC_LOGOUT_URL`               | auto-discovery/порожньо           | ні                          | Provider end-session URL. Якщо не задано, сервіс пробує взяти `end_session_endpoint` із OIDC discovery.                                                                                                                                              |
 | `OIDC_COOKIE_SECRET`            | порожньо                          | для `WEB_AUTH_MODE=oidc`    | Secret для підпису web session/state cookies. Має бути стабільним між рестартами pod-ів.                                                                                                                                                             |
+| `OIDC_SCOPES`                   | `openid profile email`            | ні                          | Розділені пробілами OIDC scopes. `openid` додається завжди; додай provider-specific scope на кшталт `groups`, якщо він потрібен для group claims.                                                                                                    |
 | `UPSTREAM_URL`                  | `https://forgeapi.puppetlabs.com` | ні                          | Upstream Puppet Forge API, куди proxy ходить для модулів, яких немає локально.                                                                                                                                                                       |
 | `UPSTREAM_PROXY_JSON_CACHE_TTL` | `5m`                              | ні                          | TTL in-memory cache для JSON GET/HEAD відповідей upstream proxy (`/v3/modules/...`, `/v3/releases/...`). Не керує object-storage cache tarball-ів із `/v3/files/...`. `0s` фактично вимикає JSON response cache.                                     |
 | `UPSTREAM_PROXY_JSON_STALE_TTL` | `1h`                              | ні                          | Максимальний час після завершення `UPSTREAM_PROXY_JSON_CACHE_TTL`, протягом якого proxy може віддати stale JSON cache, якщо upstream Forge повернув помилку або недоступний. `0s` вимикає stale fallback.                                            |
@@ -328,6 +332,7 @@ Web auth:
 - `WEB_AUTH_MODE=oidc` вмикає session login для вебінтерфейсу через OIDC/Authenik;
 - API при цьому лишається на token auth для команд;
 - потрібні `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_COOKIE_SECRET`;
+- `OIDC_SCOPES` за замовчуванням дорівнює `openid profile email`; додай `groups`, якщо provider повертає group claims лише з цим scope;
 - `OIDC_REDIRECT_URL` можна задати явно, але зазвичай краще лишити порожнім: сервіс побудує redirect URL із поточного request host/proto і додасть `/auth/callback`;
 - `PUBLIC_BASE_URL` не обовʼязковий і використовується лише як fallback, якщо request не містить `Host`/`Forwarded`/`X-Forwarded-*`;
 - для Kubernetes ingress має передавати реальний `Host` і scheme через `X-Forwarded-Host`/`X-Forwarded-Proto` або RFC `Forwarded`;
@@ -395,6 +400,8 @@ https://forge.dev.example.com/auth/callback
 Якщо Authentik запущений у Docker або на host machine, `OIDC_ISSUER_URL` також має бути доступний із контейнера `app`. Для Authentik на host machine з Docker Desktop це зазвичай hostname `host.docker.internal`, але redirect URI все одно має бути URL сервісу Forge, який відкриває браузер.
 
 Logout із `/manage` чистить локальні token/OIDC cookies. Якщо OIDC discovery віддає `end_session_endpoint`, або якщо задано `OIDC_LOGOUT_URL`, сервіс також відправляє браузер у provider logout, щоб Authentik не залогінив користувача назад silent login-ом зі старої provider-сесії.
+
+Rate limits для login і publish зберігаються в пам'яті окремо в кожній replica. `TRUSTED_PROXY_CIDRS` дозволяє відрізняти клієнтів за довіреним ingress; лишай параметр порожнім, якщо CIDR проксі невідомі. Для строгого cluster-wide ліміту додатково налаштуй shared rate limiting на ingress або API gateway.
 
 Для групи користувачів краще мапити не emails, а OIDC group:
 

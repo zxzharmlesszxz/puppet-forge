@@ -404,7 +404,7 @@ func (r *Router) markReleaseUsed(ctx context.Context, owner, name, version strin
 }
 
 func (r *Router) publishModule(w http.ResponseWriter, req *http.Request) {
-	if !r.rateLimiter.Allow(rateLimitKey(req, "publish"), 60, time.Minute) {
+	if !r.rateLimiter.Allow(r.rateLimitKey(req, "publish"), 60, time.Minute) {
 		writeError(w, http.StatusTooManyRequests, errors.New("too many publish attempts"))
 		return
 	}

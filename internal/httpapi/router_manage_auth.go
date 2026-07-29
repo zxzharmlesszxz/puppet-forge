@@ -19,7 +19,7 @@ func (r *Router) loginPage(w http.ResponseWriter, req *http.Request) {
 		http.Redirect(w, req, "/", http.StatusFound)
 		return
 	}
-	if !r.rateLimiter.Allow(rateLimitKey(req, "auth-login"), 60, time.Minute) {
+	if !r.rateLimiter.Allow(r.rateLimitKey(req, "auth-login"), 60, time.Minute) {
 		writeError(w, http.StatusTooManyRequests, errors.New("too many login attempts"))
 		return
 	}
@@ -49,7 +49,7 @@ func (r *Router) manageLoginPage(w http.ResponseWriter, req *http.Request) {
 	case http.MethodGet:
 		r.renderManageLogin(w, req.URL.Query().Get("error"))
 	case http.MethodPost:
-		if !r.rateLimiter.Allow(rateLimitKey(req, "manage-login"), 20, time.Minute) {
+		if !r.rateLimiter.Allow(r.rateLimitKey(req, "manage-login"), 20, time.Minute) {
 			r.renderManageLogin(w, "too many login attempts")
 			return
 		}

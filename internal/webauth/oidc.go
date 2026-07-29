@@ -36,6 +36,7 @@ type Config struct {
 	LogoutURL     string
 	CookieSecret  string
 	PublicBaseURL string
+	Scopes        []string
 }
 
 type OIDCAuth struct {
@@ -80,7 +81,7 @@ func New(ctx context.Context, cfg Config) (*OIDCAuth, error) {
 			ClientSecret: cfg.ClientSecret,
 			RedirectURL:  cfg.RedirectURL,
 			Endpoint:     provider.Endpoint(),
-			Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+			Scopes:       normalizeScopes(cfg.Scopes),
 		},
 		cookies:       newSecureCookie(cfg.CookieSecret),
 		cookieName:    "puppet_forge_web",
@@ -91,6 +92,26 @@ func New(ctx context.Context, cfg Config) (*OIDCAuth, error) {
 	}
 
 	return auth, nil
+}
+
+func normalizeScopes(scopes []string) []string {
+	if len(scopes) == 0 {
+		scopes = []string{oidc.ScopeOpenID, "profile", "email"}
+	}
+	normalized := []string{oidc.ScopeOpenID}
+	seen := map[string]struct{}{oidc.ScopeOpenID: {}}
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			continue
+		}
+		if _, exists := seen[scope]; exists {
+			continue
+		}
+		seen[scope] = struct{}{}
+		normalized = append(normalized, scope)
+	}
+	return normalized
 }
 
 func newSecureCookie(secret string) *securecookie.SecureCookie {
