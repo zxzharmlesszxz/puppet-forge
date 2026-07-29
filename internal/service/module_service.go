@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -108,8 +109,10 @@ func (s *ModuleService) Publish(ctx context.Context, input domain.PublishModuleI
 		return domain.Release{}, err
 	}
 
-	sha := sha256.Sum256(input.FileBytes)
-	shaHex := hex.EncodeToString(sha[:])
+	md5Sum := md5.Sum(input.FileBytes)
+	md5Hex := hex.EncodeToString(md5Sum[:])
+	shaSum := sha256.Sum256(input.FileBytes)
+	shaHex := hex.EncodeToString(shaSum[:])
 	objectPath := path.Join(s.prefix, input.Owner, input.Name, input.FileName)
 
 	if err := s.artifacts.Upload(ctx, objectPath, input.ContentType, input.FileBytes); err != nil {
@@ -127,6 +130,7 @@ func (s *ModuleService) Publish(ctx context.Context, input domain.PublishModuleI
 		input.Readme,
 		input.FileName,
 		input.ContentType,
+		md5Hex,
 		shaHex,
 		objectPath,
 		int64(len(input.FileBytes)),
@@ -290,6 +294,10 @@ func (s *ModuleService) GetRelease(ctx context.Context, owner, name, version str
 				release.UpstreamSlug = fallbackString(upstreamRelease.Slug, release.UpstreamSlug)
 				release.UpstreamFileURI = fallbackString(upstreamRelease.FileURI, release.UpstreamFileURI)
 				release.FileName = fallbackString(upstreamRelease.FileName, release.FileName)
+				if upstreamRelease.FileSize > 0 {
+					release.SizeBytes = upstreamRelease.FileSize
+				}
+				release.MD5 = fallbackString(upstreamRelease.FileMD5, release.MD5)
 				release.SHA256 = fallbackString(upstreamRelease.FileSHA256, release.SHA256)
 				if _, saveErr := s.modules.CreateRelease(ctx, release); saveErr == nil {
 					release, _ = s.modules.GetRelease(ctx, owner, name, version)
@@ -375,6 +383,37 @@ func (s *ModuleService) ReadReleaseArchive(ctx context.Context, owner, name, ver
 	}
 
 	return object, nil
+}
+
+func (s *ModuleService) EnsureReleaseChecksums(ctx context.Context, release domain.Release) (domain.Release, error) {
+	if release.MD5 != "" && release.SHA256 != "" && release.SizeBytes > 0 {
+		return release, nil
+	}
+
+	object, err := s.ReadReleaseArchive(ctx, release.Owner, release.Name, release.Version)
+	if err != nil {
+		return release, err
+	}
+	md5Sum := md5.Sum(object.Body)
+	shaSum := sha256.Sum256(object.Body)
+	release.MD5 = hex.EncodeToString(md5Sum[:])
+	release.SHA256 = hex.EncodeToString(shaSum[:])
+	release.SizeBytes = int64(len(object.Body))
+
+	if checksumStore, ok := s.modules.(store.ReleaseChecksumStore); ok {
+		if err := checksumStore.UpdateReleaseChecksums(
+			ctx,
+			release.Owner,
+			release.Name,
+			release.Version,
+			release.MD5,
+			release.SHA256,
+			release.SizeBytes,
+		); err != nil {
+			return domain.Release{}, err
+		}
+	}
+	return release, nil
 }
 
 func (s *ModuleService) Ready(ctx context.Context) error {
@@ -525,7 +564,8 @@ func upstreamDomainRelease(module domain.Module, upstreamRelease proxy.UpstreamR
 		Readme:          upstreamRelease.Readme,
 		FileName:        fileName,
 		ContentType:     "application/gzip",
-		SizeBytes:       0,
+		SizeBytes:       upstreamRelease.FileSize,
+		MD5:             upstreamRelease.FileMD5,
 		SHA256:          upstreamRelease.FileSHA256,
 		StoragePath:     "",
 		UpstreamSlug:    fallbackString(upstreamRelease.Slug, module.Owner+"-"+module.Name+"-"+upstreamRelease.Version),

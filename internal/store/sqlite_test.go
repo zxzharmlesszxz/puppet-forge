@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -9,6 +10,33 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
+
+func TestSQLiteReleaseMD5MigrationAddsColumnToExistingTable(t *testing.T) {
+	t.Parallel()
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	defer func() {
+		_ = db.Close()
+	}()
+	if _, err := db.Exec(`create table releases (id text primary key, sha256 text not null)`); err != nil {
+		t.Fatalf("create legacy releases table error = %v", err)
+	}
+
+	if err := sqliteEnsureReleaseMD5Column(db); err != nil {
+		t.Fatalf("sqliteEnsureReleaseMD5Column() error = %v", err)
+	}
+	if err := sqliteEnsureReleaseMD5Column(db); err != nil {
+		t.Fatalf("sqliteEnsureReleaseMD5Column() second call error = %v", err)
+	}
+
+	var md5Value string
+	if err := db.QueryRow(`select md5 from releases limit 1`).Scan(&md5Value); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("query migrated md5 column error = %v, want sql.ErrNoRows", err)
+	}
+}
 
 func TestSQLiteDeleteLastReleaseRemovesModule(t *testing.T) {
 	t.Parallel()
@@ -34,6 +62,7 @@ func TestSQLiteDeleteLastReleaseRemovesModule(t *testing.T) {
 		"",
 		"teamname-testdelete-0.0.1.tar.gz",
 		"application/gzip",
+		"",
 		"deadbeef",
 		"modules/teamname/testdelete/0.0.1/teamname-testdelete-0.0.1.tar.gz",
 		123,
@@ -77,6 +106,7 @@ func TestSQLiteDeleteOldReleaseKeepsLatestSemanticVersion(t *testing.T) {
 			"",
 			"teamname-versions-"+version+".tar.gz",
 			"application/gzip",
+			"",
 			"deadbeef",
 			"modules/teamname/versions/"+version+"/teamname-versions-"+version+".tar.gz",
 			123,

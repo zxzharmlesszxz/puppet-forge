@@ -54,7 +54,7 @@
 1. Клієнт надсилає multipart-запит із вибраним `space` та tar.gz артефактом.
 2. Сервіс перевіряє право authenticated principal публікувати в цей space.
 3. Identity та metadata читаються з архіву, а namespace має збігатися з вибраним space.
-4. Назва артефакту нормалізується до `<owner>-<name>-<version>.tar.gz`, а файл завантажується в storage prefix `modules/<owner>/<name>/`.
+4. Назва артефакту нормалізується до `<owner>-<name>-<version>.tar.gz`; MD5, SHA-256 і розмір обчислюються один раз та зберігаються разом із релізом; після цього файл завантажується в storage prefix `modules/<owner>/<name>/`.
 5. Метадані релізу записуються в SQL backend і повертаються клієнту.
 
 Потік проксіювання:

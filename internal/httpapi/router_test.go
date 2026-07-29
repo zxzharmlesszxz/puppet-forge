@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -53,6 +54,16 @@ func (s testArtifactStorage) PublicURL(string) string {
 type fixedDownloadStorage struct {
 	body        []byte
 	contentType string
+}
+
+type countingDownloadStorage struct {
+	fixedDownloadStorage
+	downloads int
+}
+
+func (s *countingDownloadStorage) Download(ctx context.Context, objectPath string) (storage.Object, error) {
+	s.downloads++
+	return s.fixedDownloadStorage.Download(ctx, objectPath)
 }
 
 func (s fixedDownloadStorage) Upload(context.Context, string, string, []byte) error {
@@ -711,9 +722,14 @@ func TestV3ReleaseChecksumsComeFromServedArchive(t *testing.T) {
 	}
 
 	body := []byte("real archive bytes")
+	md5Sum := md5.Sum(body)
+	expectedMD5 := hex.EncodeToString(md5Sum[:])
 	sha := sha256.Sum256(body)
 	expectedSHA := hex.EncodeToString(sha[:])
-	moduleSvc := service.NewModuleService(st, fixedDownloadStorage{body: body, contentType: "application/gzip"}, "modules", nil)
+	artifacts := &countingDownloadStorage{
+		fixedDownloadStorage: fixedDownloadStorage{body: body, contentType: "application/gzip"},
+	}
+	moduleSvc := service.NewModuleService(st, artifacts, "modules", nil)
 	server := httptest.NewServer(newTestRouter(moduleSvc, http.NotFoundHandler(), "http://example.test", nil, nil, "", true, defaultActiveReleaseTTL))
 	t.Cleanup(server.Close)
 
@@ -737,6 +753,23 @@ func TestV3ReleaseChecksumsComeFromServedArchive(t *testing.T) {
 	}
 	if release["file_sha256"] == "stale-sha256" {
 		t.Fatal("v3 release used stale stored checksum")
+	}
+	if release["file_md5"] != expectedMD5 {
+		t.Fatalf("file_md5 = %q, want %q", release["file_md5"], expectedMD5)
+	}
+
+	resp, err = server.Client().Get(server.URL + "/v3/releases/teamname-apache-1.2.3")
+	if err != nil {
+		t.Fatalf("second GET /v3/releases error = %v", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("second GET /v3/releases status = %d", resp.StatusCode)
+	}
+	if artifacts.downloads != 1 {
+		t.Fatalf("release archive downloads = %d, want one lazy checksum backfill", artifacts.downloads)
 	}
 }
 

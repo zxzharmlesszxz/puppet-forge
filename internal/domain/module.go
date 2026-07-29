@@ -34,6 +34,7 @@ type Release struct {
 	FileName        string         `json:"file_name"`
 	ContentType     string         `json:"content_type"`
 	SizeBytes       int64          `json:"size_bytes"`
+	MD5             string         `json:"md5"`
 	SHA256          string         `json:"sha256"`
 	StoragePath     string         `json:"storage_path"`
 	UpstreamSlug    string         `json:"upstream_slug,omitempty"`

@@ -41,6 +41,7 @@ create table if not exists releases (
     file_name text not null,
     content_type text not null,
     size_bytes integer not null,
+    md5 text not null default '',
     sha256 text not null,
     storage_path text not null,
     upstream_slug text,
@@ -138,6 +139,10 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("init sqlite schema: %w", err)
 	}
+	if err := sqliteEnsureReleaseMD5Column(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	migrateOIDC, err := sqliteNeedsAccessOIDCMappingsMigration(db)
 	if err != nil {
 		_ = db.Close()
@@ -151,6 +156,41 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	}
 
 	return &SQLiteStore{db: db}, nil
+}
+
+func sqliteEnsureReleaseMD5Column(db *sql.DB) error {
+	rows, err := db.Query(`pragma table_info(releases)`)
+	if err != nil {
+		return fmt.Errorf("check sqlite release checksum migration state: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	for rows.Next() {
+		var cid int
+		var name string
+		var dataType string
+		var notNull int
+		var defaultValue sql.NullString
+		var primaryKeyPosition int
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKeyPosition); err != nil {
+			return fmt.Errorf("scan sqlite release checksum migration state: %w", err)
+		}
+		if name == "md5" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read sqlite release checksum migration state: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close sqlite release checksum migration rows: %w", err)
+	}
+	if _, err := db.Exec(`alter table releases add column md5 text not null default ''`); err != nil {
+		return fmt.Errorf("migrate sqlite release checksums: %w", err)
+	}
+	return nil
 }
 
 func sqliteNeedsAccessOIDCMappingsMigration(db *sql.DB) (bool, error) {
@@ -373,9 +413,9 @@ func (s *SQLiteStore) CreateRelease(ctx context.Context, release domain.Release)
 	const insertRelease = `
 		insert into releases (
 			id, module_id, source, version, description, readme, file_name, content_type, size_bytes,
-			sha256, storage_path, upstream_slug, upstream_file_uri, metadata, created_at
+			md5, sha256, storage_path, upstream_slug, upstream_file_uri, metadata, created_at
 		)
-		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
 		on conflict (module_id, version)
 		do update set
 			source = excluded.source,
@@ -384,6 +424,7 @@ func (s *SQLiteStore) CreateRelease(ctx context.Context, release domain.Release)
 			file_name = excluded.file_name,
 			content_type = excluded.content_type,
 			size_bytes = excluded.size_bytes,
+			md5 = excluded.md5,
 			sha256 = excluded.sha256,
 			storage_path = excluded.storage_path,
 			upstream_slug = excluded.upstream_slug,
@@ -400,6 +441,7 @@ func (s *SQLiteStore) CreateRelease(ctx context.Context, release domain.Release)
 		release.FileName,
 		release.ContentType,
 		release.SizeBytes,
+		release.MD5,
 		release.SHA256,
 		release.StoragePath,
 		release.UpstreamSlug,
@@ -428,6 +470,26 @@ func (s *SQLiteStore) CreateRelease(ctx context.Context, release domain.Release)
 	}
 
 	return s.GetRelease(ctx, release.Owner, release.Name, release.Version)
+}
+
+func (s *SQLiteStore) UpdateReleaseChecksums(ctx context.Context, owner, name, version, md5, sha256 string, sizeBytes int64) error {
+	result, err := s.db.ExecContext(ctx, `
+		update releases
+		set md5 = ?, sha256 = ?, size_bytes = ?
+		where module_id = (select id from modules where owner = ? and name = ?)
+			and version = ?
+	`, md5, sha256, sizeBytes, owner, name, version)
+	if err != nil {
+		return fmt.Errorf("update release checksums: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read updated release checksum rows: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *SQLiteStore) DeleteModule(ctx context.Context, owner, name string) error {
@@ -865,7 +927,7 @@ func (s *SQLiteStore) GetRelease(ctx context.Context, owner, name, version strin
 	row := s.db.QueryRowContext(ctx, `
 		select
 			r.id, r.module_id, m.owner, m.name, coalesce(r.source, 'local'), r.version, coalesce(r.description, ''), coalesce(r.readme, ''),
-			r.file_name, r.content_type, r.size_bytes, r.sha256, r.storage_path, coalesce(r.upstream_slug, ''), coalesce(r.upstream_file_uri, ''),
+			r.file_name, r.content_type, r.size_bytes, r.md5, r.sha256, r.storage_path, coalesce(r.upstream_slug, ''), coalesce(r.upstream_file_uri, ''),
 			r.metadata, unixepoch(r.created_at)
 		from releases r
 		join modules m on m.id = r.module_id
@@ -920,6 +982,7 @@ func scanRelease(scanner moduleScanner) (domain.Release, error) {
 		&release.FileName,
 		&release.ContentType,
 		&release.SizeBytes,
+		&release.MD5,
 		&release.SHA256,
 		&release.StoragePath,
 		&release.UpstreamSlug,
