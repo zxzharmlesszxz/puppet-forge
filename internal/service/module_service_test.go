@@ -179,6 +179,9 @@ func TestPublish(t *testing.T) {
 	if release.SHA256 == "" {
 		t.Fatal("expected SHA256 to be populated")
 	}
+	if release.MD5 == "" {
+		t.Fatal("expected MD5 to be populated")
+	}
 }
 
 func TestIndexUpstreamModuleSkipsDeletedRelease(t *testing.T) {

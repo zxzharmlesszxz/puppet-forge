@@ -59,7 +59,7 @@ Publish flow:
 1. A client sends a multipart request containing the selected `space` and a `.tar.gz` module artifact.
 2. The service verifies that the authenticated principal may publish to that space.
 3. The service reads identity and metadata from the archive and requires its namespace to match the selected space.
-4. The artifact filename is normalized to `<owner>-<name>-<version>.tar.gz` and uploaded under `modules/<owner>/<name>/`.
+4. The artifact filename is normalized to `<owner>-<name>-<version>.tar.gz`; MD5, SHA-256, and size are calculated once and persisted with the release; then the artifact is uploaded under `modules/<owner>/<name>/`.
 5. Release metadata is written to the selected SQL backend and returned to the client.
 
 Proxy flow:

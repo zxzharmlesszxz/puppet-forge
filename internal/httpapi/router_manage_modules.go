@@ -146,11 +146,6 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 		redirectManageError(w, req, errors.New("token is not allowed to publish to this space"))
 		return
 	}
-	input, err = r.modules.NormalizePublishInput(input)
-	if err != nil {
-		redirectManageError(w, req, err)
-		return
-	}
 	if _, err := r.modules.Publish(req.Context(), input); err != nil {
 		redirectManageError(w, req, err)
 		return

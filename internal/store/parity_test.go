@@ -43,6 +43,7 @@ func TestStoreParityLifecycle(t *testing.T) {
 					"",
 					owner+"-"+name+"-"+version+".tar.gz",
 					"application/gzip",
+					"",
 					"deadbeef",
 					"modules/"+owner+"/"+name+"/"+version+"/"+owner+"-"+name+"-"+version+".tar.gz",
 					123,

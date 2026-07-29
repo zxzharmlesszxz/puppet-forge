@@ -42,7 +42,7 @@ The service separates:
 3. `internal/service` requires exactly one `metadata.json` and reads owner, name, version, description, README, and metadata from the archive.
 4. The service verifies that the archive namespace matches the selected space and validates the resulting identity.
 5. Artifact storage writes the archive to `<prefix>/<owner>/<name>/<owner>-<name>-<version>.tar.gz`.
-6. SQL store upserts the module and persists the release metadata.
+6. SQL store upserts the module and persists the release metadata, including artifact size, MD5, and SHA-256. Legacy rows are backfilled once from object storage when V3 metadata first needs their checksums.
 7. API returns the created release payload. Manual identity and metadata form overrides are rejected.
 
 ### Read Flow

@@ -431,11 +431,6 @@ func (r *Router) publishModule(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusForbidden, errors.New("token is not allowed to publish to this space"))
 		return
 	}
-	input, err = r.modules.NormalizePublishInput(input)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
 	release, err := r.modules.Publish(req.Context(), input)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)

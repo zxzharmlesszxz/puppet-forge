@@ -52,6 +52,8 @@ type UpstreamRelease struct {
 	Readme      string `json:"readme"`
 	FileURI     string `json:"file_uri"`
 	FileName    string `json:"file_name"`
+	FileSize    int64  `json:"file_size"`
+	FileMD5     string `json:"file_md5"`
 	FileSHA256  string `json:"file_sha256"`
 	Description string `json:"description"`
 }

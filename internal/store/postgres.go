@@ -56,6 +56,10 @@ type ReleaseMetricSummaryStore interface {
 	ListReleaseMetricSummaries(ctx context.Context) ([]domain.ReleaseMetricSummary, error)
 }
 
+type ReleaseChecksumStore interface {
+	UpdateReleaseChecksums(ctx context.Context, owner, name, version, md5, sha256 string, sizeBytes int64) error
+}
+
 type PostgresStore struct {
 	pool *pgxpool.Pool
 }
@@ -105,6 +109,7 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) error {
 			file_name text not null,
 			content_type text not null,
 			size_bytes bigint not null,
+			md5 text not null default '',
 			sha256 text not null,
 			storage_path text not null,
 			upstream_slug text,
@@ -163,6 +168,7 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) error {
 
 		create index if not exists idx_modules_updated_at on modules (updated_at desc);
 		create index if not exists idx_releases_module_id on releases (module_id);
+		alter table releases add column if not exists md5 text not null default '';
 	`
 
 	conn, err := s.pool.Acquire(ctx)
@@ -430,9 +436,9 @@ func (s *PostgresStore) CreateRelease(ctx context.Context, release domain.Releas
 	const insertRelease = `
 		insert into releases (
 			id, module_id, source, version, description, readme, file_name, content_type, size_bytes,
-			sha256, storage_path, upstream_slug, upstream_file_uri, metadata, created_at
+			md5, sha256, storage_path, upstream_slug, upstream_file_uri, metadata, created_at
 		)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
 		on conflict (module_id, version)
 		do update set
 			source = excluded.source,
@@ -441,6 +447,7 @@ func (s *PostgresStore) CreateRelease(ctx context.Context, release domain.Releas
 			file_name = excluded.file_name,
 			content_type = excluded.content_type,
 			size_bytes = excluded.size_bytes,
+			md5 = excluded.md5,
 			sha256 = excluded.sha256,
 			storage_path = excluded.storage_path,
 			upstream_slug = excluded.upstream_slug,
@@ -459,6 +466,7 @@ func (s *PostgresStore) CreateRelease(ctx context.Context, release domain.Releas
 		release.FileName,
 		release.ContentType,
 		release.SizeBytes,
+		release.MD5,
 		release.SHA256,
 		release.StoragePath,
 		release.UpstreamSlug,
@@ -488,6 +496,25 @@ func (s *PostgresStore) CreateRelease(ctx context.Context, release domain.Releas
 	}
 
 	return release, nil
+}
+
+func (s *PostgresStore) UpdateReleaseChecksums(ctx context.Context, owner, name, version, md5, sha256 string, sizeBytes int64) error {
+	tag, err := s.pool.Exec(ctx, `
+		update releases r
+		set md5 = $4, sha256 = $5, size_bytes = $6
+		from modules m
+		where r.module_id = m.id
+			and m.owner = $1
+			and m.name = $2
+			and r.version = $3
+	`, owner, name, version, md5, sha256, sizeBytes)
+	if err != nil {
+		return fmt.Errorf("update release checksums: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *PostgresStore) ListModules(ctx context.Context, limit int) ([]domain.Module, error) {
@@ -951,7 +978,7 @@ func (s *PostgresStore) GetRelease(ctx context.Context, owner, name, version str
 	const query = `
 		select
 			r.id, r.module_id, m.owner, m.name, coalesce(r.source, 'local'), r.version, coalesce(r.description, ''), coalesce(r.readme, ''),
-			r.file_name, r.content_type, r.size_bytes, r.sha256, r.storage_path, coalesce(r.upstream_slug, ''), coalesce(r.upstream_file_uri, ''),
+			r.file_name, r.content_type, r.size_bytes, r.md5, r.sha256, r.storage_path, coalesce(r.upstream_slug, ''), coalesce(r.upstream_file_uri, ''),
 			r.metadata, r.created_at
 		from releases r
 		join modules m on m.id = r.module_id
@@ -975,6 +1002,7 @@ func (s *PostgresStore) GetRelease(ctx context.Context, owner, name, version str
 		&release.FileName,
 		&release.ContentType,
 		&release.SizeBytes,
+		&release.MD5,
 		&release.SHA256,
 		&release.StoragePath,
 		&release.UpstreamSlug,
@@ -998,7 +1026,7 @@ func (s *PostgresStore) GetRelease(ctx context.Context, owner, name, version str
 	return release, nil
 }
 
-func NewRelease(moduleID, owner, name, version, description, readme, fileName, contentType, sha256, storagePath string, sizeBytes int64, metadata map[string]any) domain.Release {
+func NewRelease(moduleID, owner, name, version, description, readme, fileName, contentType, md5, sha256, storagePath string, sizeBytes int64, metadata map[string]any) domain.Release {
 	return domain.Release{
 		ID:          uuid.NewString(),
 		ModuleID:    moduleID,
@@ -1011,6 +1039,7 @@ func NewRelease(moduleID, owner, name, version, description, readme, fileName, c
 		FileName:    fileName,
 		ContentType: contentType,
 		SizeBytes:   sizeBytes,
+		MD5:         md5,
 		SHA256:      sha256,
 		StoragePath: storagePath,
 		Metadata:    metadata,

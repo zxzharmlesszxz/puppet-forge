@@ -2,9 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto/md5"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"strings"
@@ -109,23 +106,13 @@ func (r *Router) serveLocalV3Release(w http.ResponseWriter, req *http.Request, s
 		return false
 	}
 	r.markReleaseUsed(req.Context(), release.Owner, release.Name, release.Version)
-	fileSize := release.SizeBytes
-	fileMD5 := ""
-	fileSHA256 := release.SHA256
-
-	archive, err := r.modules.ReadReleaseArchive(req.Context(), release.Owner, release.Name, release.Version)
-	if err == nil {
-		fileSize = int64(len(archive.Body))
-		md5Sum := md5.Sum(archive.Body)
-		fileMD5 = hex.EncodeToString(md5Sum[:])
-		shaSum := sha256.Sum256(archive.Body)
-		fileSHA256 = hex.EncodeToString(shaSum[:])
-	} else if errors.Is(err, store.ErrNotFound) {
+	release, err = r.modules.EnsureReleaseChecksums(req.Context(), release)
+	if errors.Is(err, store.ErrNotFound) {
 		if release.Source != "upstream" {
 			writeError(w, http.StatusNotFound, err)
 			return true
 		}
-	} else {
+	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return true
 	}
@@ -135,16 +122,16 @@ func (r *Router) serveLocalV3Release(w http.ResponseWriter, req *http.Request, s
 		"version":     release.Version,
 		"file_uri":    releaseV3FileURI(req, release),
 		"file_name":   releaseV3FileName(release),
-		"file_size":   fileSize,
+		"file_size":   release.SizeBytes,
 		"readme":      release.Readme,
 		"description": release.Description,
 		"metadata":    release.Metadata,
 	}
-	if fileMD5 != "" {
-		response["file_md5"] = fileMD5
+	if release.MD5 != "" {
+		response["file_md5"] = release.MD5
 	}
-	if fileSHA256 != "" {
-		response["file_sha256"] = fileSHA256
+	if release.SHA256 != "" {
+		response["file_sha256"] = release.SHA256
 	}
 	writeJSON(w, http.StatusOK, response)
 	return true
