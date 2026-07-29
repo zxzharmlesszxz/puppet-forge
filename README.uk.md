@@ -337,6 +337,7 @@ Web auth:
 
 - `/manage` відкриває web-сторінку для командного керування модулями;
 - `/manage/teams` показує тільки доступні користувачу teams, а `/manage/teams/{team}` об'єднує publishing, access settings і модулі вибраної team;
+- списки модулів на `/manage` і `/manage/teams/{team}` використовують SQL-пошук та серверну пагінацію по 50 елементів;
 - `/manage/access` доступний global admin-користувачам для повного керування access config;
 - team admin-користувачі також можуть відкривати `/manage/access`, але бачать тільки свою team і можуть редагувати тільки свої `read_tokens`, `publish_tokens`, `oidc_groups`, `oidc_team_admin_emails` і `oidc_team_admin_groups`;
 - team admin-користувачі не можуть перейменовувати team, видаляти teams, змінювати `Extra publish spaces`, редагувати global admins, відкривати JSON editor або змінювати чужі teams;

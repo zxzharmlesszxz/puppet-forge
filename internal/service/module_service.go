@@ -194,6 +194,14 @@ func (s *ModuleService) ListModulesPage(ctx context.Context, limit, offset int) 
 	return s.modules.ListModulesPage(ctx, limit, offset)
 }
 
+func (s *ModuleService) ListModulesPageFiltered(ctx context.Context, owners []string, query string, limit, offset int) ([]domain.Module, int, error) {
+	return s.modules.ListModulesPageFiltered(ctx, owners, query, limit, offset)
+}
+
+func (s *ModuleService) CountModulesByOwner(ctx context.Context) (map[string]int, error) {
+	return s.modules.CountModulesByOwner(ctx)
+}
+
 func (s *ModuleService) ListUpstreamModules(ctx context.Context, limit int) ([]domain.Module, error) {
 	return s.modules.ListUpstreamModules(ctx, limit)
 }
@@ -262,6 +270,14 @@ func (s *ModuleService) ListActiveReleases(ctx context.Context, since time.Time)
 		return nil, err
 	}
 	return usageStore.ListActiveReleases(ctx, since)
+}
+
+func (s *ModuleService) ListActiveReleasesForModules(ctx context.Context, since time.Time, modules []domain.Module) ([]store.ReleaseSummary, error) {
+	usageStore, ok := s.modules.(store.ReleaseUsageStore)
+	if !ok {
+		return nil, nil
+	}
+	return usageStore.ListActiveReleasesForModules(ctx, since, modules)
 }
 
 func (s *ModuleService) GetModule(ctx context.Context, owner, name string) (domain.Module, error) {

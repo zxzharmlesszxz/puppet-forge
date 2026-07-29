@@ -32,6 +32,7 @@ Implemented:
 - `GET /v3/*` and `HEAD /v3/*` reverse-proxy the official Puppet Forge API;
 - `/manage` provides the module management UI for publishing, deleting, and importing upstream modules;
 - `/manage/teams` groups each manageable team's access settings, publishing spaces, and modules on one page;
+- module lists on `/manage` and `/manage/teams/{team}` use SQL-backed search and 50-item server-side pagination;
 - `/manage/access` provides DB-backed access configuration;
 - `ADMIN_TOKEN` provides bootstrap/break-glass access;
 - OIDC login supports global admins, team admins, and OIDC groups that grant publishing rights;

@@ -3,11 +3,11 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
-	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
 
 func (r *Router) manageTeamsPage(w http.ResponseWriter, req *http.Request) {
@@ -33,13 +33,13 @@ func (r *Router) manageTeamsPage(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	modules, err := r.modules.ListModules(req.Context(), 1000)
+	moduleCounts, err := r.modules.CountModulesByOwner(req.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	rows := manageTeamSummaries(configs, modules, principal)
+	rows := manageTeamSummaries(configs, moduleCounts, principal)
 
 	csrfToken, err := r.ensureManageCSRFToken(w, req)
 	if err != nil {
@@ -58,7 +58,7 @@ func (r *Router) manageTeamsPage(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func manageTeamSummaries(configs []auth.TeamConfig, modules []domain.Module, principal auth.Principal) []manageTeamSummary {
+func manageTeamSummaries(configs []auth.TeamConfig, moduleCounts map[string]int, principal auth.Principal) []manageTeamSummary {
 	rows := make([]manageTeamSummary, 0, len(configs))
 	for _, cfg := range configs {
 		if isGlobalAdminConfig(cfg) || (!principal.CanAdmin && !canManageAccessTeam(principal, cfg.Team)) {
@@ -67,10 +67,8 @@ func manageTeamSummaries(configs []auth.TeamConfig, modules []domain.Module, pri
 		spaces := teamPublishSpaces(cfg)
 		spaceSet := stringSet(spaces)
 		moduleCount := 0
-		for _, module := range modules {
-			if _, belongs := spaceSet[module.Owner]; belongs {
-				moduleCount++
-			}
+		for space := range spaceSet {
+			moduleCount += moduleCounts[space]
 		}
 		rows = append(rows, manageTeamSummary{
 			Team:            cfg.Team,
@@ -129,7 +127,12 @@ func (r *Router) manageTeamPage(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	query := strings.TrimSpace(req.URL.Query().Get("q"))
-	modules, err := r.loadManageModuleRows(req.Context(), principal, stringSet(spaces), query)
+	page, err := requestedManagePage(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	modules, total, err := r.loadManageModuleRows(req.Context(), principal, stringSet(spaces), query, page)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -151,6 +154,7 @@ func (r *Router) manageTeamPage(w http.ResponseWriter, req *http.Request) {
 		Error:         req.URL.Query().Get("error"),
 		CSRFToken:     csrfToken,
 		Query:         query,
+		Pagination:    managePagination("/manage/teams/"+url.PathEscape(team), query, page, total),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

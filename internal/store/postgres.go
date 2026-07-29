@@ -34,6 +34,8 @@ type ModuleStore interface {
 	DeleteRelease(ctx context.Context, owner, name, version string) error
 	ListModules(ctx context.Context, limit int) ([]domain.Module, error)
 	ListModulesPage(ctx context.Context, limit, offset int) ([]domain.Module, int, error)
+	ListModulesPageFiltered(ctx context.Context, owners []string, query string, limit, offset int) ([]domain.Module, int, error)
+	CountModulesByOwner(ctx context.Context) (map[string]int, error)
 	ListUpstreamModules(ctx context.Context, limit int) ([]domain.Module, error)
 	ListReleases(ctx context.Context, owner, name string) ([]domain.ModuleVersion, error)
 	ListAllReleases(ctx context.Context) ([]ReleaseSummary, error)
@@ -49,6 +51,7 @@ type ReleaseUsageStore interface {
 	MarkReleaseUsed(ctx context.Context, owner, name, version string) error
 	IsReleaseActive(ctx context.Context, owner, name, version string, since time.Time) (bool, error)
 	ListActiveReleases(ctx context.Context, since time.Time) ([]ReleaseSummary, error)
+	ListActiveReleasesForModules(ctx context.Context, since time.Time, modules []domain.Module) ([]ReleaseSummary, error)
 	PruneReleaseUsageBefore(ctx context.Context, before time.Time) error
 }
 
@@ -523,11 +526,10 @@ func (s *PostgresStore) ListModules(ctx context.Context, limit int) ([]domain.Mo
 }
 
 func (s *PostgresStore) ListModulesPage(ctx context.Context, limit, offset int) ([]domain.Module, int, error) {
-	total, err := s.countModulesWithReleases(ctx)
-	if err != nil {
-		return nil, 0, err
-	}
+	return s.ListModulesPageFiltered(ctx, nil, "", limit, offset)
+}
 
+func (s *PostgresStore) ListModulesPageFiltered(ctx context.Context, owners []string, search string, limit, offset int) ([]domain.Module, int, error) {
 	const query = `
 		select id, owner, name, coalesce(latest_version, ''), created_at, updated_at
 		from modules
@@ -536,12 +538,19 @@ func (s *PostgresStore) ListModulesPage(ctx context.Context, limit, offset int) 
 			from releases
 			where releases.module_id = modules.id
 		)
+			and ($1 = '' or owner || '/' || name ilike '%' || $1 || '%')
+			and (coalesce(cardinality($2::text[]), 0) = 0 or owner = any($2::text[]))
 		order by updated_at desc
-		limit $1
-		offset $2
+		limit $3
+		offset $4
 	`
 
-	rows, err := s.pool.Query(ctx, query, limit, offset)
+	search = strings.TrimSpace(search)
+	total, err := s.countFilteredModulesWithReleases(ctx, owners, search)
+	if err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.pool.Query(ctx, query, search, owners, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list modules: %w", err)
 	}
@@ -569,7 +578,7 @@ func (s *PostgresStore) ListModulesPage(ctx context.Context, limit, offset int) 
 	return modules, total, nil
 }
 
-func (s *PostgresStore) countModulesWithReleases(ctx context.Context) (int, error) {
+func (s *PostgresStore) countFilteredModulesWithReleases(ctx context.Context, owners []string, search string) (int, error) {
 	const query = `
 		select count(*)
 		from modules
@@ -578,12 +587,45 @@ func (s *PostgresStore) countModulesWithReleases(ctx context.Context) (int, erro
 			from releases
 			where releases.module_id = modules.id
 		)
+			and ($1 = '' or owner || '/' || name ilike '%' || $1 || '%')
+			and (coalesce(cardinality($2::text[]), 0) = 0 or owner = any($2::text[]))
 	`
 	var total int
-	if err := s.pool.QueryRow(ctx, query).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, query, search, owners).Scan(&total); err != nil {
 		return 0, fmt.Errorf("count modules: %w", err)
 	}
 	return total, nil
+}
+
+func (s *PostgresStore) CountModulesByOwner(ctx context.Context) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, `
+		select owner, count(*)
+		from modules
+		where exists (
+			select 1
+			from releases
+			where releases.module_id = modules.id
+		)
+		group by owner
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("count modules by owner: %w", err)
+	}
+	defer rows.Close()
+
+	counts := map[string]int{}
+	for rows.Next() {
+		var owner string
+		var count int
+		if err := rows.Scan(&owner, &count); err != nil {
+			return nil, fmt.Errorf("scan module owner count: %w", err)
+		}
+		counts[owner] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read module owner counts: %w", err)
+	}
+	return counts, nil
 }
 
 func (s *PostgresStore) ListUpstreamModules(ctx context.Context, limit int) ([]domain.Module, error) {
@@ -810,6 +852,45 @@ func (s *PostgresStore) ListActiveReleases(ctx context.Context, since time.Time)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate active releases: %w", err)
+	}
+	return releases, nil
+}
+
+func (s *PostgresStore) ListActiveReleasesForModules(ctx context.Context, since time.Time, modules []domain.Module) ([]ReleaseSummary, error) {
+	if len(modules) == 0 {
+		return nil, nil
+	}
+	owners := make([]string, len(modules))
+	names := make([]string, len(modules))
+	for i, module := range modules {
+		owners[i] = module.Owner
+		names[i] = module.Name
+	}
+	rows, err := s.pool.Query(ctx, `
+		with selected(owner, name) as (
+			select * from unnest($2::text[], $3::text[])
+		)
+		select usage.owner, usage.name, usage.version, usage.last_used_at
+		from release_usage usage
+		join selected using (owner, name)
+		where usage.last_used_at >= $1
+		order by usage.owner, usage.name, usage.version
+	`, since.UTC(), owners, names)
+	if err != nil {
+		return nil, fmt.Errorf("list active releases for modules: %w", err)
+	}
+	defer rows.Close()
+
+	var releases []ReleaseSummary
+	for rows.Next() {
+		var release ReleaseSummary
+		if err := rows.Scan(&release.Owner, &release.Name, &release.Version, &release.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan active release for module: %w", err)
+		}
+		releases = append(releases, release)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read active releases for modules: %w", err)
 	}
 	return releases, nil
 }

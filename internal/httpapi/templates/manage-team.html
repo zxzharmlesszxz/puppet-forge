@@ -63,6 +63,9 @@
     .release-version:hover, .release-version:focus-within { border-color: #81aeb0; box-shadow: 0 0 0 3px #dceced; }
     .release-version:has(.release-danger-button:hover), .release-version:has(.release-danger-button:focus-visible) { border-color: var(--danger); box-shadow: 0 0 0 3px #f2d7d4; }
     .empty { color: var(--muted); padding: 16px 0 0; }
+    .pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+    .pagination-links { display: flex; gap: 12px; }
+    .pagination-disabled { color: #a2aaaf; font-weight: 700; }
     .delete-team { margin-top: 12px; }
     @media (max-width: 760px) {
       header, .header-links { display: block; }
@@ -215,6 +218,15 @@
       {{end}}
       {{else}}
       <div class="empty">No modules in this team scope.</div>
+      {{end}}
+      {{if .Pagination.Total}}
+      <nav class="pagination" aria-label="Module pages">
+        <span>{{.Pagination.Total}} modules · page {{.Pagination.Page}} of {{.Pagination.TotalPages}}</span>
+        <span class="pagination-links">
+          {{if .Pagination.HasPrev}}<a href="{{.Pagination.PrevURL}}">Previous</a>{{else}}<span class="pagination-disabled">Previous</span>{{end}}
+          {{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">Next</a>{{else}}<span class="pagination-disabled">Next</span>{{end}}
+        </span>
+      </nav>
       {{end}}
     </section>
   </main>

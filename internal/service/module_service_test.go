@@ -62,6 +62,14 @@ func (s *testModuleStore) ListModulesPage(_ context.Context, _, _ int) ([]domain
 	return []domain.Module{s.module}, 1, nil
 }
 
+func (s *testModuleStore) ListModulesPageFiltered(_ context.Context, _ []string, _ string, _, _ int) ([]domain.Module, int, error) {
+	return []domain.Module{s.module}, 1, nil
+}
+
+func (s *testModuleStore) CountModulesByOwner(_ context.Context) (map[string]int, error) {
+	return map[string]int{s.module.Owner: 1}, nil
+}
+
 func (s *testModuleStore) GetModule(_ context.Context, owner, name string) (domain.Module, error) {
 	if s.module.Owner != owner || s.module.Name != name {
 		return domain.Module{}, errors.New("not found")

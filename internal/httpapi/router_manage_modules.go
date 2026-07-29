@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
-	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
+
+const manageModulePageSize = 50
 
 func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 	if req.URL.Path != "/manage" {
@@ -29,7 +31,12 @@ func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 
 	owners := manageableOwners(principal)
 	query := strings.TrimSpace(req.URL.Query().Get("q"))
-	rows, err := r.loadManageModuleRows(req.Context(), principal, nil, query)
+	page, err := requestedManagePage(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	rows, total, err := r.loadManageModuleRows(req.Context(), principal, nil, query, page)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -42,58 +49,51 @@ func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	err = managePageTemplate.Execute(w, managePageData{
-		Principal: principal,
-		Owners:    owners,
-		Modules:   rows,
-		Message:   req.URL.Query().Get("message"),
-		Error:     req.URL.Query().Get("error"),
-		CSRFToken: csrfToken,
-		Query:     query,
+		Principal:  principal,
+		Owners:     owners,
+		Modules:    rows,
+		Message:    req.URL.Query().Get("message"),
+		Error:      req.URL.Query().Get("error"),
+		CSRFToken:  csrfToken,
+		Query:      query,
+		Pagination: managePagination("/manage", query, page, total),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Principal, allowedOwners map[string]struct{}, query string) ([]manageModuleRow, error) {
-	modules, err := r.modules.ListModules(ctx, 1000)
-	if err != nil {
-		return nil, err
-	}
-	allReleases, err := r.modules.ListAllReleases(ctx)
-	if err != nil {
-		return nil, err
-	}
-	releasesByModule := make(map[struct{ owner, name string }][]store.ReleaseSummary, len(modules))
-	for _, rel := range allReleases {
-		key := struct{ owner, name string }{rel.Owner, rel.Name}
-		releasesByModule[key] = append(releasesByModule[key], rel)
-	}
-	activeReleases, err := r.modules.ListActiveReleases(ctx, time.Now().Add(-r.activeReleaseTTL))
-	if err != nil {
-		return nil, err
-	}
-	activeReleaseSet := make(map[struct{ owner, name, version string }]struct{}, len(activeReleases))
-	for _, rel := range activeReleases {
-		key := struct{ owner, name, version string }{rel.Owner, rel.Name, rel.Version}
-		activeReleaseSet[key] = struct{}{}
+func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Principal, allowedOwners map[string]struct{}, query string, page int) ([]manageModuleRow, int, error) {
+	var owners []string
+	if allowedOwners != nil {
+		owners = make([]string, 0, len(allowedOwners))
+		for owner := range allowedOwners {
+			owners = append(owners, owner)
+		}
+		sort.Strings(owners)
+	} else if !principal.CanAdmin {
+		owners = manageableOwners(principal)
 	}
 
-	queryLower := strings.ToLower(strings.TrimSpace(query))
+	modules, total, err := r.modules.ListModulesPageFiltered(ctx, owners, query, manageModulePageSize, (page-1)*manageModulePageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	activeReleases, err := r.modules.ListActiveReleasesForModules(ctx, time.Now().Add(-r.activeReleaseTTL), modules)
+	if err != nil {
+		return nil, 0, err
+	}
+	activeReleaseSet := make(map[struct{ owner, name, version string }]struct{}, len(activeReleases))
+	for _, release := range activeReleases {
+		activeReleaseSet[struct{ owner, name, version string }{release.Owner, release.Name, release.Version}] = struct{}{}
+	}
+
 	rows := make([]manageModuleRow, 0, len(modules))
 	for _, module := range modules {
-		if allowedOwners != nil {
-			if _, allowed := allowedOwners[module.Owner]; !allowed {
-				continue
-			}
-		} else if !principal.CanAdmin && !ownerAllowed(principal, module.Owner) {
-			continue
+		versions, err := r.modules.ListReleases(ctx, module.Owner, module.Name)
+		if err != nil {
+			return nil, 0, err
 		}
-		if queryLower != "" && !strings.Contains(strings.ToLower(module.Owner+"/"+module.Name), queryLower) {
-			continue
-		}
-		key := struct{ owner, name string }{module.Owner, module.Name}
-		versions := releasesByModule[key]
 		versionRows := make([]manageVersionRow, 0, len(versions))
 		for _, version := range versions {
 			_, active := activeReleaseSet[struct{ owner, name, version string }{module.Owner, module.Name, version.Version}]
@@ -109,7 +109,51 @@ func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Princi
 			CanDelete: canDeleteInSpace(principal, module.Owner),
 		})
 	}
-	return rows, nil
+	return rows, total, nil
+}
+
+func requestedManagePage(req *http.Request) (int, error) {
+	raw := strings.TrimSpace(req.URL.Query().Get("page"))
+	if raw == "" {
+		return 1, nil
+	}
+	page, err := strconv.Atoi(raw)
+	if err != nil || page < 1 {
+		return 0, errors.New("invalid page")
+	}
+	return page, nil
+}
+
+func managePagination(basePath, query string, page, total int) paginationData {
+	totalPages := (total + manageModulePageSize - 1) / manageModulePageSize
+	pagination := paginationData{
+		Page:       page,
+		Total:      total,
+		TotalPages: totalPages,
+		HasPrev:    page > 1,
+		HasNext:    page < totalPages,
+	}
+	if pagination.HasPrev {
+		pagination.PrevURL = managePageURL(basePath, query, page-1)
+	}
+	if pagination.HasNext {
+		pagination.NextURL = managePageURL(basePath, query, page+1)
+	}
+	return pagination
+}
+
+func managePageURL(basePath, query string, page int) string {
+	values := url.Values{}
+	if query != "" {
+		values.Set("q", query)
+	}
+	if page > 1 {
+		values.Set("page", strconv.Itoa(page))
+	}
+	if encoded := values.Encode(); encoded != "" {
+		return basePath + "?" + encoded
+	}
+	return basePath
 }
 
 func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
@@ -289,14 +333,6 @@ func manageReturnPath(req *http.Request, fallback string) string {
 		}
 	}
 	return fallback
-}
-
-func ownerAllowed(principal auth.Principal, owner string) bool {
-	if principal.CanAdmin {
-		return true
-	}
-	_, ok := principal.PublishOwners[owner]
-	return ok
 }
 
 func canManageAccessTeam(principal auth.Principal, team string) bool {
