@@ -5,6 +5,7 @@ metadata:
   labels:
     {{- include "chart.labels" . | nindent 4 }}
 data:
-  {{- range $key, $value := .Values.config }}
+  DATABASE_BACKEND: {{ required "database.backend is required" .Values.database.backend | quote }}
+{{- range $key, $value := .Values.config }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}

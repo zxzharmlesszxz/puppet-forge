@@ -2,6 +2,7 @@
 set -eu
 
 base_url="${1:-${SMOKE_BASE_URL:-http://forge.127.0.0.1.nip.io:8080}}"
+metrics_url="${SMOKE_METRICS_URL:-http://127.0.0.1:9090}"
 public_module_access="${SMOKE_PUBLIC_MODULE_ACCESS:-${PUBLIC_MODULE_ACCESS:-false}}"
 admin_token="${SMOKE_ADMIN_TOKEN:-${ADMIN_TOKEN:-forge-admin-token-local}}"
 retries="${SMOKE_RETRIES:-30}"
@@ -64,7 +65,7 @@ wait_for_json_status() {
 wait_for_json_status "/healthz" "status" "ok" "healthz"
 wait_for_json_status "/readyz" "status" "ready" "readyz"
 
-"$curl_bin" -fsS "${base_url}/metrics" -o "$body"
+"$curl_bin" -fsS "${metrics_url}/metrics" -o "$body"
 grep -q '^puppet_forge_build_info' "$body" || {
 	echo "metrics missing puppet_forge_build_info"
 	exit 1

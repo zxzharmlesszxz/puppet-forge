@@ -7,7 +7,7 @@ on:
     inputs:
       go-version:
         type: string
-        default: "1.26.5"
+        default: "1.26.6"
       release-platforms:
         type: string
         default: "linux/amd64 linux/arm64 darwin/amd64 darwin/arm64"
@@ -40,7 +40,7 @@ jobs:
         run: apk add --no-cache bash build-base ca-certificates git make tar
 
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -55,10 +55,56 @@ jobs:
         run: make vet
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
 
       - name: Coverage Check
         run: make coverage-check
+
+  security:
+    name: Security
+    runs-on: ubuntu-24.04
+    needs:
+      - go-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Go Vulnerability And Security Scan
+        run: make security-go
+
+      - name: Filesystem Vulnerability, Secret, Misconfiguration, And License Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig,license
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  browser:
+    name: Browser Tests
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.0-noble@sha256:baed2032d533817f3dbe6425de795788430ba345e819a1201337009ba17c9d07
+    needs:
+      - go-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Browser Test Dependencies
+        run: npm ci
+
+      - name: Run Browser Tests
+        run: npm run test:browser
 
   build:
     name: Build Binary
@@ -75,7 +121,7 @@ jobs:
         run: apk add --no-cache bash ca-certificates git make
 
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -88,7 +134,7 @@ jobs:
 
       - name: Upload Release Archives
         if: inputs.upload-release-archives
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-archives
           path: |
@@ -122,7 +168,7 @@ jobs:
         run: apk add --no-cache bash build-base ca-certificates git make
 
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -132,6 +178,57 @@ jobs:
           PUPPET_FORGE_TEST_POSTGRES_DSN: postgres://forge:forge@postgres:5432/forge?sslmode=disable
         run: make test-postgres
 
+  object-storage:
+    name: Object Storage Integration
+    runs-on: ubuntu-24.04
+    needs:
+      - go-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Start MinIO
+        run: |
+          docker run --detach --name minio \
+            --publish 9000:9000 \
+            --env MINIO_ROOT_USER=minioadmin \
+            --env MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:RELEASE.2025-06-13T11-33-47Z@sha256:064117214caceaa8d8a90ef7caa58f2b2aeb316b5156afe9ee8da5b4d83e12c8 server /data
+          for _ in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs minio
+          exit 1
+
+      - name: Start GCS Emulator
+        run: |
+          docker run --detach --name fake-gcs \
+            --publish 4443:4443 \
+            fsouza/fake-gcs-server:1.55.1@sha256:91afded49de804aa61b5f3eb6c7cd65205acf9e5c5e047cf0ba7d9507af806c8 \
+            -scheme http -backend memory -public-host 127.0.0.1:4443
+          for _ in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:4443/storage/v1/b >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs fake-gcs
+          exit 1
+
+      - name: Run Object Storage Integration Tests
+        env:
+          PUPPET_FORGE_TEST_GCS_ENDPOINT: http://127.0.0.1:4443
+        run: make test-object-storage
+
   docker-check:
     name: Docker Check
     runs-on: ubuntu-24.04
@@ -140,20 +237,28 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Docker Compose Config
         if: inputs.check-compose
         run: make compose-config
 
-      - name: Docker Build
-        run: make docker-build
+      - name: Docker Smoke
+        run: make docker-smoke DOCKER_IMAGE=puppet-forge:ci
+
+      - name: Docker Image Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: puppet-forge:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
 
   helm-check:
     name: Helm Check
@@ -163,23 +268,26 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Set up Helm
-        uses: azure/setup-helm@v5
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
 
       - name: Helm Lint
         run: make helm-lint
+
+      - name: Prometheus Rules Check
+        run: make prometheus-rules-check
 
       - name: Helm Package
         run: make helm-package
 
       - name: Upload Helm Chart
         if: inputs.upload-helm-chart
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: helm-chart
           path: dist/charts/*.tgz
@@ -199,7 +307,7 @@ jobs:
         run: apk add --no-cache bash build-base ca-certificates git make
 
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           fetch-tags: true

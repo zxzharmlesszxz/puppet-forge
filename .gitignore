@@ -8,6 +8,9 @@ dist/
 .env
 coverage.out
 coverage.txt
+node_modules/
+playwright-report/
+test-results/
 
 # Build outputs
 /puppet-forge
