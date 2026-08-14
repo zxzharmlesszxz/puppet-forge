@@ -2,6 +2,9 @@ replicaCount: 2
 # Used only when autoscaling.enabled=false.
 # If secret.stringData.DATABASE_DSN uses sqlite://, keep autoscaling disabled and replicaCount=1.
 
+database:
+  backend: postgres
+
 nameOverride: ""
 fullnameOverride: ""
 
@@ -12,6 +15,7 @@ image:
 
 serviceAccount:
   create: true
+  automountServiceAccountToken: false
   name: ""
   annotations: {}
 
@@ -19,6 +23,10 @@ service:
   type: ClusterIP
   port: 80
   containerPort: 8080
+
+metricsService:
+  port: 9090
+  containerPort: 9090
 
 serviceMonitor:
   enabled: false
@@ -32,6 +40,16 @@ prometheusRule:
   enabled: false
   labels: {}
   annotations: {}
+  thresholds:
+    http5xxErrorRatio: 0.05
+    httpMinimumRequestRate: 0.1
+    httpP95LatencySeconds: 2
+    upstreamRefreshMaxAgeSeconds: 86400
+    upstreamJSONCacheMinimumHitRatio: 0.30
+    highInFlightRequests: 50
+    scrapeTimeoutRatio: 0.8
+    fileDescriptorRatio: 0.8
+    moduleMetricsMaxAgeSeconds: 300
 
 ingress:
   enabled: true
@@ -59,6 +77,35 @@ autoscaling:
   targetCPUUtilizationPercentage: 70
   targetMemoryUtilizationPercentage: ""
 
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: false
+  ingress: []
+  egress: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+topologySpreadConstraints:
+  enabled: true
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+terminationGracePeriodSeconds: 30
+
 persistence:
   enabled: false
   accessModes:
@@ -69,49 +116,62 @@ persistence:
 
 config:
   APP_ENV: prod
+  LOG_LEVEL: info
   HTTP_ADDR: ":8080"
-  READ_TIMEOUT: 10s
-  WRITE_TIMEOUT: 30s
+  METRICS_ADDR: ":9090"
+  READ_HEADER_TIMEOUT: 10s
+  READ_TIMEOUT: 0s
+  WRITE_TIMEOUT: 0s
+  IDLE_TIMEOUT: 60s
+  HTTP_MAX_HEADER_BYTES: "1048576"
   SHUTDOWN_TIMEOUT: 10s
+  DATABASE_MAX_CONNS: "10"
+  DATABASE_MIN_CONNS: "0"
+  DATABASE_MAX_CONN_LIFETIME: 1h
+  DATABASE_MAX_CONN_IDLE_TIME: 30m
   ARTIFACT_BACKEND: gcs
   ARTIFACT_ENDPOINT: https://storage.googleapis.com
   ARTIFACT_BUCKET: puppet-forge-artifacts
   ARTIFACT_PROJECT: my-gcp-project
+  ARTIFACT_ENSURE_BUCKET: "false"
+  ARTIFACT_GCS_ANONYMOUS: "false"
   ARTIFACT_PREFIX: modules
   ARTIFACT_REGION: us-east-1
   ARTIFACT_PATH_STYLE: "true"
   PUBLIC_BASE_URL: ""
+  ALLOWED_PUBLIC_HOSTS: ""
   TRUSTED_PROXY_CIDRS: ""
+  TRUST_FORWARDED_HEADERS: "false"
   PUBLIC_MODULE_ACCESS: "false"
   ACTIVE_RELEASE_TTL: 720h
+  ACCESS_TOKEN_HISTORY_TTL: 2160h
+  DELETED_RELEASE_TTL: 2160h
   SECURITY_HSTS_ENABLED: "false"
   WEB_AUTH_MODE: none
   OIDC_ISSUER_URL: ""
   OIDC_REDIRECT_URL: ""
   OIDC_LOGOUT_URL: ""
   OIDC_SCOPES: "openid profile email"
+  OIDC_SIGNING_ALGORITHMS: "RS256"
   UPSTREAM_URL: https://forgeapi.puppetlabs.com
   UPSTREAM_PROXY_JSON_CACHE_TTL: 5m
   UPSTREAM_PROXY_JSON_STALE_TTL: 1h
   FORGE_CACHE_MAX_BODY_BYTES: "1048576"
   MODULE_UPLOAD_MAX_BYTES: "134217728"
   UPSTREAM_ARTIFACT_MAX_BYTES: "134217728"
+  UPSTREAM_ARTIFACT_ORPHAN_TTL: 24h
   UPSTREAM_SYNC_INTERVAL: 15m
   UPSTREAM_SYNC_LIMIT: "1000"
+  UPSTREAM_SYNC_CONCURRENCY: "8"
   METRICS_MODULE_LIMIT: "10000"
+  METRICS_REFRESH_INTERVAL: 30s
 
 secret:
-  create: true
-  name: ""
-  stringData:
-    DATABASE_DSN: postgres://forge:change-me@postgres:5432/forge?sslmode=disable
-    ADMIN_TOKEN: ""
-    MANAGE_SESSION_SECRET: ""
-    ARTIFACT_ACCESS_KEY_ID: ""
-    ARTIFACT_SECRET_ACCESS_KEY: ""
-    OIDC_CLIENT_ID: ""
-    OIDC_CLIENT_SECRET: ""
-    OIDC_COOKIE_SECRET: ""
+  create: false
+  existingSecret: ""
+  # Change this value when an externally managed Secret changes to trigger a rollout.
+  rolloutChecksum: ""
+  stringData: {}
 
 podAnnotations: {}
 podLabels: {}
@@ -133,3 +193,11 @@ readinessProbe:
   periodSeconds: 10
   timeoutSeconds: 3
   failureThreshold: 3
+
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 30

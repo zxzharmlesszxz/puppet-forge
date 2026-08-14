@@ -1,0 +1,21 @@
+replicaCount: 1
+
+secret:
+  create: true
+  stringData:
+    DATABASE_DSN: sqlite:///data/puppet-forge.db
+    ADMIN_TOKEN: forge-admin-token-local
+    ACCESS_TOKEN_PEPPER: local-access-token-pepper-change-me
+    MANAGE_SESSION_SECRET: local-manage-session-secret-change-me
+
+persistence:
+  enabled: true
+
+serviceAccount:
+  automountServiceAccountToken: false
+
+config:
+  APP_ENV: dev
+  LOG_LEVEL: debug
+  ARTIFACT_PROJECT: local-dev
+  ARTIFACT_ENSURE_BUCKET: "true"

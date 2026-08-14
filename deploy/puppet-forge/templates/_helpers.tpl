@@ -38,8 +38,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "chart.secretName" -}}
 {{- if .Values.secret.create -}}
-{{- default (printf "%s-secrets" (include "chart.fullname" .)) .Values.secret.name -}}
+{{- printf "%s-secrets" (include "chart.fullname" .) -}}
 {{- else -}}
-{{- required "secret.name is required when secret.create=false" .Values.secret.name -}}
+{{- .Values.secret.existingSecret -}}
 {{- end -}}
 {{- end -}}
