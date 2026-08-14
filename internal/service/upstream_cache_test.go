@@ -15,6 +15,25 @@ type selectiveDeleteFailureStorage struct {
 	failPath string
 }
 
+type blockingArtifactReferenceStore struct {
+	*store.SQLiteStore
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingArtifactReferenceStore) IsArtifactReferenced(ctx context.Context, storagePath string) (bool, error) {
+	select {
+	case s.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-s.release:
+		return s.SQLiteStore.IsArtifactReferenced(ctx, storagePath)
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+}
+
 type upstreamCachePruneOutcome struct {
 	result UpstreamCachePruneResult
 	err    error
@@ -124,5 +143,64 @@ func TestPruneUpstreamArtifactCacheContinuesAfterDeleteFailure(t *testing.T) {
 	}
 	if exists, _ := artifacts.Exists(ctx, failedPath); !exists {
 		t.Fatal("failed object unexpectedly disappeared")
+	}
+}
+
+func TestPruneUpstreamArtifactCacheRetainsObjectReferencedAfterInitialSnapshot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	baseStore, err := store.NewSQLiteStore("sqlite://:memory:")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(baseStore.Close)
+	referenceStore := &blockingArtifactReferenceStore{
+		SQLiteStore: baseStore,
+		started:     make(chan struct{}, 1),
+		release:     make(chan struct{}),
+	}
+	const objectPath = "upstream-cache/v3/files/teamname-module-1.0.0.tar.gz"
+	artifacts := &testArtifactStorage{}
+	if err := artifacts.Upload(ctx, objectPath, "application/gzip", []byte("tarball")); err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+	artifacts.mu.Lock()
+	artifacts.objectTimes[objectPath] = time.Now().UTC().Add(-48 * time.Hour)
+	artifacts.mu.Unlock()
+
+	resultDone := make(chan upstreamCachePruneOutcome, 1)
+	go func() {
+		resultDone <- captureUpstreamCachePruneOutcome(
+			NewModuleService(referenceStore, artifacts, "modules", nil).
+				PruneUpstreamArtifactCache(ctx, time.Now().UTC().Add(-24*time.Hour)),
+		)
+	}()
+	<-referenceStore.started
+	module, err := baseStore.UpsertModule(ctx, "teamname", "module")
+	if err != nil {
+		t.Fatalf("UpsertModule() error = %v", err)
+	}
+	if _, err := baseStore.CreateRelease(ctx, domain.Release{
+		ID: "release", ModuleID: module.ID, Owner: module.Owner, Name: module.Name,
+		Source: "upstream", Version: "1.0.0", StoragePath: objectPath,
+	}); err != nil {
+		t.Fatalf("CreateRelease() error = %v", err)
+	}
+	close(referenceStore.release)
+
+	select {
+	case outcome := <-resultDone:
+		if outcome.err != nil {
+			t.Fatalf("PruneUpstreamArtifactCache() error = %v", outcome.err)
+		}
+		if outcome.result.Deleted != 0 || outcome.result.Failed != 0 {
+			t.Fatalf("prune result = %#v, want retained object", outcome.result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("PruneUpstreamArtifactCache() did not finish")
+	}
+	if exists, _ := artifacts.Exists(ctx, objectPath); !exists {
+		t.Fatal("object referenced after cleanup snapshot was deleted")
 	}
 }

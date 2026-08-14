@@ -130,6 +130,9 @@ func (p outboundPolicy) dialContext(dialer *net.Dialer) func(context.Context, st
 		if err != nil {
 			return nil, fmt.Errorf("resolve upstream host: %w", err)
 		}
+		if len(addresses) == 0 {
+			return nil, errors.New("upstream host resolved without addresses")
+		}
 		for _, resolved := range addresses {
 			if !p.allowPrivateNetworks && prohibitedUpstreamAddress(resolved) {
 				return nil, errors.New("upstream URL resolves to a prohibited network address")

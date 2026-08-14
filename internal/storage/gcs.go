@@ -52,7 +52,6 @@ type ArtifactStorage interface {
 	UploadReaderIfAbsent(ctx context.Context, objectPath string, contentType string, body io.Reader) (bool, error)
 	Delete(ctx context.Context, objectPath string) error
 	Exists(ctx context.Context, objectPath string) (bool, error)
-	Download(ctx context.Context, objectPath string) (Object, error)
 	Open(ctx context.Context, objectPath string) (ObjectReader, error)
 	PublicURL(objectPath string) string
 	Stat(ctx context.Context, objectPath string) (ObjectAttrs, error)
@@ -213,27 +212,6 @@ func (s *GCSStorage) Exists(ctx context.Context, objectPath string) (bool, error
 		return false, nil
 	}
 	return false, fmt.Errorf("get object attrs: %w", err)
-}
-
-func (s *GCSStorage) Download(ctx context.Context, objectPath string) (Object, error) {
-	object, err := s.Open(ctx, objectPath)
-	if err != nil {
-		return Object{}, err
-	}
-
-	body, err := io.ReadAll(object.Body)
-	closeErr := object.Body.Close()
-	if err != nil {
-		return Object{}, fmt.Errorf("read object: %w", err)
-	}
-	if closeErr != nil {
-		return Object{}, fmt.Errorf("close object reader: %w", closeErr)
-	}
-
-	return Object{
-		Body:        body,
-		ContentType: object.ContentType,
-	}, nil
 }
 
 func (s *GCSStorage) Stat(ctx context.Context, objectPath string) (ObjectAttrs, error) {

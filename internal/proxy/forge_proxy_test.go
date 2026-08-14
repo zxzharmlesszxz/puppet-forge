@@ -92,26 +92,16 @@ func (s *testArtifactStorage) Exists(_ context.Context, objectPath string) (bool
 	return s.existing[objectPath], nil
 }
 
-func (s *testArtifactStorage) Download(_ context.Context, objectPath string) (artifactstorage.Object, error) {
+func (s *testArtifactStorage) Open(_ context.Context, objectPath string) (artifactstorage.ObjectReader, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.downloads++
-	return artifactstorage.Object{
-		Body:        append([]byte(nil), s.uploaded[objectPath]...),
-		ContentType: s.contentType[objectPath],
-	}, nil
-}
-
-func (s *testArtifactStorage) Open(ctx context.Context, objectPath string) (artifactstorage.ObjectReader, error) {
-	object, err := s.Download(ctx, objectPath)
-	if err != nil {
-		return artifactstorage.ObjectReader{}, err
-	}
+	body := append([]byte(nil), s.uploaded[objectPath]...)
 	return artifactstorage.ObjectReader{
-		Body:        io.NopCloser(bytes.NewReader(object.Body)),
-		ContentType: object.ContentType,
-		Size:        int64(len(object.Body)),
+		Body:        io.NopCloser(bytes.NewReader(body)),
+		ContentType: s.contentType[objectPath],
+		Size:        int64(len(body)),
 	}, nil
 }
 
@@ -1210,6 +1200,79 @@ func TestForgeProxyRetriesArtifactAfterLeaseHolderFailure(t *testing.T) {
 	}
 	if got := requests.Load(); got != 2 {
 		t.Fatalf("upstream requests = %d, want 2", got)
+	}
+}
+
+func TestEnsureArtifactCallerCancellationDoesNotCancelSharedDownload(t *testing.T) {
+	digest := sha256.Sum256([]byte("tarball"))
+	for _, tc := range []struct {
+		name   string
+		ensure func(context.Context, *ForgeProxy, string) error
+	}{
+		{name: "materialize", ensure: func(ctx context.Context, forgeProxy *ForgeProxy, fileURI string) error {
+			return forgeProxy.EnsureArtifact(ctx, fileURI)
+		}},
+		{name: "integrity", ensure: func(ctx context.Context, forgeProxy *ForgeProxy, fileURI string) error {
+			return forgeProxy.EnsureArtifactIntegrity(ctx, fileURI, hex.EncodeToString(digest[:]), int64(len("tarball")))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			started := make(chan struct{})
+			release := make(chan struct{})
+			var requests atomic.Int64
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if requests.Add(1) == 1 {
+					close(started)
+				}
+				<-release
+				w.Header().Set("Content-Type", "application/gzip")
+				_, _ = w.Write([]byte("tarball"))
+			}))
+			defer upstream.Close()
+
+			artifacts := newTestArtifactStorage()
+			forgeProxy, err := newTestForgeProxy(upstream, time.Minute, 1024, artifacts, "upstream-cache")
+			if err != nil {
+				t.Fatalf("NewForgeProxy() error = %v", err)
+			}
+			const fileURI = "/v3/files/teamname-module-1.0.0.tar.gz"
+			firstCtx, cancelFirst := context.WithCancel(context.Background())
+			firstDone := make(chan error, 1)
+			go func() {
+				firstDone <- tc.ensure(firstCtx, forgeProxy, fileURI)
+			}()
+			<-started
+			cancelFirst()
+			select {
+			case err := <-firstDone:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("first ensure error = %v, want context.Canceled", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("canceled caller remained blocked on shared download")
+			}
+
+			secondDone := make(chan error, 1)
+			go func() {
+				secondDone <- tc.ensure(context.Background(), forgeProxy, fileURI)
+			}()
+			close(release)
+			select {
+			case err := <-secondDone:
+				if err != nil {
+					t.Fatalf("second ensure error = %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("shared download did not complete")
+			}
+			if got := requests.Load(); got != 1 {
+				t.Fatalf("upstream requests = %d, want 1", got)
+			}
+			if !artifacts.hasObject("upstream-cache/v3/files/teamname-module-1.0.0.tar.gz") {
+				t.Fatal("shared download did not populate artifact cache")
+			}
+		})
 	}
 }
 

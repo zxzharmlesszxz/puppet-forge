@@ -129,7 +129,6 @@ type ModuleReleaseBatchStore interface {
 
 type ArtifactReleaseStore interface {
 	ListArtifactReleases(ctx context.Context) ([]ArtifactReleaseRecord, error)
-	IsArtifactPathReferenced(ctx context.Context, storagePath string) (bool, error)
 }
 
 type PostgresPoolConfig struct {

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5" // #nosec G501 -- Puppet Forge protocol compatibility checksum; SHA-256 is also computed and used for integrity.
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -33,6 +34,8 @@ import (
 )
 
 var moduleIdentityPartPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_]*$`)
+
+const readinessCapabilityTTL = 5 * time.Minute
 
 const (
 	maxArchiveEntries             = 10000
@@ -91,6 +94,8 @@ type ModuleService struct {
 	prefix               string
 	upstream             *proxy.ForgeProxy
 	releaseUsageThrottle *throttle.ExpirySet
+	readinessMu          sync.Mutex
+	readinessCheckedAt   time.Time
 }
 
 func NewModuleService(modules store.ModuleStore, artifacts storage.ArtifactStorage, prefix string, upstream *proxy.ForgeProxy) *ModuleService {
@@ -881,18 +886,43 @@ func releaseArchivePath(release domain.Release) string {
 
 func (s *ModuleService) EnsureReleaseChecksums(ctx context.Context, release domain.Release) (domain.Release, error) {
 	checksumsComplete := release.MD5 != "" && release.SHA256 != "" && release.SizeBytes > 0
-	if checksumsComplete && (release.Source != "upstream" || s.upstream == nil) {
+	if checksumsComplete && (release.Source != "upstream" || release.StoragePath != "") {
 		return release, nil
 	}
 	if release.Source == "upstream" {
 		if s.upstream == nil || release.UpstreamFileURI == "" {
 			return release, store.ErrNotFound
 		}
-		if err := s.upstream.EnsureArtifactIntegrity(ctx, release.UpstreamFileURI, release.SHA256, release.SizeBytes); err != nil {
-			return release, fmt.Errorf("%w: cache upstream release artifact: %w", ErrUpstreamHydration, err)
-		}
-	}
+		for range 2 {
+			var err error
+			if release.SHA256 != "" && release.SizeBytes > 0 {
+				err = s.upstream.EnsureArtifactIntegrity(ctx, release.UpstreamFileURI, release.SHA256, release.SizeBytes)
+			} else {
+				err = s.upstream.EnsureArtifact(ctx, release.UpstreamFileURI)
+			}
+			if err != nil {
+				return release, fmt.Errorf("%w: cache upstream release artifact: %w", ErrUpstreamHydration, err)
+			}
 
+			var verified domain.Release
+			err = s.upstream.WithCachedArtifactLease(ctx, releaseArchivePath(release), func(leaseCtx context.Context) error {
+				var calculateErr error
+				verified, calculateErr = s.calculateReleaseChecksums(leaseCtx, release)
+				return calculateErr
+			})
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			return verified, err
+		}
+		return release, fmt.Errorf("%w: cached upstream artifact disappeared during verification", ErrUpstreamHydration)
+	}
+	return s.calculateReleaseChecksums(ctx, release)
+}
+
+func (s *ModuleService) calculateReleaseChecksums(ctx context.Context, release domain.Release) (domain.Release, error) {
+	expectedSHA256 := release.SHA256
+	expectedSize := release.SizeBytes
 	object, err := s.openReleaseArchive(ctx, release)
 	if err != nil {
 		return release, err
@@ -908,6 +938,9 @@ func (s *ModuleService) EnsureReleaseChecksums(ctx context.Context, release doma
 	release.SHA256 = hex.EncodeToString(shaHash.Sum(nil))
 	release.SizeBytes = sizeBytes
 	release.StoragePath = releaseArchivePath(release)
+	if release.Source == "upstream" && ((expectedSHA256 != "" && !strings.EqualFold(expectedSHA256, release.SHA256)) || (expectedSize > 0 && expectedSize != release.SizeBytes)) {
+		return domain.Release{}, fmt.Errorf("%w: cached upstream artifact does not match release metadata", ErrUpstreamHydration)
+	}
 
 	if checksumStore, ok := s.modules.(store.ReleaseChecksumStore); ok {
 		if err := checksumStore.UpdateReleaseChecksums(
@@ -936,10 +969,34 @@ func (s *ModuleService) Ready(ctx context.Context) error {
 	if s.artifacts == nil {
 		return errors.New("artifact storage is not available")
 	}
-	readinessPath := path.Join(s.prefix, ".readiness-probe")
-	if _, err := s.artifacts.Stat(ctx, readinessPath); err != nil && !errors.Is(err, storage.ErrObjectNotFound) {
-		return fmt.Errorf("artifact storage readiness: %w", err)
+	s.readinessMu.Lock()
+	defer s.readinessMu.Unlock()
+	if !s.readinessCheckedAt.IsZero() && time.Since(s.readinessCheckedAt) < readinessCapabilityTTL {
+		return nil
 	}
+	probeID := make([]byte, 16)
+	if _, err := rand.Read(probeID); err != nil {
+		return fmt.Errorf("generate artifact storage readiness probe: %w", err)
+	}
+	readinessPath := path.Join(s.prefix, ".readiness-probes", hex.EncodeToString(probeID))
+	created, err := s.artifacts.UploadReaderIfAbsent(ctx, readinessPath, "application/octet-stream", strings.NewReader("ready"))
+	if err != nil {
+		return fmt.Errorf("write artifact storage readiness probe: %w", err)
+	}
+	if !created {
+		return errors.New("artifact storage readiness probe path already exists")
+	}
+	object, openErr := s.artifacts.Open(ctx, readinessPath)
+	var readErr error
+	if openErr == nil {
+		_, readErr = io.Copy(io.Discard, io.LimitReader(object.Body, 16))
+		readErr = errors.Join(readErr, object.Body.Close())
+	}
+	deleteErr := s.artifacts.Delete(ctx, readinessPath)
+	if err := errors.Join(openErr, readErr, deleteErr); err != nil {
+		return fmt.Errorf("verify artifact storage readiness probe: %w", err)
+	}
+	s.readinessCheckedAt = time.Now()
 	return nil
 }
 
