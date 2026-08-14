@@ -16,7 +16,7 @@ func TestClassifyRoute(t *testing.T) {
 		"/":                               "/",
 		"/healthz":                        "/healthz",
 		"/readyz":                         "/readyz",
-		"/metrics":                        "/metrics",
+		"/metrics":                        "other",
 		"/auth/callback":                  "/auth/*",
 		"/manage":                         "/manage",
 		"/manage/login":                   "/manage/*",
@@ -49,6 +49,15 @@ func TestResponseRecorderTracksStatusAndBytes(t *testing.T) {
 	}
 	if rec.status != http.StatusCreated {
 		t.Fatalf("unexpected status: %d", rec.status)
+	}
+}
+
+func TestResponseRecorderExposesUnderlyingResponseControllerCapabilities(t *testing.T) {
+	t.Parallel()
+
+	rec := &responseRecorder{ResponseWriter: httptest.NewRecorder(), status: http.StatusOK}
+	if err := http.NewResponseController(rec).Flush(); err != nil {
+		t.Fatalf("ResponseController.Flush() error = %v", err)
 	}
 }
 

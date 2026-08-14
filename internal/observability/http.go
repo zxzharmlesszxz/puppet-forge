@@ -41,8 +41,11 @@ func NewMiddleware() *Middleware {
 	}
 }
 
-func (m *Middleware) MetricsHandler() http.Handler {
-	return promhttp.Handler()
+func MetricsHandler(gatherers ...prometheus.Gatherer) http.Handler {
+	if len(gatherers) == 0 || gatherers[0] == nil {
+		return promhttp.Handler()
+	}
+	return promhttp.HandlerFor(gatherers[0], promhttp.HandlerOpts{})
 }
 
 func (m *Middleware) Wrap(next http.Handler) http.Handler {
@@ -51,6 +54,17 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 		m.inFlight.Inc()
 		route := classifyRoute(r.URL.Path)
 		rec := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
+		slog.Default().Debug("http request started",
+			"request_id", RequestID(r.Context()),
+			"method", r.Method,
+			"path", r.URL.Path,
+			"route", route,
+			"host", r.Host,
+			"proto", r.Proto,
+			"content_type", r.Header.Get("Content-Type"),
+			"content_length", r.ContentLength,
+			"remote_addr", r.RemoteAddr,
+		)
 
 		defer func() {
 			m.inFlight.Dec()
@@ -59,7 +73,7 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 				if !rec.headerWritten {
 					http.Error(rec, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				}
-				slog.Default().Error("http handler panic", "panic", recovered, "method", r.Method, "path", r.URL.Path, "route", route)
+				slog.Default().Error("http handler panic", "panic", recovered, "request_id", RequestID(r.Context()), "method", r.Method, "path", r.URL.Path, "route", route)
 				if !rec.headerWritten {
 					rec.status = http.StatusInternalServerError
 				}
@@ -72,6 +86,7 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 			m.requestDuration.WithLabelValues(r.Method, route, status).Observe(duration)
 
 			slog.Default().Info("http request",
+				"request_id", RequestID(r.Context()),
 				"method", r.Method,
 				"path", r.URL.Path,
 				"route", route,
@@ -92,6 +107,10 @@ type responseRecorder struct {
 	status        int
 	bytes         int
 	headerWritten bool
+}
+
+func (r *responseRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
 }
 
 func (r *responseRecorder) WriteHeader(statusCode int) {
@@ -121,8 +140,6 @@ func classifyRoute(path string) string {
 		return "/healthz"
 	case path == "/readyz":
 		return "/readyz"
-	case path == "/metrics":
-		return "/metrics"
 	case len(path) >= len("/auth/") && path[:len("/auth/")] == "/auth/":
 		return "/auth/*"
 	case path == "/manage":

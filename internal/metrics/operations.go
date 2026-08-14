@@ -12,17 +12,17 @@ var (
 	publishTotal = RegisterCounterVec(prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "puppet_forge_publish_total",
 		Help: "Total number of module publish attempts.",
-	}, []string{"result", "owner"}))
+	}, []string{"result"}))
 
 	deleteTotal = RegisterCounterVec(prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "puppet_forge_delete_total",
 		Help: "Total number of module and release delete attempts.",
-	}, []string{"result", "kind", "owner"}))
+	}, []string{"result", "kind"}))
 
 	releaseUsageMarkedTotal = RegisterCounterVec(prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "puppet_forge_release_usage_mark_total",
 		Help: "Total number of release usage mark attempts.",
-	}, []string{"result", "owner"}))
+	}, []string{"result"}))
 
 	upstreamSyncTotal = RegisterCounterVec(prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "puppet_forge_upstream_sync_total",
@@ -65,6 +65,46 @@ var (
 		Help: "Total number of upstream cache decisions.",
 	}, []string{"kind", "result"}))
 
+	artifactDeletionTotal = RegisterCounterVec(prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "puppet_forge_artifact_deletion_total",
+		Help: "Total number of durable artifact deletion processing attempts.",
+	}, []string{"result"}))
+
+	artifactDeletionsPending = RegisterGauge(prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "puppet_forge_artifact_deletions_pending",
+		Help: "Number of local artifact deletions waiting in the durable SQL outbox.",
+	}))
+
+	artifactStreamTotal = RegisterCounterVec(prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "puppet_forge_artifact_stream_total",
+		Help: "Total number of completed artifact response streams.",
+	}, []string{"source", "result"}))
+
+	artifactStreamBytesTotal = RegisterCounterVec(prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "puppet_forge_artifact_stream_bytes_total",
+		Help: "Total number of artifact response bytes written.",
+	}, []string{"source"}))
+
+	upstreamArtifactIntegrityTotal = RegisterCounterVec(prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "puppet_forge_upstream_artifact_integrity_total",
+		Help: "Total number of coalesced upstream artifact cache integrity check outcomes.",
+	}, []string{"result"}))
+
+	upstreamArtifactCleanupTotal = RegisterCounterVec(prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "puppet_forge_upstream_artifact_cleanup_total",
+		Help: "Total number of lease-elected upstream artifact cache cleanup cycle outcomes.",
+	}, []string{"result"}))
+
+	upstreamArtifactCleanupObjectsTotal = RegisterCounter(prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "puppet_forge_upstream_artifact_cleanup_objects_total",
+		Help: "Total number of unreferenced upstream artifact cache objects deleted by cleanup cycles.",
+	}))
+
+	upstreamArtifactCleanupFailuresTotal = RegisterCounter(prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "puppet_forge_upstream_artifact_cleanup_failures_total",
+		Help: "Total number of upstream artifact cache objects that cleanup cycles failed to delete.",
+	}))
+
 	buildInfo = RegisterGaugeVec(prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "puppet_forge_build_info",
 		Help: "Build information about puppet-forge.",
@@ -76,6 +116,13 @@ func init() {
 }
 
 func initOperationMetrics() {
+	for _, result := range []string{"success", "error"} {
+		publishTotal.WithLabelValues(result).Add(0)
+		releaseUsageMarkedTotal.WithLabelValues(result).Add(0)
+		for _, kind := range []string{"module", "release"} {
+			deleteTotal.WithLabelValues(result, kind).Add(0)
+		}
+	}
 	for _, trigger := range []string{"single", "refresh"} {
 		for _, result := range []string{"success", "error"} {
 			upstreamSyncTotal.WithLabelValues(result, trigger).Add(0)
@@ -92,18 +139,36 @@ func initOperationMetrics() {
 			upstreamCacheRequestsTotal.WithLabelValues(kind, result).Add(0)
 		}
 	}
+	for _, result := range []string{"deleted", "canceled", "error"} {
+		artifactDeletionTotal.WithLabelValues(result).Add(0)
+	}
+	artifactDeletionsPending.Set(0)
+	for _, source := range []string{"local", "upstream_cache"} {
+		artifactStreamBytesTotal.WithLabelValues(source).Add(0)
+		for _, result := range []string{"success", "client_cancel", "error"} {
+			artifactStreamTotal.WithLabelValues(source, result).Add(0)
+		}
+	}
+	for _, result := range []string{"valid", "repaired", "error"} {
+		upstreamArtifactIntegrityTotal.WithLabelValues(result).Add(0)
+	}
+	for _, result := range []string{"success", "error"} {
+		upstreamArtifactCleanupTotal.WithLabelValues(result).Add(0)
+	}
+	upstreamArtifactCleanupObjectsTotal.Add(0)
+	upstreamArtifactCleanupFailuresTotal.Add(0)
 }
 
-func ObservePublish(owner string, err error) {
-	publishTotal.WithLabelValues(resultLabel(err), owner).Inc()
+func ObservePublish(err error) {
+	publishTotal.WithLabelValues(resultLabel(err)).Inc()
 }
 
-func ObserveDelete(kind, owner string, err error) {
-	deleteTotal.WithLabelValues(resultLabel(err), kind, owner).Inc()
+func ObserveDelete(kind string, err error) {
+	deleteTotal.WithLabelValues(resultLabel(err), kind).Inc()
 }
 
-func ObserveReleaseUsageMark(owner string, err error) {
-	releaseUsageMarkedTotal.WithLabelValues(resultLabel(err), owner).Inc()
+func ObserveReleaseUsageMark(err error) {
+	releaseUsageMarkedTotal.WithLabelValues(resultLabel(err)).Inc()
 }
 
 func ObserveUpstreamSync(trigger string, err error) {
@@ -131,6 +196,35 @@ func ObserveUpstreamCache(kind, result string) {
 	upstreamCacheRequestsTotal.WithLabelValues(kind, result).Inc()
 }
 
+func ObserveArtifactDeletion(result string) {
+	artifactDeletionTotal.WithLabelValues(result).Inc()
+}
+
+func SetArtifactDeletionsPending(pending int) {
+	artifactDeletionsPending.Set(float64(pending))
+}
+
+func ObserveArtifactStream(source, result string, bytes int64) {
+	artifactStreamTotal.WithLabelValues(source, result).Inc()
+	if bytes > 0 {
+		artifactStreamBytesTotal.WithLabelValues(source).Add(float64(bytes))
+	}
+}
+
+func ObserveUpstreamArtifactIntegrity(result string) {
+	upstreamArtifactIntegrityTotal.WithLabelValues(result).Inc()
+}
+
+func ObserveUpstreamArtifactCleanup(err error, deleted, failed int) {
+	upstreamArtifactCleanupTotal.WithLabelValues(resultLabel(err)).Inc()
+	if deleted > 0 {
+		upstreamArtifactCleanupObjectsTotal.Add(float64(deleted))
+	}
+	if failed > 0 {
+		upstreamArtifactCleanupFailuresTotal.Add(float64(failed))
+	}
+}
+
 func RecordBuildInfo(version, goVersion string) {
 	buildInfo.Reset()
 	buildInfo.WithLabelValues(version, goVersion).Set(1)
@@ -147,6 +241,18 @@ func RegisterCounterVec(collector *prometheus.CounterVec) *prometheus.CounterVec
 	if err := prometheus.Register(collector); err != nil {
 		if alreadyRegistered, ok := errors.AsType[prometheus.AlreadyRegisteredError](err); ok {
 			if existing, ok := alreadyRegistered.ExistingCollector.(*prometheus.CounterVec); ok {
+				return existing
+			}
+		}
+		slog.Default().Error("register counter collector failed", "err", err)
+	}
+	return collector
+}
+
+func RegisterCounter(collector prometheus.Counter) prometheus.Counter {
+	if err := prometheus.Register(collector); err != nil {
+		if alreadyRegistered, ok := errors.AsType[prometheus.AlreadyRegisteredError](err); ok {
+			if existing, ok := alreadyRegistered.ExistingCollector.(prometheus.Counter); ok {
 				return existing
 			}
 		}

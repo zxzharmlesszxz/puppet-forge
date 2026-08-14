@@ -34,13 +34,22 @@ groups:
           )
 
       - record: job:puppet_forge_indexed_modules
-        expr: count by (job) (max by (job, module, owner, name) (puppet_forge_module_info))
+        expr: sum by (job) (max by (job, owner) (puppet_forge_modules))
 
       - record: job:puppet_forge_publish_errors:rate5m
         expr: sum by (job) (rate(puppet_forge_publish_total{result="error"}[5m]))
 
       - record: job:puppet_forge_delete_errors:rate5m
         expr: sum by (job) (rate(puppet_forge_delete_total{result="error"}[5m]))
+
+      - record: job:puppet_forge_artifact_deletion_errors:rate5m
+        expr: sum by (job) (rate(puppet_forge_artifact_deletion_total{result="error"}[5m]))
+
+      - record: job:puppet_forge_artifact_deletions_pending
+        expr: max by (job) (puppet_forge_artifact_deletions_pending)
+
+      - record: job_source:puppet_forge_artifact_stream_errors:rate5m
+        expr: sum by (job, source) (rate(puppet_forge_artifact_stream_total{result="error"}[5m]))
 
       - record: job:puppet_forge_release_usage_mark_errors:rate5m
         expr: sum by (job) (rate(puppet_forge_release_usage_mark_total{result="error"}[5m]))
@@ -112,6 +121,54 @@ groups:
           summary: "Puppet Forge target is down for {{ $labels.job }}"
           description: "Prometheus has not been able to scrape {{ $labels.instance }} for at least 5 minutes."
 
+      - alert: PuppetForgeTargetsAbsent
+        expr: absent(up{job=~".*puppet-forge.*"})
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Puppet Forge targets are absent"
+          description: "Prometheus service discovery has exposed no Puppet Forge target for at least 5 minutes."
+
+      - alert: PuppetForgeModuleMetricsNotReady
+        expr: puppet_forge_module_metrics_ready == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge inventory metrics are not ready on {{ $labels.instance }}"
+          description: "The replica has not completed a successful module inventory refresh."
+
+      - alert: PuppetForgeModuleMetricsStale
+        expr: |
+          time() - puppet_forge_module_metrics_last_success_timestamp_seconds > 300
+          and
+          puppet_forge_module_metrics_ready == 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge inventory metrics are stale on {{ $labels.instance }}"
+          description: "The replica's last successful module inventory refresh is older than 5 minutes."
+
+      - alert: PuppetForgeModuleMetricsRefreshErrors
+        expr: increase(puppet_forge_module_metrics_refresh_errors_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge inventory refresh is failing on {{ $labels.instance }}"
+          description: "The replica has reported module inventory refresh failures during the last 10 minutes."
+
+      - alert: PuppetForgeModuleMetricsTruncated
+        expr: puppet_forge_module_metrics_truncated == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge inventory metrics are truncated on {{ $labels.instance }}"
+          description: "METRICS_MODULE_LIMIT is lower than the number of indexed module owners."
+
       - alert: PuppetForgePublishErrors
         expr: job:puppet_forge_publish_errors:rate5m > 0
         for: 10m
@@ -129,6 +186,51 @@ groups:
         annotations:
           summary: "Puppet Forge delete errors on {{ $labels.job }}"
           description: "Module or release delete attempts have been failing for at least 10 minutes."
+
+      - alert: PuppetForgeArtifactDeletionErrors
+        expr: job:puppet_forge_artifact_deletion_errors:rate5m > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge artifact cleanup is failing on {{ $labels.job }}"
+          description: "Durable artifact deletion attempts have been failing for at least 10 minutes. SQL metadata is already deleted, but object-storage cleanup is pending."
+
+      - alert: PuppetForgeArtifactDeletionsPending
+        expr: job:puppet_forge_artifact_deletions_pending > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge has pending artifact deletions on {{ $labels.job }}"
+          description: "One or more local artifacts have remained in the durable deletion outbox for at least 15 minutes."
+
+      - alert: PuppetForgeArtifactStreamErrors
+        expr: job_source:puppet_forge_artifact_stream_errors:rate5m > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge artifact streams are failing on {{ $labels.job }}"
+          description: "Artifact response streams from {{ $labels.source }} are terminating after HTTP headers have been sent. Clients may receive truncated archives despite a 200 or 206 status."
+
+      - alert: PuppetForgeUpstreamArtifactIntegrityErrors
+        expr: sum by (job) (increase(puppet_forge_upstream_artifact_integrity_total{result="error"}[15m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge upstream artifact integrity checks failed on {{ $labels.job }}"
+          description: "An upstream artifact could not be validated or repaired. Cached artifact or upstream storage health requires investigation."
+
+      - alert: PuppetForgeUpstreamArtifactCleanupErrors
+        expr: sum by (job) (increase(puppet_forge_upstream_artifact_cleanup_total{result="error"}[15m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge upstream artifact cleanup failed on {{ $labels.job }}"
+          description: "The lease-elected orphan cleanup worker failed. Unreferenced upstream-cache objects may accumulate."
 
       - alert: PuppetForgeReleaseUsageMarkErrors
         expr: job:puppet_forge_release_usage_mark_errors:rate5m > 0
