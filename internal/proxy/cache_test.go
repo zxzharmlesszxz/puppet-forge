@@ -83,6 +83,9 @@ func TestResponseCacheGetStaleRejectsTooOldEntry(t *testing.T) {
 	if ok {
 		t.Fatal("expected too-old stale entry to be rejected")
 	}
+	if len(cache.entries) != 0 || cache.bytes != 0 {
+		t.Fatalf("expired cache state was not reclaimed: entries=%d bytes=%d", len(cache.entries), cache.bytes)
+	}
 }
 
 func TestResponseCacheGetStaleDisabledByZeroTTL(t *testing.T) {
@@ -99,6 +102,9 @@ func TestResponseCacheGetStaleDisabledByZeroTTL(t *testing.T) {
 	_, ok := cache.GetStale("key", now, 0)
 	if ok {
 		t.Fatal("expected stale fallback to be disabled")
+	}
+	if len(cache.entries) != 0 || cache.bytes != 0 {
+		t.Fatalf("disabled stale cache state was not reclaimed: entries=%d bytes=%d", len(cache.entries), cache.bytes)
 	}
 }
 

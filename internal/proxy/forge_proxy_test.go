@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,11 +21,12 @@ import (
 )
 
 type testArtifactStorage struct {
-	mu          sync.Mutex
-	existing    map[string]bool
-	uploaded    map[string][]byte
-	contentType map[string]string
-	downloads   int
+	mu            sync.Mutex
+	existing      map[string]bool
+	uploaded      map[string][]byte
+	contentType   map[string]string
+	downloads     int
+	readerUploads int
 }
 
 func newTestArtifactStorage() *testArtifactStorage {
@@ -38,6 +44,44 @@ func (s *testArtifactStorage) Upload(_ context.Context, objectPath string, conte
 	s.existing[objectPath] = true
 	s.uploaded[objectPath] = append([]byte(nil), body...)
 	s.contentType[objectPath] = contentType
+	return nil
+}
+
+func (s *testArtifactStorage) UploadIfAbsent(_ context.Context, objectPath string, contentType string, body []byte) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.existing[objectPath] {
+		return false, nil
+	}
+	s.existing[objectPath] = true
+	s.uploaded[objectPath] = append([]byte(nil), body...)
+	s.contentType[objectPath] = contentType
+	return true, nil
+}
+
+func (s *testArtifactStorage) UploadReaderIfAbsent(ctx context.Context, objectPath string, contentType string, body io.Reader) (bool, error) {
+	s.mu.Lock()
+	s.readerUploads++
+	s.mu.Unlock()
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return false, err
+	}
+	return s.UploadIfAbsent(ctx, objectPath, contentType, data)
+}
+
+func (s *testArtifactStorage) readerUploadCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.readerUploads
+}
+
+func (s *testArtifactStorage) Delete(_ context.Context, objectPath string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.existing, objectPath)
+	delete(s.uploaded, objectPath)
+	delete(s.contentType, objectPath)
 	return nil
 }
 
@@ -59,6 +103,34 @@ func (s *testArtifactStorage) Download(_ context.Context, objectPath string) (ar
 	}, nil
 }
 
+func (s *testArtifactStorage) Open(ctx context.Context, objectPath string) (artifactstorage.ObjectReader, error) {
+	object, err := s.Download(ctx, objectPath)
+	if err != nil {
+		return artifactstorage.ObjectReader{}, err
+	}
+	return artifactstorage.ObjectReader{
+		Body:        io.NopCloser(bytes.NewReader(object.Body)),
+		ContentType: object.ContentType,
+		Size:        int64(len(object.Body)),
+	}, nil
+}
+
+func (s *testArtifactStorage) OpenRange(_ context.Context, objectPath string, offset, length int64) (artifactstorage.ObjectReader, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	body := s.uploaded[objectPath]
+	end := offset + length
+	if !s.existing[objectPath] || offset < 0 || length < 0 || end > int64(len(body)) {
+		return artifactstorage.ObjectReader{}, artifactstorage.ErrObjectNotFound
+	}
+	selected := append([]byte(nil), body[offset:end]...)
+	return artifactstorage.ObjectReader{
+		Body:        io.NopCloser(bytes.NewReader(selected)),
+		ContentType: s.contentType[objectPath],
+		Size:        int64(len(selected)),
+	}, nil
+}
+
 func (s *testArtifactStorage) Stat(_ context.Context, objectPath string) (artifactstorage.ObjectAttrs, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -69,6 +141,7 @@ func (s *testArtifactStorage) Stat(_ context.Context, objectPath string) (artifa
 	return artifactstorage.ObjectAttrs{
 		ContentType: s.contentType[objectPath],
 		Size:        int64(len(s.uploaded[objectPath])),
+		ETag:        `"test-etag"`,
 	}, nil
 }
 
@@ -104,6 +177,149 @@ func (s *testArtifactStorage) downloadCount() int {
 	return s.downloads
 }
 
+func newTestForgeProxy(upstream *httptest.Server, cacheTTL time.Duration, maxBodyBytes int64, artifacts artifactstorage.ArtifactStorage, artifactPrefix string, opts ...Option) (*ForgeProxy, error) {
+	opts = append(opts, WithHTTPClient(upstream.Client()), WithPrivateNetworks())
+	return NewForgeProxy(upstream.URL, cacheTTL, maxBodyBytes, artifacts, artifactPrefix, opts...)
+}
+
+func artifactProxyStatus(t *testing.T, upstream *httptest.Server, artifacts artifactstorage.ArtifactStorage, opts ...Option) int {
+	t.Helper()
+
+	forgeProxy, err := newTestForgeProxy(upstream, time.Minute, 1024, artifacts, "upstream-cache", opts...)
+	if err != nil {
+		t.Fatalf("NewForgeProxy() error = %v", err)
+	}
+	server := httptest.NewServer(forgeProxy.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/v3/files/puppetlabs-apache-1.0.0.tar.gz")
+	if err != nil {
+		t.Fatalf("GET error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode
+}
+
+type testLease struct {
+	holder     string
+	leaseUntil time.Time
+}
+
+type testLeaseStore struct {
+	mu           sync.Mutex
+	leases       map[string]testLease
+	acquisitions map[string]int
+	failAfter    int
+}
+
+func newTestLeaseStore() *testLeaseStore {
+	return &testLeaseStore{
+		leases:       make(map[string]testLease),
+		acquisitions: make(map[string]int),
+	}
+}
+
+func (s *testLeaseStore) AcquireLease(_ context.Context, name, holder string, duration time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failAfter > 0 && s.acquisitions[name] >= s.failAfter {
+		return false, errors.New("lease backend unavailable")
+	}
+	current, exists := s.leases[name]
+	if exists && current.holder != holder && current.leaseUntil.After(time.Now()) {
+		return false, nil
+	}
+	s.leases[name] = testLease{holder: holder, leaseUntil: time.Now().Add(duration)}
+	s.acquisitions[name]++
+	return true, nil
+}
+
+func TestArtifactLeaseCancelsWorkWhenRenewalFails(t *testing.T) {
+	t.Parallel()
+
+	leases := newTestLeaseStore()
+	leases.failAfter = 1
+	forgeProxy := &ForgeProxy{
+		leaseStore:       leases,
+		artifactLeaseTTL: 30 * time.Millisecond,
+	}
+	leaseCtx, release, err := forgeProxy.acquireArtifactLease(context.Background(), "upstream-cache/v3/files/teamname-module-2.0.0.tar.gz")
+	if err != nil {
+		t.Fatalf("acquireArtifactLease() error = %v", err)
+	}
+	if release == nil {
+		t.Fatal("acquireArtifactLease() returned nil release")
+	}
+	defer release()
+
+	select {
+	case <-leaseCtx.Done():
+		if !errors.Is(leaseCtx.Err(), context.Canceled) {
+			t.Fatalf("lease context error = %v, want context canceled", leaseCtx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("lease context was not canceled after renewal failure")
+	}
+}
+
+func (s *testLeaseStore) ReleaseLease(_ context.Context, name, holder string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if current, exists := s.leases[name]; exists && current.holder == holder {
+		delete(s.leases, name)
+	}
+	return nil
+}
+
+func (s *testLeaseStore) acquisitionCount(name string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.acquisitions[name]
+}
+
+func TestArtifactLeaseRenewsUntilReleased(t *testing.T) {
+	t.Parallel()
+
+	leases := newTestLeaseStore()
+	forgeProxy := &ForgeProxy{
+		leaseStore:       leases,
+		artifactLeaseTTL: 30 * time.Millisecond,
+	}
+	const objectPath = "upstream-cache/v3/files/teamname-module-1.0.0.tar.gz"
+	leaseCtx, release, err := forgeProxy.acquireArtifactLease(context.Background(), objectPath)
+	if err != nil {
+		t.Fatalf("acquireArtifactLease() error = %v", err)
+	}
+	if release == nil {
+		t.Fatal("acquireArtifactLease() returned nil release")
+	}
+	if err := leaseCtx.Err(); err != nil {
+		t.Fatalf("lease context error = %v", err)
+	}
+
+	leaseDigest := sha256.Sum256([]byte(objectPath))
+	leaseName := fmt.Sprintf("upstream-artifact-%x", leaseDigest[:])
+	deadline := time.Now().Add(time.Second)
+	for leases.acquisitionCount(leaseName) < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := leases.acquisitionCount(leaseName); got < 2 {
+		t.Fatalf("lease acquisition count = %d, want heartbeat renewal", got)
+	}
+	if acquired, err := leases.AcquireLease(context.Background(), leaseName, "other-holder", 30*time.Millisecond); err != nil {
+		t.Fatalf("competing AcquireLease() error = %v", err)
+	} else if acquired {
+		t.Fatal("competing holder acquired a renewed lease")
+	}
+
+	release()
+	if acquired, err := leases.AcquireLease(context.Background(), leaseName, "other-holder", 30*time.Millisecond); err != nil {
+		t.Fatalf("AcquireLease(after release) error = %v", err)
+	} else if !acquired {
+		t.Fatal("competing holder could not acquire released lease")
+	}
+}
+
 func TestForgeProxyCachesJSONResponses(t *testing.T) {
 	t.Parallel()
 
@@ -115,7 +331,7 @@ func TestForgeProxyCachesJSONResponses(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	proxy, err := NewForgeProxy(upstream.URL, time.Minute, 1024, nil, "upstream-cache")
+	proxy, err := newTestForgeProxy(upstream, time.Minute, 1024, nil, "upstream-cache")
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
@@ -152,7 +368,7 @@ func TestForgeProxyForwardsRFCForwardedProto(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	proxy, err := NewForgeProxy(upstream.URL, time.Minute, 1024, nil, "upstream-cache")
+	proxy, err := newTestForgeProxy(upstream, time.Minute, 1024, nil, "upstream-cache")
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
@@ -187,7 +403,7 @@ func TestForgeProxyOnlyForwardsAllowedHeadersUpstream(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	proxy, err := NewForgeProxy(upstream.URL, 0, 1024, nil, "upstream-cache")
+	proxy, err := newTestForgeProxy(upstream, 0, 1024, nil, "upstream-cache")
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
@@ -246,6 +462,23 @@ func TestParseUpstreamModuleDerivesReleaseVersionsFromSlugs(t *testing.T) {
 	}
 }
 
+func TestParseUpstreamModuleAcceptsObjectOwner(t *testing.T) {
+	t.Parallel()
+
+	module, err := parseUpstreamModule([]byte(`{
+		"slug":"puppetlabs-apt",
+		"owner":{"slug":"puppetlabs","username":"Puppet Labs"},
+		"name":"apt",
+		"current_release":{"slug":"puppetlabs-apt-11.3.2","version":"11.3.2"}
+	}`))
+	if err != nil {
+		t.Fatalf("parseUpstreamModule() error = %v", err)
+	}
+	if module.Owner != "puppetlabs" || module.Name != "apt" {
+		t.Fatalf("module identity = %q/%q, want puppetlabs/apt", module.Owner, module.Name)
+	}
+}
+
 func TestForgeProxyObservesCachedGzipModuleResponses(t *testing.T) {
 	t.Parallel()
 
@@ -272,17 +505,19 @@ func TestForgeProxyObservesCachedGzipModuleResponses(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	proxy, err := NewForgeProxy(upstream.URL, time.Minute, 1024, nil, "upstream-cache")
+	proxy, err := newTestForgeProxy(upstream, time.Minute, 1024, nil, "upstream-cache")
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
 
 	var mu sync.Mutex
 	var observed []UpstreamModule
-	proxy.SetModuleObserver(func(_ context.Context, module UpstreamModule) {
+	var freshness []bool
+	proxy.SetModuleObserver(func(_ context.Context, module UpstreamModule, fresh bool) {
 		mu.Lock()
 		defer mu.Unlock()
 		observed = append(observed, module)
+		freshness = append(freshness, fresh)
 	})
 
 	server := httptest.NewServer(proxy.Handler())
@@ -311,10 +546,124 @@ func TestForgeProxyObservesCachedGzipModuleResponses(t *testing.T) {
 	if len(observed) != 2 {
 		t.Fatalf("expected observer to run for upstream response and cache hit, got %d", len(observed))
 	}
+	if !freshness[0] || freshness[1] {
+		t.Fatalf("observer freshness = %v, want [true false]", freshness)
+	}
 	for _, module := range observed {
 		if module.Owner != "stm" || module.Name != "debconf" || module.CurrentRelease.Version != "7.0.1" {
 			t.Fatalf("unexpected observed module: %#v", module)
 		}
+	}
+}
+
+func TestForgeProxyObservesColdModuleBeforeWritingResponse(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"slug":"puppetlabs-stdlib",
+			"owner":"puppetlabs",
+			"name":"stdlib",
+			"current_release":{"slug":"puppetlabs-stdlib-10.0.2","version":"10.0.2"}
+		}`))
+	}))
+	defer upstream.Close()
+
+	forgeProxy, err := newTestForgeProxy(upstream, time.Minute, 1024, nil, "upstream-cache")
+	if err != nil {
+		t.Fatalf("NewForgeProxy() error = %v", err)
+	}
+
+	var observerErr error
+	forgeProxy.SetModuleObserver(func(ctx context.Context, _ UpstreamModule, _ bool) {
+		observerErr = ctx.Err()
+		if writerStarted(ctx) {
+			t.Fatal("observer ran after the response write started")
+		}
+	})
+
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	writeStarted := &atomic.Bool{}
+	requestCtx = context.WithValue(requestCtx, responseWriteStartedKey{}, writeStarted)
+	req := httptest.NewRequest(http.MethodGet, "/v3/modules/puppetlabs-stdlib", nil).WithContext(requestCtx)
+	recorder := httptest.NewRecorder()
+	writer := &cancelOnWriteResponseWriter{ResponseWriter: recorder, cancel: cancelRequest, started: writeStarted}
+	forgeProxy.Handler().ServeHTTP(writer, req)
+
+	if !writer.canceled {
+		t.Fatal("response writer did not cancel the request context")
+	}
+	if observerErr != nil {
+		t.Fatalf("observer context error = %v, want nil", observerErr)
+	}
+}
+
+type cancelOnWriteResponseWriter struct {
+	http.ResponseWriter
+	cancel   context.CancelFunc
+	started  *atomic.Bool
+	canceled bool
+}
+
+func (w *cancelOnWriteResponseWriter) Write(body []byte) (int, error) {
+	w.started.Store(true)
+	w.cancel()
+	w.canceled = true
+	return w.ResponseWriter.Write(body)
+}
+
+type responseWriteStartedKey struct{}
+
+func writerStarted(ctx context.Context) bool {
+	started, _ := ctx.Value(responseWriteStartedKey{}).(*atomic.Bool)
+	return started != nil && started.Load()
+}
+
+func TestForgeProxyNormalizesJSONAcceptEncoding(t *testing.T) {
+	t.Parallel()
+
+	var upstreamAcceptEncoding string
+	requests := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		upstreamAcceptEncoding = r.Header.Get("Accept-Encoding")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	proxy, err := newTestForgeProxy(upstream, time.Minute, 1024, nil, "upstream-cache")
+	if err != nil {
+		t.Fatalf("NewForgeProxy() error = %v", err)
+	}
+	server := httptest.NewServer(proxy.Handler())
+	defer server.Close()
+
+	for _, encoding := range []string{"gzip", "br"} {
+		req, err := http.NewRequest(http.MethodGet, server.URL+"/v3/modules/teamname-module", nil)
+		if err != nil {
+			t.Fatalf("NewRequest() error = %v", err)
+		}
+		req.Header.Set("Accept-Encoding", encoding)
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("GET error = %v", err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil || string(body) != `{"ok":true}` {
+			t.Fatalf("response body = %q error = %v", body, readErr)
+		}
+		if resp.Header.Get("Content-Encoding") != "" {
+			t.Fatalf("response Content-Encoding = %q, want identity", resp.Header.Get("Content-Encoding"))
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("upstream requests = %d, want one normalized cache entry", requests)
+	}
+	if upstreamAcceptEncoding != "identity" {
+		t.Fatalf("upstream Accept-Encoding = %q, want identity", upstreamAcceptEncoding)
 	}
 }
 
@@ -352,7 +701,7 @@ func TestForgeProxyServesStaleJSONOnUpstreamError(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	proxy, err := NewForgeProxy(upstream.URL, 10*time.Millisecond, 1024, nil, "upstream-cache")
+	proxy, err := newTestForgeProxy(upstream, 10*time.Millisecond, 1024, nil, "upstream-cache")
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
@@ -414,7 +763,7 @@ func TestForgeProxyRejectsTooOldStaleJSONOnUpstreamError(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	proxy, err := NewForgeProxy(upstream.URL, 10*time.Millisecond, 1024, nil, "upstream-cache", WithMaxStaleAge(5*time.Millisecond))
+	proxy, err := newTestForgeProxy(upstream, 10*time.Millisecond, 1024, nil, "upstream-cache", WithMaxStaleAge(5*time.Millisecond))
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
@@ -463,7 +812,7 @@ func TestForgeProxyDoesNotCacheFiles(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	proxy, err := NewForgeProxy(upstream.URL, time.Minute, 1024, nil, "upstream-cache")
+	proxy, err := newTestForgeProxy(upstream, time.Minute, 1024, nil, "upstream-cache")
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
@@ -490,6 +839,20 @@ func TestForgeProxyDoesNotCacheFiles(t *testing.T) {
 	}
 }
 
+func TestForgeProxyTreatsOversizedBypassArtifactAsUpstreamFailure(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write([]byte("too-large-tarball"))
+	}))
+	defer upstream.Close()
+
+	if status := artifactProxyStatus(t, upstream, nil, WithMaxArtifactBytes(4)); status != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", status)
+	}
+}
+
 func TestForgeProxyCachesArtifactsInStorage(t *testing.T) {
 	t.Parallel()
 
@@ -502,7 +865,7 @@ func TestForgeProxyCachesArtifactsInStorage(t *testing.T) {
 	defer upstream.Close()
 
 	artifacts := newTestArtifactStorage()
-	proxy, err := NewForgeProxy(upstream.URL, time.Minute, 1024, artifacts, "upstream-cache")
+	proxy, err := newTestForgeProxy(upstream, time.Minute, 1024, artifacts, "upstream-cache")
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
@@ -543,6 +906,368 @@ func TestForgeProxyCachesArtifactsInStorage(t *testing.T) {
 	if body := string(artifacts.uploadedBody(objectPath)); body != "tarball" {
 		t.Fatalf("unexpected cached body: %s", body)
 	}
+	if uploads := artifacts.readerUploadCount(); uploads != 1 {
+		t.Fatalf("streaming uploads = %d, want 1", uploads)
+	}
+}
+
+func TestEnsureArtifactIntegrityRepairsCorruptCachedObject(t *testing.T) {
+	t.Parallel()
+
+	archive := []byte("authoritative-tarball")
+	digest := sha256.Sum256(archive)
+	var requests atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(archive)
+	}))
+	t.Cleanup(upstream.Close)
+
+	artifacts := newTestArtifactStorage()
+	const objectPath = "upstream-cache/v3/files/puppetlabs-apache-1.0.0.tar.gz"
+	artifacts.existing[objectPath] = true
+	artifacts.uploaded[objectPath] = []byte("corrupt")
+	artifacts.contentType[objectPath] = "application/gzip"
+	forgeProxy, err := newTestForgeProxy(upstream, time.Minute, 1024, artifacts, "upstream-cache")
+	if err != nil {
+		t.Fatalf("NewForgeProxy() error = %v", err)
+	}
+
+	err = forgeProxy.EnsureArtifactIntegrity(
+		context.Background(),
+		"/v3/files/puppetlabs-apache-1.0.0.tar.gz",
+		hex.EncodeToString(digest[:]),
+		int64(len(archive)),
+	)
+	if err != nil {
+		t.Fatalf("EnsureArtifactIntegrity() error = %v", err)
+	}
+	if got := artifacts.uploadedBody(objectPath); !bytes.Equal(got, archive) {
+		t.Fatalf("repaired body = %q, want %q", got, archive)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("upstream requests = %d, want 1", requests.Load())
+	}
+}
+
+func TestEnsureArtifactIntegrityCoalescesRepairAcrossReplicas(t *testing.T) {
+	t.Parallel()
+
+	archive := []byte("authoritative-tarball")
+	digest := sha256.Sum256(archive)
+	var requests atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		time.Sleep(50 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(archive)
+	}))
+	t.Cleanup(upstream.Close)
+
+	artifacts := newTestArtifactStorage()
+	leases := newTestLeaseStore()
+	const objectPath = "upstream-cache/v3/files/puppetlabs-apache-1.0.0.tar.gz"
+	artifacts.existing[objectPath] = true
+	artifacts.uploaded[objectPath] = []byte("corrupt")
+	artifacts.contentType[objectPath] = "application/gzip"
+	proxies := make([]*ForgeProxy, 2)
+	for i := range proxies {
+		forgeProxy, err := newTestForgeProxy(upstream, time.Minute, 1024, artifacts, "upstream-cache", WithLeaseStore(leases))
+		if err != nil {
+			t.Fatalf("NewForgeProxy(%d) error = %v", i, err)
+		}
+		proxies[i] = forgeProxy
+	}
+
+	start := make(chan struct{})
+	errorsByReplica := make(chan error, len(proxies))
+	var wait sync.WaitGroup
+	for _, forgeProxy := range proxies {
+		wait.Go(func() {
+			<-start
+			errorsByReplica <- forgeProxy.EnsureArtifactIntegrity(
+				context.Background(),
+				"/v3/files/puppetlabs-apache-1.0.0.tar.gz",
+				hex.EncodeToString(digest[:]),
+				int64(len(archive)),
+			)
+		})
+	}
+	close(start)
+	wait.Wait()
+	close(errorsByReplica)
+	for err := range errorsByReplica {
+		if err != nil {
+			t.Fatalf("EnsureArtifactIntegrity() error = %v", err)
+		}
+	}
+	if got := artifacts.uploadedBody(objectPath); !bytes.Equal(got, archive) {
+		t.Fatalf("repaired body = %q, want %q", got, archive)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("upstream requests = %d, want 1", requests.Load())
+	}
+}
+
+func TestArtifactUploadReaderValidatesLengthAndLimitWhileStreaming(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		body          string
+		contentLength int64
+		maxBytes      int64
+		want          string
+		wantError     error
+	}{
+		{name: "known exact", body: "artifact", contentLength: 8, maxBytes: 16, want: "artifact"},
+		{name: "unknown exact limit", body: "artifact", contentLength: -1, maxBytes: 8, want: "artifact"},
+		{name: "known short", body: "short", contentLength: 8, maxBytes: 16, wantError: io.ErrUnexpectedEOF},
+		{name: "known long", body: "too-long", contentLength: 3, maxBytes: 16, wantError: io.ErrUnexpectedEOF},
+		{name: "unknown over limit", body: "too-long", contentLength: -1, maxBytes: 3, wantError: errBodyTooLarge},
+		{name: "declared over limit", body: "too-long", contentLength: 8, maxBytes: 3, wantError: errBodyTooLarge},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reader, err := newArtifactUploadReader(strings.NewReader(tc.body), tc.contentLength, tc.maxBytes)
+			if err == nil {
+				var body []byte
+				body, err = io.ReadAll(reader)
+				if string(body) != tc.want && tc.wantError == nil {
+					t.Fatalf("body = %q, want %q", body, tc.want)
+				}
+			}
+			if !errors.Is(err, tc.wantError) {
+				t.Fatalf("error = %v, want %v", err, tc.wantError)
+			}
+		})
+	}
+}
+
+func TestForgeProxyCachesFullArtifactAndServesRanges(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int64
+	var upstreamRange atomic.Value
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		upstreamRange.Store(r.Header.Get("Range"))
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write([]byte("tarball"))
+	}))
+	defer upstream.Close()
+
+	artifacts := newTestArtifactStorage()
+	forgeProxy, err := newTestForgeProxy(upstream, time.Minute, 1024, artifacts, "upstream-cache")
+	if err != nil {
+		t.Fatalf("NewForgeProxy() error = %v", err)
+	}
+	server := httptest.NewServer(forgeProxy.Handler())
+	defer server.Close()
+	artifactURL := server.URL + "/v3/files/teamname-module-1.0.0.tar.gz"
+
+	requestRange := func(value string) (*http.Response, []byte) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, artifactURL, nil)
+		if err != nil {
+			t.Fatalf("NewRequest() error = %v", err)
+		}
+		req.Header.Set("Range", value)
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Do() error = %v", err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		return resp, body
+	}
+
+	first, body := requestRange("bytes=1-3")
+	if first.StatusCode != http.StatusPartialContent || string(body) != "arb" || first.Header.Get("Content-Range") != "bytes 1-3/7" {
+		t.Fatalf("first range = %d %q headers=%#v", first.StatusCode, body, first.Header)
+	}
+	if got, _ := upstreamRange.Load().(string); got != "" {
+		t.Fatalf("cache population forwarded client Range upstream: %q", got)
+	}
+	second, body := requestRange("bytes=-2")
+	if second.StatusCode != http.StatusPartialContent || string(body) != "ll" || second.Header.Get("X-Forge-Artifact-Cache") != "HIT" {
+		t.Fatalf("cached suffix range = %d %q headers=%#v", second.StatusCode, body, second.Header)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("upstream requests = %d, want 1", got)
+	}
+	if got := artifacts.downloadCount(); got != 0 {
+		t.Fatalf("range requests downloaded full cached object %d times", got)
+	}
+}
+
+func TestForgeProxyCoalescesConcurrentArtifactMissesAcrossReplicas(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		time.Sleep(50 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write([]byte("tarball"))
+	}))
+	defer upstream.Close()
+
+	artifacts := newTestArtifactStorage()
+	leases := newTestLeaseStore()
+	first, err := newTestForgeProxy(upstream, time.Minute, 1024, artifacts, "upstream-cache", WithLeaseStore(leases))
+	if err != nil {
+		t.Fatalf("NewForgeProxy(first) error = %v", err)
+	}
+	second, err := newTestForgeProxy(upstream, time.Minute, 1024, artifacts, "upstream-cache", WithLeaseStore(leases))
+	if err != nil {
+		t.Fatalf("NewForgeProxy(second) error = %v", err)
+	}
+	servers := []*httptest.Server{httptest.NewServer(first.Handler()), httptest.NewServer(second.Handler())}
+	defer servers[0].Close()
+	defer servers[1].Close()
+
+	const clients = 20
+	start := make(chan struct{})
+	errorsByClient := make(chan error, clients)
+	var wait sync.WaitGroup
+	for i := range clients {
+		wait.Go(func() {
+			<-start
+			resp, err := http.Get(servers[i%len(servers)].URL + "/v3/files/teamname-module-1.0.0.tar.gz")
+			if err != nil {
+				errorsByClient <- err
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				errorsByClient <- err
+				return
+			}
+			if resp.StatusCode != http.StatusOK || string(body) != "tarball" {
+				errorsByClient <- errors.New("unexpected artifact response")
+			}
+		})
+	}
+	close(start)
+	wait.Wait()
+	close(errorsByClient)
+	for err := range errorsByClient {
+		t.Fatal(err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("upstream requests = %d, want 1", got)
+	}
+}
+
+func TestForgeProxyRetriesArtifactAfterLeaseHolderFailure(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			http.Error(w, "temporary failure", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write([]byte("tarball"))
+	}))
+	defer upstream.Close()
+
+	artifacts := newTestArtifactStorage()
+	leases := newTestLeaseStore()
+	forgeProxy, err := newTestForgeProxy(upstream, time.Minute, 1024, artifacts, "upstream-cache", WithLeaseStore(leases))
+	if err != nil {
+		t.Fatalf("NewForgeProxy() error = %v", err)
+	}
+	server := httptest.NewServer(forgeProxy.Handler())
+	defer server.Close()
+	artifactURL := server.URL + "/v3/files/teamname-module-1.0.0.tar.gz"
+
+	first, err := http.Get(artifactURL)
+	if err != nil {
+		t.Fatalf("first GET error = %v", err)
+	}
+	_ = first.Body.Close()
+	if first.StatusCode != http.StatusBadGateway {
+		t.Fatalf("first status = %d, want 502", first.StatusCode)
+	}
+	second, err := http.Get(artifactURL)
+	if err != nil {
+		t.Fatalf("second GET error = %v", err)
+	}
+	body, _ := io.ReadAll(second.Body)
+	_ = second.Body.Close()
+	if second.StatusCode != http.StatusOK || string(body) != "tarball" {
+		t.Fatalf("second response = %d %q, want 200 tarball", second.StatusCode, body)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("upstream requests = %d, want 2", got)
+	}
+}
+
+func TestForgeProxyDoesNotServeOrCachePartialUpstreamArtifact(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Length", "100")
+		_, _ = w.Write([]byte("partial"))
+	}))
+	defer upstream.Close()
+
+	artifacts := newTestArtifactStorage()
+	forgeProxy, err := newTestForgeProxy(upstream, time.Minute, 1024, artifacts, "upstream-cache")
+	if err != nil {
+		t.Fatalf("NewForgeProxy() error = %v", err)
+	}
+	server := httptest.NewServer(forgeProxy.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/v3/files/teamname-module-1.0.0.tar.gz")
+	if err != nil {
+		t.Fatalf("GET error = %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d body=%q, want 502", resp.StatusCode, body)
+	}
+	if artifacts.uploadCount() != 0 {
+		t.Fatal("partial upstream artifact was cached")
+	}
+}
+
+func TestForgeProxyRejectsUnexpectedSuccessfulArtifactStatuses(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{http.StatusNoContent, http.StatusPartialContent} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+				if status != http.StatusNoContent {
+					_, _ = w.Write([]byte("partial"))
+				}
+			}))
+			defer upstream.Close()
+
+			artifacts := newTestArtifactStorage()
+			if got := artifactProxyStatus(t, upstream, artifacts); got != http.StatusBadGateway {
+				t.Fatalf("status = %d, want 502", got)
+			}
+			if uploads := artifacts.uploadCount(); uploads != 0 {
+				t.Fatalf("unexpected upstream status was cached with %d uploads", uploads)
+			}
+		})
+	}
 }
 
 func TestForgeProxyRejectsUpstreamArtifactsOverConfiguredLimit(t *testing.T) {
@@ -556,25 +1281,30 @@ func TestForgeProxyRejectsUpstreamArtifactsOverConfiguredLimit(t *testing.T) {
 	defer upstream.Close()
 
 	artifacts := newTestArtifactStorage()
-	proxy, err := NewForgeProxy(upstream.URL, time.Minute, 1024, artifacts, "upstream-cache", WithMaxArtifactBytes(4))
-	if err != nil {
-		t.Fatalf("NewForgeProxy() error = %v", err)
-	}
-
-	server := httptest.NewServer(proxy.Handler())
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/v3/files/puppetlabs-apache-1.0.0.tar.gz")
-	if err != nil {
-		t.Fatalf("GET error = %v", err)
-	}
-	_ = resp.Body.Close()
-
-	if resp.StatusCode != http.StatusRequestEntityTooLarge {
-		t.Fatalf("expected upstream artifact over limit to get 413, got %d", resp.StatusCode)
+	if status := artifactProxyStatus(t, upstream, artifacts, WithMaxArtifactBytes(4)); status != http.StatusBadGateway {
+		t.Fatalf("expected upstream artifact over limit to get 502, got %d", status)
 	}
 	if uploads := artifacts.uploadCount(); uploads != 0 {
 		t.Fatalf("expected oversized artifact not to be cached, got %d uploads", uploads)
+	}
+}
+
+func TestForgeProxyRejectsChunkedUpstreamArtifactOverConfiguredLimit(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		w.(http.Flusher).Flush()
+		_, _ = w.Write([]byte("too-large-tarball"))
+	}))
+	defer upstream.Close()
+
+	artifacts := newTestArtifactStorage()
+	if status := artifactProxyStatus(t, upstream, artifacts, WithMaxArtifactBytes(4)); status != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", status)
+	}
+	if uploads := artifacts.uploadCount(); uploads != 0 {
+		t.Fatalf("oversized chunked artifact created %d cached objects", uploads)
 	}
 }
 
@@ -591,7 +1321,7 @@ func TestForgeProxyHeadUsesStatNotDownloadCachedArtifact(t *testing.T) {
 	defer upstream.Close()
 
 	artifacts := newTestArtifactStorage()
-	proxy, err := NewForgeProxy(upstream.URL, time.Minute, 1024, artifacts, "upstream-cache")
+	proxy, err := newTestForgeProxy(upstream, time.Minute, 1024, artifacts, "upstream-cache")
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
@@ -665,7 +1395,7 @@ func TestForgeProxyHeadFallsBackToUpstreamWhenNotCached(t *testing.T) {
 	defer upstream.Close()
 
 	artifacts := newTestArtifactStorage()
-	proxy, err := NewForgeProxy(upstream.URL, time.Minute, 1024, artifacts, "upstream-cache")
+	proxy, err := newTestForgeProxy(upstream, time.Minute, 1024, artifacts, "upstream-cache")
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
@@ -706,5 +1436,61 @@ func TestForgeProxyHeadFallsBackToUpstreamWhenNotCached(t *testing.T) {
 	}
 	if len(body) != 0 {
 		t.Fatalf("HEAD returned body with length %d, want 0", len(body))
+	}
+}
+
+func TestWriteCachedResponseDropsHopByHopAndConnectionNamedHeaders(t *testing.T) {
+	t.Parallel()
+
+	recorder := httptest.NewRecorder()
+	writeCachedResponse(recorder, CacheEntry{
+		StatusCode: http.StatusOK,
+		Header: map[string][]string{
+			"Content-Type":      {"application/json"},
+			"Connection":        {"close, X-Internal-Hop"},
+			"Keep-Alive":        {"timeout=5"},
+			"Trailer":           {"X-Checksum"},
+			"Transfer-Encoding": {"chunked"},
+			"X-Internal-Hop":    {"private"},
+		},
+		Body: []byte(`{"ok":true}`),
+	}, "HIT", false)
+
+	response := recorder.Result()
+	defer closeResponseBody(response)
+	if got := response.Header.Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
+	for _, name := range []string{"Connection", "Keep-Alive", "Trailer", "Transfer-Encoding", "X-Internal-Hop"} {
+		if got := response.Header.Get(name); got != "" {
+			t.Errorf("%s = %q, want empty", name, got)
+		}
+	}
+}
+
+func TestWriteCachedResponseRefreshesDateAndAge(t *testing.T) {
+	t.Parallel()
+
+	storedAt := time.Date(2026, time.August, 9, 10, 0, 0, 0, time.UTC)
+	now := storedAt.Add(45 * time.Second)
+	recorder := httptest.NewRecorder()
+	writeCachedResponseAt(recorder, CacheEntry{
+		StatusCode: http.StatusOK,
+		Header: map[string][]string{
+			"Content-Type": {"application/json"},
+			"Date":         {storedAt.Add(-15 * time.Second).Format(http.TimeFormat)},
+			"Age":          {"10"},
+		},
+		StoredAt: storedAt,
+		Body:     []byte(`{"ok":true}`),
+	}, "STALE", false, now)
+
+	response := recorder.Result()
+	defer closeResponseBody(response)
+	if got := response.Header.Get("Date"); got != now.Format(http.TimeFormat) {
+		t.Fatalf("Date = %q, want %q", got, now.Format(http.TimeFormat))
+	}
+	if got := response.Header.Get("Age"); got != "60" {
+		t.Fatalf("Age = %q, want 60", got)
 	}
 }

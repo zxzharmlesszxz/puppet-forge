@@ -2,6 +2,7 @@ package httputil
 
 import (
 	"crypto/tls"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -53,6 +54,9 @@ func TestForwardedParam(t *testing.T) {
 	}
 }
 
+// Plaintext HTTP is the behavior under test.
+//
+//goland:noinspection HttpUrlsUsage
 func TestForwardedScheme(t *testing.T) {
 	t.Parallel()
 
@@ -109,6 +113,9 @@ func TestForwardedScheme(t *testing.T) {
 	})
 }
 
+// Plaintext HTTP is the behavior under test.
+//
+//goland:noinspection HttpUrlsUsage
 func TestExternalBaseURL(t *testing.T) {
 	t.Parallel()
 
@@ -218,4 +225,41 @@ func TestSingleJoiningSlash(t *testing.T) {
 			t.Errorf("SingleJoiningSlash(%q, %q) = %q, want %q", tt.a, tt.b, got, tt.want)
 		}
 	}
+}
+
+func FuzzParseSingleByteRange(f *testing.F) {
+	for _, seed := range []struct {
+		raw  string
+		size uint64
+	}{
+		{raw: "", size: 100},
+		{raw: "bytes=0-9", size: 100},
+		{raw: "bytes=-10", size: 100},
+		{raw: "bytes=99-", size: 100},
+		{raw: "bytes=0-1,4-5", size: 100},
+	} {
+		f.Add(seed.raw, seed.size)
+	}
+	f.Fuzz(func(t *testing.T, raw string, fuzzSize uint64) {
+		size := int64(fuzzSize % math.MaxInt64)
+		byteRange, partial, err := ParseSingleByteRange(raw, size)
+		if err != nil || !partial {
+			return
+		}
+		if size <= 0 || byteRange.Start < 0 || byteRange.Length <= 0 || byteRange.Start >= size || byteRange.Length > size-byteRange.Start {
+			t.Fatalf("accepted invalid range %#v for size %d and input %q", byteRange, size, raw)
+		}
+	})
+}
+
+func FuzzReleaseVersionFromSlug(f *testing.F) {
+	f.Add("platform-core-nginx", "platform-core-nginx-1.2.3-rc.1")
+	f.Add("teamname-module", "/v3/files/teamname-module-1.0.0.tar.gz")
+	f.Add("", "anything")
+	f.Fuzz(func(t *testing.T, module, release string) {
+		version := ReleaseVersionFromSlug(module, release)
+		if version != "" && module == "" {
+			t.Fatalf("returned version %q for empty module slug", version)
+		}
+	})
 }

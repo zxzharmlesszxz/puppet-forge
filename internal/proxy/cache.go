@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -11,8 +12,9 @@ const defaultMaxCacheBytes = 16 << 20
 
 type CacheEntry struct {
 	StatusCode int
-	Header     map[string][]string
+	Header     http.Header
 	Body       []byte
+	StoredAt   time.Time
 	ExpiresAt  time.Time
 }
 
@@ -52,18 +54,32 @@ func (c *ResponseCache) Get(key string, now time.Time) (CacheEntry, bool) {
 
 func (c *ResponseCache) GetStale(key string, now time.Time, maxStaleAge time.Duration) (CacheEntry, bool) {
 	if maxStaleAge <= 0 {
+		c.deleteExpired(key, now)
 		return CacheEntry{}, false
 	}
-	c.mu.RLock()
+	c.mu.Lock()
 	entry, ok := c.entries[key]
-	c.mu.RUnlock()
 	if !ok {
+		c.mu.Unlock()
 		return CacheEntry{}, false
 	}
 	if now.After(entry.ExpiresAt.Add(maxStaleAge)) {
+		delete(c.entries, key)
+		c.bytes -= len(entry.Body)
+		c.mu.Unlock()
 		return CacheEntry{}, false
 	}
+	c.mu.Unlock()
 	return entry, true
+}
+
+func (c *ResponseCache) deleteExpired(key string, now time.Time) {
+	c.mu.Lock()
+	if entry, ok := c.entries[key]; ok && now.After(entry.ExpiresAt) {
+		delete(c.entries, key)
+		c.bytes -= len(entry.Body)
+	}
+	c.mu.Unlock()
 }
 
 func (c *ResponseCache) Set(key string, entry CacheEntry) {
