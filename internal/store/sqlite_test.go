@@ -39,6 +39,84 @@ func TestSQLiteReleaseMD5MigrationAddsColumnToExistingTable(t *testing.T) {
 	}
 }
 
+func TestSQLiteTimestampPreservesFractionalSeconds(t *testing.T) {
+	t.Parallel()
+
+	want := time.Date(2026, time.August, 9, 12, 34, 56, 123456789, time.UTC)
+	for _, raw := range []string{
+		sqliteTime(want),
+		"2026-08-09 12:34:56.123456789+00:00",
+		"2026-08-09T12:34:56.123456789Z",
+	} {
+		var timestamp sqliteTimestamp
+		if err := timestamp.Scan(raw); err != nil {
+			t.Fatalf("Scan(%q) error = %v", raw, err)
+		}
+		if !timestamp.Valid || !timestamp.Time.Equal(want) {
+			t.Fatalf("timestamp for %q = %#v, want %s", raw, timestamp, want)
+		}
+	}
+	var timestamp sqliteTimestamp
+	if err := timestamp.Scan(nil); err != nil {
+		t.Fatalf("Scan(nil) error = %v", err)
+	}
+	if timestamp.Valid || timestamp.Pointer() != nil {
+		t.Fatalf("nil timestamp = %#v", timestamp)
+	}
+}
+
+func TestSQLiteReleaseUsagePreservesCompatibleFractionalTimestamp(t *testing.T) {
+	t.Parallel()
+
+	s := newSQLiteTestStore(t)
+	want := time.Date(2026, time.August, 9, 12, 34, 56, 123456000, time.UTC)
+	if _, err := s.db.Exec(`insert into release_usage (owner, name, version, last_used_at) values (?, ?, ?, ?)`,
+		"teamname", "module", "1.0.0", "2026-08-09 12:34:56.123456+00:00"); err != nil {
+		t.Fatalf("insert release usage error = %v", err)
+	}
+
+	releases, err := s.ListActiveReleases(context.Background(), want.Add(-time.Millisecond))
+	if err != nil {
+		t.Fatalf("ListActiveReleases() error = %v", err)
+	}
+	if len(releases) != 1 || !releases[0].CreatedAt.Equal(want) {
+		t.Fatalf("ListActiveReleases() = %#v, want timestamp %s", releases, want)
+	}
+	if err := s.PruneReleaseUsageBefore(context.Background(), want.Add(time.Millisecond)); err != nil {
+		t.Fatalf("PruneReleaseUsageBefore() error = %v", err)
+	}
+	releases, err = s.ListActiveReleases(context.Background(), time.Time{})
+	if err != nil {
+		t.Fatalf("ListActiveReleases(after prune) error = %v", err)
+	}
+	if len(releases) != 0 {
+		t.Fatalf("ListActiveReleases(after prune) = %#v, want empty", releases)
+	}
+}
+
+func TestSQLiteDeferArtifactDeletionPreservesFractionalTimestamp(t *testing.T) {
+	t.Parallel()
+
+	s := newSQLiteTestStore(t)
+	const storagePath = "modules/teamname/module/1.0.0.tar.gz"
+	if _, err := s.db.Exec(`insert into artifact_deletions (storage_path, owner, name) values (?, ?, ?)`,
+		storagePath, "teamname", "module"); err != nil {
+		t.Fatalf("insert artifact deletion error = %v", err)
+	}
+	retryAt := time.Date(2026, time.August, 9, 12, 34, 56, 123456789, time.UTC)
+	if err := s.DeferArtifactDeletion(context.Background(), storagePath, retryAt); err != nil {
+		t.Fatalf("DeferArtifactDeletion() error = %v", err)
+	}
+
+	var stored sqliteTimestamp
+	if err := s.db.QueryRow(`select next_attempt_at from artifact_deletions where storage_path = ?`, storagePath).Scan(&stored); err != nil {
+		t.Fatalf("read deferred timestamp error = %v", err)
+	}
+	if !stored.Valid || !stored.Time.Equal(retryAt) {
+		t.Fatalf("next_attempt_at = %#v, want %s", stored, retryAt)
+	}
+}
+
 func TestSQLiteOIDCMigrationRollsBackOnFailure(t *testing.T) {
 	t.Parallel()
 
@@ -96,11 +174,63 @@ func TestSQLiteOIDCMigrationRollsBackOnFailure(t *testing.T) {
 	}
 }
 
+func TestSQLiteSchemaVersionIsMonotonicAndRejectsNewerSchema(t *testing.T) {
+	t.Parallel()
+
+	dsn := "sqlite://" + t.TempDir() + "/forge.db"
+	s, err := NewSQLiteStore(dsn, testAccessTokenHasher(t))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	var version int
+	if err := s.db.QueryRow(`select version from schema_metadata where id = 1`).Scan(&version); err != nil {
+		t.Fatalf("read schema version error = %v", err)
+	}
+	if version != currentSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, currentSchemaVersion)
+	}
+	s.Close()
+
+	path, err := sqlitePathFromDSN(dsn)
+	if err != nil {
+		t.Fatalf("sqlitePathFromDSN() error = %v", err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	if _, err := db.Exec(`update schema_metadata set version = ? where id = 1`, currentSchemaVersion+1); err != nil {
+		t.Fatalf("set newer schema version error = %v", err)
+	}
+	_ = db.Close()
+	if _, err := NewSQLiteStore(dsn, testAccessTokenHasher(t)); err == nil || !strings.Contains(err.Error(), "newer than supported") {
+		t.Fatalf("NewSQLiteStore(newer schema) error = %v", err)
+	}
+}
+
+func TestSQLiteForeignKeysRemainEnabled(t *testing.T) {
+	t.Parallel()
+
+	s, err := NewSQLiteStore("sqlite://:memory:", testAccessTokenHasher(t))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer s.Close()
+	_, err = s.db.Exec(`
+		insert into releases (id, module_id, slug, source, version, file_name, content_type, size_bytes, sha256, storage_path)
+		values ('orphan', 'missing', 'missing-module-1.0.0', 'local', '1.0.0', 'module.tar.gz', 'application/gzip', 1, 'sha', 'path')
+	`)
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "foreign key") {
+		t.Fatalf("orphan release insert error = %v, want foreign key failure", err)
+	}
+}
+
 func TestSQLiteDeleteLastReleaseRemovesModule(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s, err := NewSQLiteStore("sqlite://:memory:")
+	hasher := testAccessTokenHasher(t)
+	s, err := NewSQLiteStore("sqlite://:memory:", hasher)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}
@@ -137,6 +267,66 @@ func TestSQLiteDeleteLastReleaseRemovesModule(t *testing.T) {
 	_, err = s.GetModule(ctx, "teamname", "testdelete")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetModule() error = %v, want %v", err, ErrNotFound)
+	}
+}
+
+func TestSQLiteCanonicalSlugLookupSupportsHyphens(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s, err := NewSQLiteStore("sqlite://:memory:", testAccessTokenHasher(t))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer s.Close()
+	module, err := s.UpsertModule(ctx, "platform-core", "reverse-proxy-module")
+	if err != nil {
+		t.Fatalf("UpsertModule() error = %v", err)
+	}
+	_, err = s.CreateRelease(ctx, NewRelease(
+		module.ID, module.Owner, module.Name, "1.2.3-rc.1", "", "", "archive.tar.gz",
+		"application/gzip", "md5", "sha256", "modules/archive.tar.gz", 7, map[string]any{},
+	))
+	if err != nil {
+		t.Fatalf("CreateRelease() error = %v", err)
+	}
+	gotModule, err := s.GetModuleBySlug(ctx, "platform-core-reverse-proxy-module")
+	if err != nil {
+		t.Fatalf("GetModuleBySlug() error = %v", err)
+	}
+	if gotModule.Owner != module.Owner || gotModule.Name != module.Name {
+		t.Fatalf("GetModuleBySlug() = %s/%s", gotModule.Owner, gotModule.Name)
+	}
+	gotRelease, err := s.GetReleaseBySlug(ctx, "platform-core-reverse-proxy-module-1.2.3-rc.1")
+	if err != nil {
+		t.Fatalf("GetReleaseBySlug() error = %v", err)
+	}
+	if gotRelease.Owner != module.Owner || gotRelease.Name != module.Name || gotRelease.Version != "1.2.3-rc.1" {
+		t.Fatalf("GetReleaseBySlug() = %#v", gotRelease)
+	}
+}
+
+func TestSQLiteRejectsAmbiguousCanonicalModuleSlug(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s, err := NewSQLiteStore("sqlite://:memory:", testAccessTokenHasher(t))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer s.Close()
+	if _, err := s.UpsertModule(ctx, "platform-core", "nginx"); err != nil {
+		t.Fatalf("UpsertModule(first) error = %v", err)
+	}
+	if _, err := s.UpsertModule(ctx, "platform", "core-nginx"); err == nil {
+		t.Fatal("ambiguous canonical module slug was accepted")
+	}
+	got, err := s.GetModuleBySlug(ctx, "platform-core-nginx")
+	if err != nil {
+		t.Fatalf("GetModuleBySlug() error = %v", err)
+	}
+	if got.Owner != "platform-core" || got.Name != "nginx" {
+		t.Fatalf("ambiguous slug resolved to %s/%s", got.Owner, got.Name)
 	}
 }
 
@@ -373,13 +563,13 @@ func TestOpenSQLiteAndRejectsUnsupportedScheme(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	opened, err := Open(ctx, "sqlite://:memory:")
+	opened, err := Open(ctx, "sqlite://:memory:", nil)
 	if err != nil {
 		t.Fatalf("Open(sqlite) error = %v", err)
 	}
 	opened.Close()
 
-	if _, err := Open(ctx, "file:///tmp/forge.db"); err == nil {
+	if _, err := Open(ctx, "file:///tmp/forge.db", nil); err == nil {
 		t.Fatal("expected unsupported scheme error")
 	}
 }
@@ -420,6 +610,34 @@ func TestSQLiteLeaseLifecycle(t *testing.T) {
 	}
 	if !leader {
 		t.Fatal("expected second holder to acquire released lease")
+	}
+}
+
+func TestSQLiteLeasePreservesFractionalDuration(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := newSQLiteTestStore(t)
+	before := time.Now().UTC()
+	acquired, err := s.AcquireLease(ctx, "fractional-lease", "holder", 1500*time.Millisecond)
+	after := time.Now().UTC()
+	if err != nil || !acquired {
+		t.Fatalf("AcquireLease() = %v, %v", acquired, err)
+	}
+
+	var leaseUntil sqliteTimestamp
+	if err := s.db.QueryRow(`select lease_until from app_leases where name = ?`, "fractional-lease").Scan(&leaseUntil); err != nil {
+		t.Fatalf("read lease deadline error = %v", err)
+	}
+	if !leaseUntil.Valid || leaseUntil.Time.Before(before.Add(1400*time.Millisecond)) || leaseUntil.Time.After(after.Add(1600*time.Millisecond)) {
+		t.Fatalf("lease_until = %s, expected about 1.5s after acquisition interval %s..%s", leaseUntil.Time, before, after)
+	}
+	acquired, err = s.AcquireLease(ctx, "fractional-lease", "other-holder", time.Second)
+	if err != nil {
+		t.Fatalf("AcquireLease(other holder) error = %v", err)
+	}
+	if acquired {
+		t.Fatal("other holder acquired fractional lease before expiry")
 	}
 }
 
@@ -486,7 +704,8 @@ func TestSQLiteAccessConfigLoadAndReplace(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s, err := NewSQLiteStore("sqlite://:memory:")
+	hasher := testAccessTokenHasher(t)
+	s, err := NewSQLiteStore("sqlite://:memory:", hasher)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}
@@ -521,8 +740,8 @@ func TestSQLiteAccessConfigLoadAndReplace(t *testing.T) {
 	if len(configs) != 1 || configs[0].Team != "teamname" {
 		t.Fatalf("unexpected configs: %#v", configs)
 	}
-	if len(configs[0].PublishTokens) != 1 || configs[0].PublishTokens[0] != "publish-token" {
-		t.Fatalf("unexpected publish tokens: %#v", configs[0].PublishTokens)
+	if len(configs[0].PublishTokenRecords) != 1 || configs[0].PublishTokenRecords[0].Digest != hasher.Digest("publish-token") {
+		t.Fatalf("unexpected publish tokens: %#v", configs[0].PublishTokenRecords)
 	}
 	if len(configs[0].OIDCGroups) != 1 || configs[0].OIDCGroups[0] != "teamname-devops" {
 		t.Fatalf("unexpected oidc groups: %#v", configs[0].OIDCGroups)
@@ -552,6 +771,81 @@ func TestSQLiteAccessConfigLoadAndReplace(t *testing.T) {
 	}
 	if len(configs[0].OIDCAdminGroups) != 1 || configs[0].OIDCAdminGroups[0] != "forge-admins" {
 		t.Fatalf("unexpected admin groups: %#v", configs[0].OIDCAdminGroups)
+	}
+}
+
+func TestSQLiteAccessTokensNeverStoreRawCredential(t *testing.T) {
+	t.Parallel()
+
+	hasher := testAccessTokenHasher(t)
+	s, err := NewSQLiteStore("sqlite://:memory:", hasher)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer s.Close()
+	raw := "raw-publish-token-that-must-not-reach-sql"
+	if err := s.ReplaceTeamConfigs(context.Background(), []auth.TeamConfig{{Team: "teamname", PublishTokens: []string{raw}}}); err != nil {
+		t.Fatalf("ReplaceTeamConfigs() error = %v", err)
+	}
+
+	var id, prefix, digest string
+	if err := s.db.QueryRow(`select token_id, token_prefix, token_hash from access_tokens`).Scan(&id, &prefix, &digest); err != nil {
+		t.Fatalf("select access token metadata error = %v", err)
+	}
+	if id == "" || prefix == "" || digest != hasher.Digest(raw) {
+		t.Fatalf("unexpected stored token metadata id=%q prefix=%q digest=%q", id, prefix, digest)
+	}
+	if strings.Contains(id+prefix+digest, raw) {
+		t.Fatal("access_tokens contains the raw credential")
+	}
+}
+
+func TestSQLiteMigratesLegacyPlaintextAccessTokens(t *testing.T) {
+	t.Parallel()
+
+	databasePath := t.TempDir() + "/legacy-access.db"
+	db, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	if _, err := db.Exec(`
+		pragma foreign_keys = on;
+		create table access_teams (team text primary key);
+		create table access_tokens (
+			team text not null references access_teams (team) on delete cascade,
+			token_type text not null,
+			token text not null,
+			primary key (token_type, token)
+		);
+		insert into access_teams (team) values ('teamname');
+		insert into access_tokens (team, token_type, token) values ('teamname', 'read', 'legacy-read-token');
+	`); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed legacy access schema error = %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy database error = %v", err)
+	}
+
+	hasher := testAccessTokenHasher(t)
+	s, err := NewSQLiteStore("sqlite://"+databasePath, hasher)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() migration error = %v", err)
+	}
+	defer s.Close()
+	configs, err := s.LoadTeamConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() error = %v", err)
+	}
+	if len(configs) != 1 || len(configs[0].ReadTokenRecords) != 1 || configs[0].ReadTokenRecords[0].Digest != hasher.Digest("legacy-read-token") {
+		t.Fatalf("unexpected migrated config: %#v", configs)
+	}
+	authorizer, err := auth.NewAuthorizerWithTokenHasher(configs, hasher)
+	if err != nil {
+		t.Fatalf("NewAuthorizerWithTokenHasher() error = %v", err)
+	}
+	if _, ok := authorizer.AuthenticateToken("legacy-read-token"); !ok {
+		t.Fatal("migrated legacy credential no longer authenticates")
 	}
 }
 

@@ -13,6 +13,8 @@ func TestCleanObjectPath(t *testing.T) {
 		{name: "leading slash", objectPath: "/modules/teamname/apache", want: "modules/teamname/apache"},
 		{name: "relative path", objectPath: "modules/teamname/apache", want: "modules/teamname/apache"},
 		{name: "cleans duplicate separators", objectPath: "/modules//teamname/../teamname/apache", want: "modules/teamname/apache"},
+		{name: "empty prefix", objectPath: "", want: ""},
+		{name: "whitespace prefix", objectPath: "  ", want: ""},
 	}
 
 	for _, tt := range tests {

@@ -1,11 +1,23 @@
 package storage
 
 import (
+	"context"
+	"errors"
 	"net/url"
 	"testing"
 
+	"github.com/aws/smithy-go"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/httputil"
 )
+
+func TestNewS3StorageRejectsPartialStaticCredentials(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewS3Storage(context.Background(), "https://s3.example.com", "us-east-1", "forge-artifacts", "access-key", "", true)
+	if err == nil {
+		t.Fatal("NewS3Storage() error = nil, want incomplete credential validation")
+	}
+}
 
 func TestS3StoragePublicURLPathStyle(t *testing.T) {
 	t.Parallel()
@@ -20,6 +32,17 @@ func TestS3StoragePublicURLPathStyle(t *testing.T) {
 	want := "http://minio:9000/base/forge-artifacts/modules/teamname/apache/1.2.3/archive.tar.gz"
 	if got != want {
 		t.Fatalf("unexpected public URL:\nwant %s\n got %s", want, got)
+	}
+}
+
+func TestIsS3PreconditionFailed(t *testing.T) {
+	t.Parallel()
+
+	if !isS3PreconditionFailed(&smithy.GenericAPIError{Code: "PreconditionFailed", Message: "already exists"}) {
+		t.Fatal("expected PreconditionFailed to be recognized")
+	}
+	if isS3PreconditionFailed(errors.New("other")) {
+		t.Fatal("unexpected precondition match")
 	}
 }
 

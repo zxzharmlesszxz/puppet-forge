@@ -2,20 +2,22 @@ package store
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 )
 
-type teamRowScanner interface {
+type rowScanner interface {
 	Next() bool
 	Scan(dest ...any) error
 	Err() error
 }
 
-func scanTeamRows(rows teamRowScanner) ([]auth.TeamConfig, map[string]int, error) {
+func scanTeamRows(rows rowScanner) ([]auth.TeamConfig, map[string]int, error) {
 	var configs []auth.TeamConfig
 	index := map[string]int{}
 	for rows.Next() {
@@ -38,7 +40,7 @@ type teamConfigLoader interface {
 	loadAccessOIDC(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error
 }
 
-func loadTeamConfigs(ctx context.Context, rows teamRowScanner, loader teamConfigLoader) ([]auth.TeamConfig, error) {
+func loadTeamConfigs(ctx context.Context, rows rowScanner, loader teamConfigLoader) ([]auth.TeamConfig, error) {
 	configs, index, err := scanTeamRows(rows)
 	if err != nil {
 		return nil, err
@@ -84,23 +86,115 @@ func accessOIDCMappings(cfg auth.TeamConfig) []accessOIDCMapping {
 	return mappings
 }
 
-func insertSQLiteAccessToken(ctx context.Context, tx *sql.Tx, team, tokenType, token string) error {
+func accessTokenRecordFromRaw(hasher *auth.TokenHasher, tokenType, token string) (auth.AccessTokenRecord, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return nil
+		return auth.AccessTokenRecord{}, nil
 	}
-	if _, err := tx.ExecContext(ctx, `insert into access_tokens (team, token_type, token) values (?, ?, ?)`, team, tokenType, token); err != nil {
-		return fmt.Errorf("insert access token: %w", err)
+	if hasher == nil {
+		return auth.AccessTokenRecord{}, errors.New("access token pepper is required to store access tokens")
+	}
+	digest := hasher.Digest(token)
+	return auth.AccessTokenRecord{
+		ID:        uuid.NewString(),
+		Prefix:    fmt.Sprintf("legacy_%s_%s", tokenType, digest[:8]),
+		Digest:    digest,
+		CreatedAt: time.Now().UTC(),
+	}, nil
+}
+
+type typedAccessTokenRecord struct {
+	tokenType string
+	record    auth.AccessTokenRecord
+}
+
+type accessConfigWriter interface {
+	insertTeam(team string) error
+	insertToken(team, tokenType string, token auth.AccessTokenRecord) error
+	insertOwner(team, owner string) error
+	insertOIDCMapping(team string, mapping accessOIDCMapping) error
+}
+
+func persistTeamConfigs(configs []auth.TeamConfig, hasher *auth.TokenHasher, writer accessConfigWriter) error {
+	for _, cfg := range configs {
+		if strings.TrimSpace(cfg.Team) == "" {
+			return errors.New("team is required")
+		}
+		if err := writer.insertTeam(cfg.Team); err != nil {
+			return err
+		}
+		tokens, err := accessTokenRecords(hasher, cfg)
+		if err != nil {
+			return err
+		}
+		for _, token := range tokens {
+			if err := writer.insertToken(cfg.Team, token.tokenType, token.record); err != nil {
+				return err
+			}
+		}
+		for _, owner := range cfg.PublishOwners {
+			owner = strings.TrimSpace(owner)
+			if owner == "" {
+				continue
+			}
+			if err := writer.insertOwner(cfg.Team, owner); err != nil {
+				return err
+			}
+		}
+		for _, mapping := range accessOIDCMappings(cfg) {
+			if err := writer.insertOIDCMapping(cfg.Team, mapping); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
 
-func applyAccessToken(cfg *auth.TeamConfig, tokenType, token string) {
+func accessTokenRecords(hasher *auth.TokenHasher, cfg auth.TeamConfig) ([]typedAccessTokenRecord, error) {
+	records := make([]typedAccessTokenRecord, 0, len(cfg.ReadTokens)+len(cfg.PublishTokens)+len(cfg.ReadTokenRecords)+len(cfg.PublishTokenRecords))
+	appendRaw := func(tokenType string, tokens []string) error {
+		for _, token := range tokens {
+			record, err := accessTokenRecordFromRaw(hasher, tokenType, token)
+			if err != nil {
+				return err
+			}
+			records = append(records, typedAccessTokenRecord{tokenType: tokenType, record: record})
+		}
+		return nil
+	}
+	if err := appendRaw("read", cfg.ReadTokens); err != nil {
+		return nil, err
+	}
+	if err := appendRaw("publish", cfg.PublishTokens); err != nil {
+		return nil, err
+	}
+	for _, record := range cfg.ReadTokenRecords {
+		records = append(records, typedAccessTokenRecord{tokenType: "read", record: record})
+	}
+	for _, record := range cfg.PublishTokenRecords {
+		records = append(records, typedAccessTokenRecord{tokenType: "publish", record: record})
+	}
+	return records, nil
+}
+
+func scanArtifactReleaseRows(rows rowScanner) ([]ArtifactReleaseRecord, error) {
+	var releases []ArtifactReleaseRecord
+	for rows.Next() {
+		var release ArtifactReleaseRecord
+		if err := rows.Scan(&release.Owner, &release.Name, &release.Version, &release.StoragePath, &release.SHA256, &release.SizeBytes); err != nil {
+			return nil, fmt.Errorf("scan artifact release: %w", err)
+		}
+		releases = append(releases, release)
+	}
+	return releases, rows.Err()
+}
+
+func applyAccessToken(cfg *auth.TeamConfig, tokenType string, token auth.AccessTokenRecord) {
 	switch tokenType {
 	case "read":
-		cfg.ReadTokens = append(cfg.ReadTokens, token)
+		cfg.ReadTokenRecords = append(cfg.ReadTokenRecords, token)
 	case "publish":
-		cfg.PublishTokens = append(cfg.PublishTokens, token)
+		cfg.PublishTokenRecords = append(cfg.PublishTokenRecords, token)
 	}
 }
 

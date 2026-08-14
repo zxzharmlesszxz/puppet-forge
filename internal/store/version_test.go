@@ -1,6 +1,7 @@
 package store
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -151,26 +152,23 @@ func TestSortModuleVersionsTiesBrokenByCreatedAt(t *testing.T) {
 	}
 }
 
-func TestVersionPart(t *testing.T) {
+func TestSortModuleReleaseSummariesGroupsModulesAndSortsVersionsDescending(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		parts []string
-		index int
-		want  int
-	}{
-		{[]string{"1", "2", "3"}, 0, 1},
-		{[]string{"1", "2", "3"}, 1, 2},
-		{[]string{"1", "2", "3"}, 2, 3},
-		{[]string{"1", "2"}, 2, 0},
-		{[]string{"1"}, 1, 0},
-		{[]string{"abc"}, 0, 0},
+	releases := []ModuleReleaseSummary{
+		{Owner: "team-b", Name: "module", Version: "1.0.0"},
+		{Owner: "team-a", Name: "module", Version: "2.0.0"},
+		{Owner: "team-a", Name: "module", Version: "10.0.0"},
+		{Owner: "team-a", Name: "another", Version: "3.0.0"},
 	}
+	sortModuleReleaseSummaries(releases)
 
-	for _, tt := range tests {
-		got := versionPart(tt.parts, tt.index)
-		if got != tt.want {
-			t.Errorf("versionPart(%v, %d) = %d, want %d", tt.parts, tt.index, got, tt.want)
-		}
+	want := []string{"team-a/another@3.0.0", "team-a/module@10.0.0", "team-a/module@2.0.0", "team-b/module@1.0.0"}
+	got := make([]string, len(releases))
+	for i, release := range releases {
+		got[i] = release.Owner + "/" + release.Name + "@" + release.Version
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sorted releases = %#v, want %#v", got, want)
 	}
 }

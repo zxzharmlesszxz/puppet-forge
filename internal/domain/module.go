@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"io"
+	"time"
+)
 
 type Module struct {
 	ID            string    `json:"id"`
@@ -53,5 +56,7 @@ type PublishModuleInput struct {
 	FileName    string
 	ContentType string
 	FileBytes   []byte
+	File        io.ReadSeeker
+	SizeBytes   int64
 	Metadata    map[string]any
 }

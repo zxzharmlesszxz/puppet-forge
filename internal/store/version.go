@@ -2,7 +2,6 @@ package store
 
 import (
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
@@ -51,86 +50,22 @@ func sortModuleVersions(versions []domain.ModuleVersion) {
 	})
 }
 
-func compareVersions(left, right string) int {
-	left = strings.TrimPrefix(strings.TrimSpace(left), "v")
-	right = strings.TrimPrefix(strings.TrimSpace(right), "v")
-	leftCore, leftPre, _ := strings.Cut(left, "-")
-	rightCore, rightPre, _ := strings.Cut(right, "-")
-
-	leftParts := strings.Split(leftCore, ".")
-	rightParts := strings.Split(rightCore, ".")
-	maxParts := max(len(leftParts), len(rightParts))
-	for i := range maxParts {
-		leftPart := versionPart(leftParts, i)
-		rightPart := versionPart(rightParts, i)
-		if leftPart != rightPart {
-			if leftPart > rightPart {
-				return 1
-			}
-			return -1
+func sortModuleReleaseSummaries(releases []ModuleReleaseSummary) {
+	sort.SliceStable(releases, func(i, j int) bool {
+		if releases[i].Owner != releases[j].Owner {
+			return releases[i].Owner < releases[j].Owner
 		}
-	}
-
-	leftPre = strings.Split(leftPre, "+")[0]
-	rightPre = strings.Split(rightPre, "+")[0]
-	switch {
-	case leftPre == "" && rightPre != "":
-		return 1
-	case leftPre != "" && rightPre == "":
-		return -1
-	case leftPre == rightPre:
-		return 0
-	}
-
-	leftIDs := strings.Split(leftPre, ".")
-	rightIDs := strings.Split(rightPre, ".")
-	maxIDs := max(len(leftIDs), len(rightIDs))
-	for i := range maxIDs {
-		var leftID, rightID string
-		if i < len(leftIDs) {
-			leftID = leftIDs[i]
+		if releases[i].Name != releases[j].Name {
+			return releases[i].Name < releases[j].Name
 		}
-		if i < len(rightIDs) {
-			rightID = rightIDs[i]
+		cmp := compareVersions(releases[i].Version, releases[j].Version)
+		if cmp != 0 {
+			return cmp > 0
 		}
-		if leftID == rightID {
-			continue
-		}
-		if leftID == "" {
-			return -1
-		}
-		if rightID == "" {
-			return 1
-		}
-		leftNum, leftErr := strconv.Atoi(leftID)
-		rightNum, rightErr := strconv.Atoi(rightID)
-		if leftErr == nil && rightErr == nil {
-			if leftNum > rightNum {
-				return 1
-			}
-			return -1
-		}
-		if leftErr == nil {
-			return -1
-		}
-		if rightErr == nil {
-			return 1
-		}
-		if leftID > rightID {
-			return 1
-		}
-		return -1
-	}
-	return 0
+		return releases[i].CreatedAt.After(releases[j].CreatedAt)
+	})
 }
 
-func versionPart(parts []string, index int) int {
-	if index >= len(parts) {
-		return 0
-	}
-	value, err := strconv.Atoi(parts[index])
-	if err != nil {
-		return 0
-	}
-	return value
+func compareVersions(left, right string) int {
+	return domain.CompareVersions(left, right)
 }

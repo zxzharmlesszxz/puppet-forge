@@ -1,10 +1,20 @@
 package store
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 )
+
+func testAccessTokenHasher(t *testing.T) *auth.TokenHasher {
+	t.Helper()
+	hasher, err := auth.NewTokenHasher(strings.Repeat("test-pepper-", 3))
+	if err != nil {
+		t.Fatalf("NewTokenHasher() error = %v", err)
+	}
+	return hasher
+}
 
 func TestAccessOIDCMappings(t *testing.T) {
 	t.Parallel()
@@ -63,18 +73,18 @@ func TestApplyAccessToken(t *testing.T) {
 	t.Parallel()
 
 	cfg := &auth.TeamConfig{}
-	applyAccessToken(cfg, "read", "read-token")
-	if len(cfg.ReadTokens) != 1 || cfg.ReadTokens[0] != "read-token" {
-		t.Fatalf("unexpected read tokens: %v", cfg.ReadTokens)
+	applyAccessToken(cfg, "read", auth.AccessTokenRecord{ID: "read-token"})
+	if len(cfg.ReadTokenRecords) != 1 || cfg.ReadTokenRecords[0].ID != "read-token" {
+		t.Fatalf("unexpected read tokens: %v", cfg.ReadTokenRecords)
 	}
 
-	applyAccessToken(cfg, "publish", "publish-token")
-	if len(cfg.PublishTokens) != 1 || cfg.PublishTokens[0] != "publish-token" {
-		t.Fatalf("unexpected publish tokens: %v", cfg.PublishTokens)
+	applyAccessToken(cfg, "publish", auth.AccessTokenRecord{ID: "publish-token"})
+	if len(cfg.PublishTokenRecords) != 1 || cfg.PublishTokenRecords[0].ID != "publish-token" {
+		t.Fatalf("unexpected publish tokens: %v", cfg.PublishTokenRecords)
 	}
 
-	applyAccessToken(cfg, "unknown", "ignored")
-	if len(cfg.ReadTokens) != 1 || len(cfg.PublishTokens) != 1 {
+	applyAccessToken(cfg, "unknown", auth.AccessTokenRecord{ID: "ignored"})
+	if len(cfg.ReadTokenRecords) != 1 || len(cfg.PublishTokenRecords) != 1 {
 		t.Fatalf("unknown token type should be ignored")
 	}
 }
