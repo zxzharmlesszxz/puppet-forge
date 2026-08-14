@@ -202,6 +202,12 @@ remain visible in the dashboard but do not page operators.
 - Type: gauge
 - Value: duration of the most recent upstream refresh cycle in seconds
 
+### `puppet_forge_upstream_refresh_last_timestamp_seconds`
+
+- Type: gauge
+- Value: Unix timestamp of the most recent completed upstream refresh cycle, regardless of its result
+- Multi-replica use: select the duration and module-result gauges from the replica with the greatest timestamp; alert when the timestamp remains zero or becomes older than the configured refresh-health window
+
 ### `puppet_forge_upstream_refresh_last_success_timestamp_seconds`
 
 - Type: gauge

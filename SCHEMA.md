@@ -644,7 +644,7 @@ emit debug diagnostics without credentials or session values.
 | `LEASE-2`   | one upstream fetch per cold object cluster-wide                                           | one upstream request while concurrent replicas complete                             | cross-replica proxy coalescing test                 |
 | `LEASE-3`   | history cleanup is singleton and repeatable                                               | one purge count per cycle; no active tokens removed                                 | cleanup store/service tests                         |
 | `LEASE-4`   | artifact cleanup is singleton, retryable, and republish-safe                              | pending gauge drains; error counter stops increasing; referenced paths are canceled | outbox store parity and service cleanup tests       |
-| `READY-1`   | readiness fails when SQL or object storage is unavailable                                 | `/readyz` changes from `200` to `503`                                               | readiness tests and Kubernetes probe                |
+| `READY-1`   | readiness fails when SQL or object-storage create/read/delete capability is unavailable   | `/readyz` changes from `200` to `503`; successful storage probes are cached for 5m  | readiness tests and Kubernetes probe                |
 | `RECON-1`   | repair never deletes SQL metadata or corrupt/missing records                              | JSON reconciliation report and orphan-only deletion                                 | reconciliation tests                                |
 | `OBS-1`     | all replicas are scraped                                                                  | Prometheus targets show one target per pod                                          | `make check` plus deployed target inspection        |
 
@@ -795,7 +795,7 @@ missing or corrupt release data.
 | refresh leader exits                       | lease expires or is released; another replica takes over                                               | refresh lease debug logs and last-success age                      |
 | artifact leader exits mid-download         | no partial object is committed; waiter retries after lease expiry                                      | artifact lease logs and object checksum                            |
 | one replica has a different session secret | sessions fail only when traffic reaches that replica                                                   | compare secret source/checksum; alternate direct pod requests      |
-| one replica has stale access cache         | discrepancy lasts no longer than refresh TTL under normal SQL health                                   | retry after two seconds and inspect access refresh logs            |
+| one replica has stale access cache         | refresh occurs after 2s; SQL failure permits at most 30s stale state before protected requests return 503 | inspect access refresh logs and SQL health                          |
 | Prometheus scrapes only one pod            | cluster traffic and errors are undercounted                                                            | targets page and per-instance `up`                                 |
 | HPA changes replica count                  | shared correctness remains; local rate capacity and cache warmth change                                | HPA events, target count, cache hit ratio                          |
 
