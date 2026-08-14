@@ -39,6 +39,29 @@ func TestResponseCacheGetReturnsFalseForExpiredEntry(t *testing.T) {
 	if ok {
 		t.Fatal("expected cache miss for expired entry")
 	}
+	if len(cache.entries) != 0 || cache.bytes != 0 {
+		t.Fatalf("expired cache state was not reclaimed: entries=%d bytes=%d", len(cache.entries), cache.bytes)
+	}
+}
+
+func TestResponseCacheGetRetainsEntryInsideExplicitStaleWindow(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	cache := NewResponseCache()
+	cache.Set("key", CacheEntry{
+		StatusCode: 200,
+		Body:       []byte("stale"),
+		ExpiresAt:  now.Add(-time.Second),
+		StaleUntil: now.Add(time.Minute),
+	})
+
+	if _, ok := cache.Get("key", now); ok {
+		t.Fatal("expected fresh-cache miss for expired entry")
+	}
+	if got, ok := cache.GetStale("key", now, time.Minute); !ok || string(got.Body) != "stale" {
+		t.Fatalf("GetStale() = %#v, %t; want retained stale entry", got, ok)
+	}
 }
 
 func TestResponseCacheGetReturnsFalseForMissingKey(t *testing.T) {

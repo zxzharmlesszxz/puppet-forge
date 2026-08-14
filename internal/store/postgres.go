@@ -1883,15 +1883,6 @@ func (s *PostgresStore) ListArtifactReleases(ctx context.Context) ([]ArtifactRel
 	return scanArtifactReleaseRows(rows)
 }
 
-func (s *PostgresStore) IsArtifactPathReferenced(ctx context.Context, storagePath string) (bool, error) {
-	var referenced bool
-	err := s.pool.QueryRow(ctx, `select exists(select 1 from releases where storage_path = $1)`, storagePath).Scan(&referenced)
-	if err != nil {
-		return false, fmt.Errorf("check artifact reference: %w", err)
-	}
-	return referenced, nil
-}
-
 func (s *PostgresStore) ListReleaseMetricSummaries(ctx context.Context) ([]domain.ReleaseMetricSummary, error) {
 	const query = `
 		select

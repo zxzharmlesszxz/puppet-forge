@@ -194,13 +194,31 @@ func (p *ForgeProxy) EnsureArtifact(ctx context.Context, fileURI string) error {
 	return nil
 }
 
+func (p *ForgeProxy) WithCachedArtifactLease(ctx context.Context, objectPath string, fn func(context.Context) error) error {
+	if p == nil || fn == nil {
+		return errors.New("cached artifact lease callback is required")
+	}
+	waitCtx, cancelWait := context.WithTimeout(ctx, p.artifactLeaseTTL+10*time.Second)
+	leaseCtx, releaseLease, err := p.acquireArtifactLeaseExclusive(waitCtx, objectPath)
+	cancelWait()
+	if err != nil {
+		return err
+	}
+	if releaseLease != nil {
+		defer releaseLease()
+	}
+	workCtx, cancelWork := context.WithTimeout(leaseCtx, p.artifactWorkTTL)
+	defer cancelWork()
+	return fn(workCtx)
+}
+
 func (p *ForgeProxy) EnsureArtifactIntegrity(ctx context.Context, fileURI, expectedSHA256 string, expectedSize int64) error {
 	req, objectPath, err := p.artifactRequest(fileURI)
 	if err != nil {
 		metrics.ObserveUpstreamArtifactIntegrity("error")
 		return err
 	}
-	_, err, _ = p.artifactGroup.Do(objectPath, func() (any, error) {
+	result := p.artifactGroup.DoChan(objectPath, func() (any, error) {
 		result := "error"
 		defer func() { metrics.ObserveUpstreamArtifactIntegrity(result) }()
 		waitCtx, cancelWait := context.WithTimeout(context.WithoutCancel(ctx), p.artifactLeaseTTL+10*time.Second)
@@ -246,6 +264,7 @@ func (p *ForgeProxy) EnsureArtifactIntegrity(ctx context.Context, fileURI, expec
 		result = "repaired"
 		return loaded, nil
 	})
+	_, err = waitForSharedArtifact(ctx, result)
 	return err
 }
 
@@ -339,6 +358,7 @@ func (p *ForgeProxy) handle(w http.ResponseWriter, req *http.Request) {
 			Body:       append([]byte(nil), body...),
 			StoredAt:   storedAt,
 			ExpiresAt:  storedAt.Add(p.cacheTTL),
+			StaleUntil: storedAt.Add(p.cacheTTL + p.maxStaleAge),
 		})
 		slog.Debug("upstream json response cached",
 			"request_id", req.Header.Get("X-Request-ID"),
@@ -672,13 +692,30 @@ type artifactLoadResult struct {
 }
 
 func (p *ForgeProxy) loadArtifactShared(ctx context.Context, req *http.Request, objectPath string) (artifactLoadResult, error) {
-	loadedValue, err, _ := p.artifactGroup.Do(objectPath, func() (any, error) {
+	result := p.artifactGroup.DoChan(objectPath, func() (any, error) {
 		return p.loadArtifact(context.WithoutCancel(ctx), req, objectPath)
 	})
+	loadedValue, err := waitForSharedArtifact(ctx, result)
 	if err != nil {
 		return artifactLoadResult{}, err
 	}
-	return loadedValue.(artifactLoadResult), nil
+	loadedResult, ok := loadedValue.(artifactLoadResult)
+	if !ok {
+		return artifactLoadResult{}, errors.New("unexpected shared artifact result")
+	}
+	return loadedResult, nil
+}
+
+func waitForSharedArtifact(ctx context.Context, result <-chan singleflight.Result) (any, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case loaded := <-result:
+		if loaded.Err != nil {
+			return nil, loaded.Err
+		}
+		return loaded.Val, nil
+	}
 }
 
 func (p *ForgeProxy) loadArtifact(ctx context.Context, req *http.Request, objectPath string) (artifactLoadResult, error) {

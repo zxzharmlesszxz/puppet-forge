@@ -187,12 +187,18 @@ type testArtifactStorage struct {
 	objectPath  string
 	contentType string
 	body        []byte
-	objects     map[string]artifactstorage.Object
+	objects     map[string]testStoredObject
 	objectTimes map[string]time.Time
 	uploadErr   error
 	deleteErr   error
 	uploads     int
 	deletes     int
+	opens       int
+}
+
+type testStoredObject struct {
+	Body        []byte
+	ContentType string
 }
 
 type readinessFailureStorage struct {
@@ -202,6 +208,10 @@ type readinessFailureStorage struct {
 
 func (s *readinessFailureStorage) Stat(context.Context, string) (artifactstorage.ObjectAttrs, error) {
 	return artifactstorage.ObjectAttrs{}, s.err
+}
+
+func (s *readinessFailureStorage) UploadReaderIfAbsent(context.Context, string, string, io.Reader) (bool, error) {
+	return false, s.err
 }
 
 func newSQLiteModuleService(t *testing.T) (*ModuleService, *testArtifactStorage) {
@@ -278,7 +288,7 @@ func (s *testArtifactStorage) Upload(_ context.Context, objectPath string, conte
 
 func (s *testArtifactStorage) storeObjectLocked(objectPath string, contentType string, body []byte) {
 	if s.objects == nil {
-		s.objects = make(map[string]artifactstorage.Object)
+		s.objects = make(map[string]testStoredObject)
 	}
 	if s.objectTimes == nil {
 		s.objectTimes = make(map[string]time.Time)
@@ -286,7 +296,7 @@ func (s *testArtifactStorage) storeObjectLocked(objectPath string, contentType s
 	s.objectPath = objectPath
 	s.contentType = contentType
 	s.body = append([]byte(nil), body...)
-	s.objects[objectPath] = artifactstorage.Object{Body: append([]byte(nil), body...), ContentType: contentType}
+	s.objects[objectPath] = testStoredObject{Body: append([]byte(nil), body...), ContentType: contentType}
 	s.objectTimes[objectPath] = time.Now().UTC()
 }
 
@@ -336,28 +346,19 @@ func (s *testArtifactStorage) Exists(_ context.Context, objectPath string) (bool
 	return exists, nil
 }
 
-func (s *testArtifactStorage) Download(_ context.Context, objectPath string) (artifactstorage.Object, error) {
+func (s *testArtifactStorage) Open(_ context.Context, objectPath string) (artifactstorage.ObjectReader, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.opens++
 	if object, exists := s.objects[objectPath]; exists {
-		return artifactstorage.Object{Body: append([]byte(nil), object.Body...), ContentType: object.ContentType}, nil
+		body := append([]byte(nil), object.Body...)
+		return artifactstorage.ObjectReader{Body: io.NopCloser(bytes.NewReader(body)), ContentType: object.ContentType, Size: int64(len(body))}, nil
 	}
 	if s.objects == nil && len(s.body) > 0 {
-		return artifactstorage.Object{Body: append([]byte(nil), s.body...), ContentType: s.contentType}, nil
+		body := append([]byte(nil), s.body...)
+		return artifactstorage.ObjectReader{Body: io.NopCloser(bytes.NewReader(body)), ContentType: s.contentType, Size: int64(len(body))}, nil
 	}
-	return artifactstorage.Object{}, artifactstorage.ErrObjectNotFound
-}
-
-func (s *testArtifactStorage) Open(ctx context.Context, objectPath string) (artifactstorage.ObjectReader, error) {
-	object, err := s.Download(ctx, objectPath)
-	if err != nil {
-		return artifactstorage.ObjectReader{}, err
-	}
-	return artifactstorage.ObjectReader{
-		Body:        io.NopCloser(bytes.NewReader(object.Body)),
-		ContentType: object.ContentType,
-		Size:        int64(len(object.Body)),
-	}, nil
+	return artifactstorage.ObjectReader{}, artifactstorage.ErrObjectNotFound
 }
 
 func (s *testArtifactStorage) Stat(_ context.Context, objectPath string) (artifactstorage.ObjectAttrs, error) {
@@ -1489,10 +1490,11 @@ func TestEnsureReleaseChecksumsMaterializesColdUpstreamRelease(t *testing.T) {
 				"description":"stdlib release",
 				"readme":"# stdlib",
 				"file_uri":"https://forge.example/v3/files/puppetlabs-stdlib-1.0.0.tar.gz",
-				"file_name":"puppetlabs-stdlib-1.0.0.tar.gz",
-				"file_size":%d,
-				"file_sha256":%q
-			}`, len(archive), expectedSHA256)
+					"file_name":"puppetlabs-stdlib-1.0.0.tar.gz",
+					"file_size":%d,
+					"file_md5":%q,
+					"file_sha256":%q
+				}`, len(archive), expectedMD5, expectedSHA256)
 		case "/v3/files/puppetlabs-stdlib-1.0.0.tar.gz":
 			artifactRequests.Add(1)
 			w.Header().Set("Content-Type", "application/gzip")
@@ -1539,6 +1541,12 @@ func TestEnsureReleaseChecksumsMaterializesColdUpstreamRelease(t *testing.T) {
 	}
 	if _, err := moduleService.EnsureReleaseChecksums(ctx, stored); err != nil {
 		t.Fatalf("EnsureReleaseChecksums(cached) error = %v", err)
+	}
+	artifacts.mu.Lock()
+	openCount := artifacts.opens
+	artifacts.mu.Unlock()
+	if openCount != 3 {
+		t.Fatalf("artifact opens after cold and warm checksum requests = %d, want 3 cold-path integrity/checksum reads", openCount)
 	}
 	if releaseRequests.Load() != 1 || artifactRequests.Load() != 1 {
 		t.Fatalf("upstream requests = release:%d artifact:%d, want 1 each", releaseRequests.Load(), artifactRequests.Load())

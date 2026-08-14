@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"sync"
 	"testing"
@@ -74,12 +75,17 @@ func TestS3StorageIntegrationLifecycle(t *testing.T) {
 	if createdResults[0] == createdResults[1] {
 		t.Fatalf("concurrent create results = %#v, want exactly one winner", createdResults)
 	}
-	concurrentObject, err := storage.Download(ctx, concurrentKey)
+	concurrentObject, err := storage.Open(ctx, concurrentKey)
 	if err != nil {
-		t.Fatalf("Download(concurrent) error = %v", err)
+		t.Fatalf("Open(concurrent) error = %v", err)
 	}
-	if !bytes.Equal(concurrentObject.Body, payloads[0]) && !bytes.Equal(concurrentObject.Body, payloads[1]) {
-		t.Fatalf("concurrent object contains unexpected bytes: %q", concurrentObject.Body)
+	concurrentBody, readErr := io.ReadAll(concurrentObject.Body)
+	closeErr := concurrentObject.Body.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		t.Fatalf("read concurrent object: %v", err)
+	}
+	if !bytes.Equal(concurrentBody, payloads[0]) && !bytes.Equal(concurrentBody, payloads[1]) {
+		t.Fatalf("concurrent object contains unexpected bytes: %q", concurrentBody)
 	}
 
 	cancelledKey := "modules/teamname/module/3.0.0/sha256.tar.gz"

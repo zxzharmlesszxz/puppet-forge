@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -67,6 +68,19 @@ func TestOutboundPolicyRejectsPrivateResolvedAddresses(t *testing.T) {
 	err := policy.validateURL(context.Background(), mustParseURL(t, "https://forge.example.test"))
 	if err == nil || !strings.Contains(err.Error(), "prohibited") {
 		t.Fatalf("validateURL() error = %v, want prohibited address", err)
+	}
+}
+
+func TestOutboundPolicyDialRejectsEmptyDNSResult(t *testing.T) {
+	t.Parallel()
+
+	policy := outboundPolicy{resolver: netResolverStub{}}
+	connection, err := policy.dialContext(&net.Dialer{})(context.Background(), "tcp", "forge.example.test:443")
+	if err == nil || !strings.Contains(err.Error(), "without addresses") {
+		t.Fatalf("dialContext() error = %v, want empty DNS result error", err)
+	}
+	if connection != nil {
+		t.Fatalf("dialContext() connection = %#v, want nil", connection)
 	}
 }
 

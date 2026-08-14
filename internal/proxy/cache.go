@@ -16,6 +16,7 @@ type CacheEntry struct {
 	Body       []byte
 	StoredAt   time.Time
 	ExpiresAt  time.Time
+	StaleUntil time.Time
 }
 
 type cacheEntryRef struct {
@@ -47,6 +48,7 @@ func (c *ResponseCache) Get(key string, now time.Time) (CacheEntry, bool) {
 		return CacheEntry{}, false
 	}
 	if now.After(entry.ExpiresAt) {
+		c.deleteExpired(key, now)
 		return CacheEntry{}, false
 	}
 	return entry, true
@@ -75,7 +77,7 @@ func (c *ResponseCache) GetStale(key string, now time.Time, maxStaleAge time.Dur
 
 func (c *ResponseCache) deleteExpired(key string, now time.Time) {
 	c.mu.Lock()
-	if entry, ok := c.entries[key]; ok && now.After(entry.ExpiresAt) {
+	if entry, ok := c.entries[key]; ok && now.After(cacheRetentionDeadline(entry)) {
 		delete(c.entries, key)
 		c.bytes -= len(entry.Body)
 	}
@@ -112,7 +114,7 @@ func (c *ResponseCache) evict() {
 
 	now := time.Now()
 	for k, e := range c.entries {
-		if now.After(e.ExpiresAt) {
+		if now.After(cacheRetentionDeadline(e)) {
 			delete(c.entries, k)
 			c.bytes -= len(e.Body)
 		}
@@ -122,7 +124,7 @@ func (c *ResponseCache) evict() {
 	}
 	entries := make([]cacheEntryRef, 0, len(c.entries))
 	for k, e := range c.entries {
-		entries = append(entries, cacheEntryRef{key: k, expiresAt: e.ExpiresAt})
+		entries = append(entries, cacheEntryRef{key: k, expiresAt: cacheRetentionDeadline(e)})
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].expiresAt.Before(entries[j].expiresAt)
@@ -132,6 +134,13 @@ func (c *ResponseCache) evict() {
 		delete(c.entries, entries[i].key)
 		c.bytes -= len(entry.Body)
 	}
+}
+
+func cacheRetentionDeadline(entry CacheEntry) time.Time {
+	if entry.StaleUntil.After(entry.ExpiresAt) {
+		return entry.StaleUntil
+	}
+	return entry.ExpiresAt
 }
 
 func (c *ResponseCache) overLimitLocked() bool {

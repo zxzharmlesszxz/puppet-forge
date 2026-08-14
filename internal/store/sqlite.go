@@ -1913,15 +1913,6 @@ func (s *SQLiteStore) ListArtifactReleases(ctx context.Context) ([]ArtifactRelea
 	return scanArtifactReleaseRows(rows)
 }
 
-func (s *SQLiteStore) IsArtifactPathReferenced(ctx context.Context, storagePath string) (bool, error) {
-	var referenced bool
-	err := s.db.QueryRowContext(ctx, `select exists(select 1 from releases where storage_path = ?)`, storagePath).Scan(&referenced)
-	if err != nil {
-		return false, fmt.Errorf("check artifact reference: %w", err)
-	}
-	return referenced, nil
-}
-
 func (s *SQLiteStore) ListReleaseMetricSummaries(ctx context.Context) ([]domain.ReleaseMetricSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		select

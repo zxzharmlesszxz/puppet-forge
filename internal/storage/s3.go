@@ -263,27 +263,6 @@ func (s *S3Storage) IterateObjectMetadata(ctx context.Context, prefix string, vi
 	return nil
 }
 
-func (s *S3Storage) Download(ctx context.Context, objectPath string) (Object, error) {
-	object, err := s.Open(ctx, objectPath)
-	if err != nil {
-		return Object{}, err
-	}
-
-	body, err := io.ReadAll(object.Body)
-	closeErr := object.Body.Close()
-	if err != nil {
-		return Object{}, fmt.Errorf("read object: %w", err)
-	}
-	if closeErr != nil {
-		return Object{}, fmt.Errorf("close object body: %w", closeErr)
-	}
-
-	return Object{
-		Body:        body,
-		ContentType: object.ContentType,
-	}, nil
-}
-
 func (s *S3Storage) PublicURL(objectPath string) string {
 	if s.publicBaseURL == nil {
 		return ""
