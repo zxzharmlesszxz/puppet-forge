@@ -73,7 +73,7 @@ The service separates:
    it and stream the response to the client. The artifact is therefore never
    retained as a request-sized in-memory byte slice, and clients cannot observe
    a partial cache object.
-6. Fresh upstream module metadata is observed and stored locally for UI and metrics usage. JSON cache hits only refresh release-usage state; they do not repeat module/release indexing. All local and upstream release-usage paths coalesce writes to at most once per release per minute on each replica through a bounded 10,000-entry in-memory throttle; SQL remains the shared active-release source of truth.
+6. Fresh upstream module metadata is observed and stored locally for UI and metrics usage. JSON cache hits do not repeat module/release indexing or write release-usage state. Exact v3 release and file requests track usage, while all local and upstream usage paths coalesce SQL writes to at most once per release per minute on each replica through a bounded 10,000-entry in-memory throttle. SQL remains the shared active-release source of truth.
 7. On a cold module response, observation and SQL indexing finish before response delivery. The observer detaches client cancellation while retaining request values and applies an independent 30-second timeout, preventing both canceled indexing and partially indexed releases from racing the client's next request.
 
 ### Background Refresh Flow

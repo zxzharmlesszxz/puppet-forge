@@ -19,8 +19,8 @@ func TestOperationCounters(t *testing.T) {
 	ObserveArtifactStream("local", "success", 128)
 	ObserveArtifactStream("upstream_cache", "error", 64)
 	ObserveUpstreamArtifactIntegrity("repaired")
-	ObserveUpstreamArtifactCleanup(nil, 3, 0)
-	ObserveUpstreamArtifactCleanup(errors.New("partial cleanup"), 2, 1)
+	ObserveUpstreamArtifactCleanup(nil, 7, 3, 0, 250*time.Millisecond)
+	ObserveUpstreamArtifactCleanup(errors.New("partial cleanup"), 4, 2, 1, 500*time.Millisecond)
 	SetArtifactDeletionsPending(3)
 
 	if got := testutil.ToFloat64(publishTotal.WithLabelValues("success")); got < 1 {
@@ -65,8 +65,14 @@ func TestOperationCounters(t *testing.T) {
 	if got := testutil.ToFloat64(upstreamArtifactCleanupObjectsTotal); got < 5 {
 		t.Fatalf("upstream artifact cleanup objects counter = %f, want at least 5", got)
 	}
+	if got := testutil.ToFloat64(upstreamArtifactCleanupScannedTotal); got < 11 {
+		t.Fatalf("upstream artifact cleanup scanned counter = %f, want at least 11", got)
+	}
 	if got := testutil.ToFloat64(upstreamArtifactCleanupFailuresTotal); got < 1 {
 		t.Fatalf("upstream artifact cleanup failures counter = %f, want at least 1", got)
+	}
+	if got := testutil.CollectAndCount(upstreamArtifactCleanupDuration); got != 1 {
+		t.Fatalf("upstream artifact cleanup duration metric count = %d, want 1", got)
 	}
 	if got := testutil.ToFloat64(artifactDeletionsPending); got != 3 {
 		t.Fatalf("pending artifact deletion gauge = %f, want 3", got)
@@ -127,6 +133,9 @@ func TestObserveUpstreamRefresh(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(upstreamRefreshLastDuration); got <= 0 {
 		t.Fatalf("last duration = %f, want positive", got)
+	}
+	if got := testutil.ToFloat64(upstreamRefreshLastTimestamp); got <= 0 {
+		t.Fatalf("last refresh timestamp = %f, want positive", got)
 	}
 	if got := testutil.ToFloat64(upstreamRefreshCyclesTotal.WithLabelValues("error")); got < 1 {
 		t.Fatalf("refresh error cycles counter = %f, want at least 1", got)

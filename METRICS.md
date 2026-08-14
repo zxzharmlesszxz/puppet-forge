@@ -255,12 +255,26 @@ remain visible in the dashboard but do not page operators.
 - Labels: none
 - Note: successful deletions are counted even if a later object makes the cleanup cycle fail
 
+### `puppet_forge_upstream_artifact_cleanup_scanned_total`
+
+- Type: counter
+- Value: number of `upstream-cache/` objects inspected by cleanup cycles
+- Labels: none
+- Note: includes recent and referenced objects that were intentionally retained
+
 ### `puppet_forge_upstream_artifact_cleanup_failures_total`
 
 - Type: counter
 - Value: number of individual `upstream-cache/` objects that a cleanup cycle failed to delete
 - Labels: none
 - Note: the worker continues with later objects, while the cycle also increments `puppet_forge_upstream_artifact_cleanup_total{result="error"}`
+
+### `puppet_forge_upstream_artifact_cleanup_duration_seconds`
+
+- Type: histogram
+- Value: duration of lease-elected upstream artifact cache cleanup cycles
+- Labels: none
+- Note: records both successful and failed cycles
 
 ## Cardinality Notes
 

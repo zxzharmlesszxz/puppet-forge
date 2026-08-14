@@ -45,6 +45,11 @@ var (
 		Help: "Duration of the most recent upstream refresh cycle in seconds.",
 	}))
 
+	upstreamRefreshLastTimestamp = RegisterGauge(prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "puppet_forge_upstream_refresh_last_timestamp_seconds",
+		Help: "Unix timestamp of the most recent upstream refresh cycle on this replica.",
+	}))
+
 	upstreamRefreshLastSuccessTimestamp = RegisterGauge(prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "puppet_forge_upstream_refresh_last_success_timestamp_seconds",
 		Help: "Unix timestamp of the last successful upstream refresh cycle.",
@@ -100,9 +105,20 @@ var (
 		Help: "Total number of unreferenced upstream artifact cache objects deleted by cleanup cycles.",
 	}))
 
+	upstreamArtifactCleanupScannedTotal = RegisterCounter(prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "puppet_forge_upstream_artifact_cleanup_scanned_total",
+		Help: "Total number of upstream artifact cache objects inspected by cleanup cycles.",
+	}))
+
 	upstreamArtifactCleanupFailuresTotal = RegisterCounter(prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "puppet_forge_upstream_artifact_cleanup_failures_total",
 		Help: "Total number of upstream artifact cache objects that cleanup cycles failed to delete.",
+	}))
+
+	upstreamArtifactCleanupDuration = RegisterHistogram(prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "puppet_forge_upstream_artifact_cleanup_duration_seconds",
+		Help:    "Duration of lease-elected upstream artifact cache cleanup cycles in seconds.",
+		Buckets: prometheus.DefBuckets,
 	}))
 
 	buildInfo = RegisterGaugeVec(prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -156,6 +172,7 @@ func initOperationMetrics() {
 		upstreamArtifactCleanupTotal.WithLabelValues(result).Add(0)
 	}
 	upstreamArtifactCleanupObjectsTotal.Add(0)
+	upstreamArtifactCleanupScannedTotal.Add(0)
 	upstreamArtifactCleanupFailuresTotal.Add(0)
 }
 
@@ -179,6 +196,7 @@ func ObserveUpstreamRefresh(start time.Time, attempted, succeeded, failed int) {
 	duration := time.Since(start).Seconds()
 	upstreamRefreshDuration.Observe(duration)
 	upstreamRefreshLastDuration.Set(duration)
+	upstreamRefreshLastTimestamp.Set(float64(time.Now().UnixNano()) / float64(time.Second))
 	upstreamRefreshModules.WithLabelValues("attempted").Set(float64(attempted))
 	upstreamRefreshModules.WithLabelValues("success").Set(float64(succeeded))
 	upstreamRefreshModules.WithLabelValues("error").Set(float64(failed))
@@ -215,14 +233,18 @@ func ObserveUpstreamArtifactIntegrity(result string) {
 	upstreamArtifactIntegrityTotal.WithLabelValues(result).Inc()
 }
 
-func ObserveUpstreamArtifactCleanup(err error, deleted, failed int) {
+func ObserveUpstreamArtifactCleanup(err error, scanned, deleted, failed int, duration time.Duration) {
 	upstreamArtifactCleanupTotal.WithLabelValues(resultLabel(err)).Inc()
+	if scanned > 0 {
+		upstreamArtifactCleanupScannedTotal.Add(float64(scanned))
+	}
 	if deleted > 0 {
 		upstreamArtifactCleanupObjectsTotal.Add(float64(deleted))
 	}
 	if failed > 0 {
 		upstreamArtifactCleanupFailuresTotal.Add(float64(failed))
 	}
+	upstreamArtifactCleanupDuration.Observe(duration.Seconds())
 }
 
 func RecordBuildInfo(version, goVersion string) {

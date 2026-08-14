@@ -1,0 +1,25 @@
+rule_files:
+  - puppet-forge.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: isolated HTTP panic remains alertable
+    interval: 1m
+    input_series:
+      - series: 'puppet_forge_http_panics_total{job="puppet-forge",route="/v3/*"}'
+        values: '0 0 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: PuppetForgeHTTPPanics
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: PuppetForgeHTTPPanics
+        exp_alerts:
+          - exp_labels:
+              job: puppet-forge
+              route: /v3/*
+              severity: warning
+            exp_annotations:
+              summary: Puppet Forge recovered HTTP panics on puppet-forge /v3/*
+              description: At least one HTTP handler panic was recovered within the last 10 minutes on route /v3/*.
