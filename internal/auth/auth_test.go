@@ -354,6 +354,9 @@ func TestAuthenticateOIDCMergesMultipleTeamAdminMappings(t *testing.T) {
 	if !principal.CanManageTeam || !principal.CanPublish || principal.CanAdmin {
 		t.Fatalf("unexpected principal flags: %#v", principal)
 	}
+	if principal.Team != "alpha" {
+		t.Fatalf("principal team = %q, want deterministic first managed team", principal.Team)
+	}
 	if _, ok := principal.ManagedTeams["teamname"]; !ok {
 		t.Fatalf("principal cannot manage teamname: %#v", principal.ManagedTeams)
 	}
@@ -364,6 +367,11 @@ func TestAuthenticateOIDCMergesMultipleTeamAdminMappings(t *testing.T) {
 		if _, ok := principal.PublishOwners[owner]; !ok {
 			t.Fatalf("principal cannot publish to %s: %#v", owner, principal.PublishOwners)
 		}
+	}
+
+	reversed, ok := authorizer.AuthenticateOIDC("OWNER@example.com", "", []string{"alpha-admins", "teamname-admins"})
+	if !ok || reversed.Team != principal.Team {
+		t.Fatalf("reversed group order principal = %#v, want team %q", reversed, principal.Team)
 	}
 }
 

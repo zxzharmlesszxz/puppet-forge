@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type TeamConfig struct {
 	Team          string   `json:"team"`
-	ReadTokens    []string `json:"read_tokens"`
-	PublishTokens []string `json:"publish_tokens"`
+	ReadTokens    []string `json:"-"`
+	PublishTokens []string `json:"-"`
 	AdminTokens   []string `json:"-"`
 	PublishOwners []string `json:"extra_publish_spaces,omitempty"`
 	OIDCEmails    []string `json:"oidc_emails"`
@@ -26,6 +27,9 @@ type TeamConfig struct {
 	OIDCAdminEmails   []string `json:"oidc_admin_emails"`
 	OIDCAdminSubjects []string `json:"oidc_admin_subjects"`
 	OIDCAdminGroups   []string `json:"oidc_admin_groups"`
+
+	ReadTokenRecords    []AccessTokenRecord `json:"-"`
+	PublishTokenRecords []AccessTokenRecord `json:"-"`
 }
 
 const GlobalAdminTeam = "platform-admin"
@@ -47,6 +51,7 @@ func (cfg *TeamConfig) UnmarshalJSON(data []byte) error {
 }
 
 type Principal struct {
+	TokenID       string
 	Team          string
 	CanRead       bool
 	CanPublish    bool
@@ -80,6 +85,7 @@ func (p Principal) CanPublishOwner(owner string) bool {
 
 type Authorizer struct {
 	enabled      bool
+	tokenHasher  *TokenHasher
 	tokens       map[string]Principal
 	oidcEmails   map[string]Principal
 	oidcSubjects map[string]Principal
@@ -92,6 +98,17 @@ type contextKey string
 const principalKey contextKey = "principal"
 
 func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
+	return newAuthorizer(configs, nil)
+}
+
+func NewAuthorizerWithTokenHasher(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer, error) {
+	if tokenHasher == nil {
+		return nil, errors.New("access token hasher is required")
+	}
+	return newAuthorizer(configs, tokenHasher)
+}
+
+func newAuthorizer(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer, error) {
 	tokenMap := make(map[string]Principal)
 	tokenSources := make(map[string]string)
 	oidcEmails := make(map[string]Principal)
@@ -113,16 +130,36 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 			registerOIDCPrincipal(mapping, normalized, principal)
 		}
 	}
+	registerTokenKey := func(tokenKey, source string, principal Principal) error {
+		if existing, exists := tokenSources[tokenKey]; exists {
+			return fmt.Errorf("access token is reused by %s and %s; tokens must be globally unique", existing, source)
+		}
+		tokenSources[tokenKey] = source
+		tokenMap[tokenKey] = principal
+		return nil
+	}
 	registerToken := func(token, source string, principal Principal) error {
 		token = strings.TrimSpace(token)
 		if token == "" {
 			return nil
 		}
-		if existing, exists := tokenSources[token]; exists {
-			return fmt.Errorf("access token is reused by %s and %s; tokens must be globally unique", existing, source)
+		if tokenHasher != nil {
+			token = tokenHasher.Digest(token)
 		}
-		tokenSources[token] = source
-		tokenMap[token] = principal
+		return registerTokenKey(token, source, principal)
+	}
+	registerTokenRecords := func(records []AccessTokenRecord, source string, principal Principal) error {
+		now := time.Now()
+		for _, record := range records {
+			if !record.Active(now) {
+				continue
+			}
+			tokenPrincipal := principal
+			tokenPrincipal.TokenID = record.ID
+			if err := registerTokenKey(record.Digest, source, tokenPrincipal); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 
@@ -156,6 +193,13 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 				return nil, err
 			}
 		}
+		if err := registerTokenRecords(cfg.ReadTokenRecords, cfg.Team+" read access", Principal{
+			Team:          cfg.Team,
+			CanRead:       true,
+			PublishOwners: ownerSet,
+		}); err != nil {
+			return nil, err
+		}
 
 		for _, token := range cfg.PublishTokens {
 			err := registerToken(token, cfg.Team+" publish access", Principal{
@@ -168,6 +212,14 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 			if err != nil {
 				return nil, err
 			}
+		}
+		if err := registerTokenRecords(cfg.PublishTokenRecords, cfg.Team+" publish access", Principal{
+			Team:          cfg.Team,
+			CanRead:       true,
+			CanPublish:    true,
+			PublishOwners: ownerSet,
+		}); err != nil {
+			return nil, err
 		}
 
 		for _, token := range cfg.AdminTokens {
@@ -220,6 +272,7 @@ func NewAuthorizer(configs []TeamConfig) (*Authorizer, error) {
 
 	return &Authorizer{
 		enabled:      len(tokenMap) > 0 || len(oidcEmails) > 0 || len(oidcSubjects) > 0 || len(oidcDomains) > 0 || len(oidcGroups) > 0,
+		tokenHasher:  tokenHasher,
 		tokens:       tokenMap,
 		oidcEmails:   oidcEmails,
 		oidcSubjects: oidcSubjects,
@@ -236,6 +289,8 @@ func validateTeamConfigRole(cfg TeamConfig) error {
 	if IsGlobalAdminConfig(cfg) {
 		if len(cfg.ReadTokens) > 0 ||
 			len(cfg.PublishTokens) > 0 ||
+			len(cfg.ReadTokenRecords) > 0 ||
+			len(cfg.PublishTokenRecords) > 0 ||
 			len(cfg.PublishOwners) > 0 ||
 			len(cfg.OIDCEmails) > 0 ||
 			len(cfg.OIDCSubjects) > 0 ||
@@ -262,7 +317,18 @@ func (a *Authorizer) AuthenticateToken(token string) (Principal, bool) {
 		return Principal{}, false
 	}
 
+	if a.tokenHasher != nil {
+		token = a.tokenHasher.Digest(token)
+	}
 	principal, ok := a.tokens[token]
+	return principal, ok
+}
+
+func (a *Authorizer) AuthenticateTokenDigest(digest string) (Principal, bool) {
+	if a == nil || !a.enabled || strings.TrimSpace(digest) == "" || a.tokenHasher == nil {
+		return Principal{}, false
+	}
+	principal, ok := a.tokens[digest]
 	return principal, ok
 }
 
@@ -306,7 +372,30 @@ func (a *Authorizer) AuthenticateOIDC(email, subject string, groups []string) (P
 		}
 	}
 
+	if found {
+		first.Team = effectivePrincipalTeam(first)
+	}
 	return first, found
+}
+
+func effectivePrincipalTeam(principal Principal) string {
+	if principal.CanAdmin {
+		return GlobalAdminTeam
+	}
+	if principal.CanManageTeam {
+		return firstSortedSetValue(principal.ManagedTeams)
+	}
+	return principal.Team
+}
+
+func firstSortedSetValue(values map[string]struct{}) string {
+	first := ""
+	for value := range values {
+		if first == "" || value < first {
+			first = value
+		}
+	}
+	return first
 }
 
 func mergePrincipals(left, right Principal) Principal {

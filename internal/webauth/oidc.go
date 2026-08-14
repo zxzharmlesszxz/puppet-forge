@@ -2,9 +2,12 @@ package webauth
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,11 +16,14 @@ import (
 	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/httputil"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/gorilla/securecookie"
 	"golang.org/x/oauth2"
 )
+
+const oidcStateTTL = 5 * time.Minute
 
 // testableRandomString allows tests to inject a mock function.
 var testableRandomString = func(size int) (string, error) {
@@ -29,14 +35,18 @@ var testableRandomString = func(size int) (string, error) {
 }
 
 type Config struct {
-	IssuerURL     string
-	ClientID      string
-	ClientSecret  string
-	RedirectURL   string
-	LogoutURL     string
-	CookieSecret  string
-	PublicBaseURL string
-	Scopes        []string
+	IssuerURL         string
+	ClientID          string
+	ClientSecret      string
+	RedirectURL       string
+	LogoutURL         string
+	CookieSecret      string
+	PublicBaseURL     string
+	Scopes            []string
+	SigningAlgorithms []string
+	StateStore        store.OIDCStateStore
+	SessionStore      store.OIDCSessionStore
+	HTTPClient        *http.Client
 }
 
 type OIDCAuth struct {
@@ -49,17 +59,36 @@ type OIDCAuth struct {
 	sessionName   string
 	logoutURL     string
 	publicBaseURL string
+	stateStore    store.OIDCStateStore
+	stateKey      []byte
+	sessionStore  store.OIDCSessionStore
+	sessionKey    []byte
+	httpClient    *http.Client
 }
 
 type Session struct {
-	Email  string   `json:"email"`
-	Name   string   `json:"name"`
-	Sub    string   `json:"sub"`
-	Groups []string `json:"groups"`
+	Email      string
+	Name       string
+	Sub        string
+	Groups     []string
+	CSRFSecret string
 }
 
+const oidcSessionTTL = 8 * time.Hour
+
 func New(ctx context.Context, cfg Config) (*OIDCAuth, error) {
-	provider, err := oidc.NewProvider(ctx, cfg.IssuerURL)
+	if cfg.StateStore == nil {
+		return nil, fmt.Errorf("oidc state store is required")
+	}
+	if cfg.SessionStore == nil {
+		return nil, fmt.Errorf("oidc session store is required")
+	}
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		httpClient = newOIDCHTTPClient()
+	}
+	oidcContext := context.WithValue(ctx, oauth2.HTTPClient, httpClient)
+	provider, err := oidc.NewProvider(oidcContext, cfg.IssuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("discover oidc provider: %w", err)
 	}
@@ -73,9 +102,14 @@ func New(ctx context.Context, cfg Config) (*OIDCAuth, error) {
 		}
 	}
 
+	stateKey := sha256.Sum256([]byte(cfg.CookieSecret + "|oidc-state-id"))
+	sessionKey := sha256.Sum256([]byte(cfg.CookieSecret + "|oidc-session-id"))
 	auth := &OIDCAuth{
 		provider: provider,
-		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
+		verifier: provider.Verifier(&oidc.Config{
+			ClientID:             cfg.ClientID,
+			SupportedSigningAlgs: append([]string(nil), cfg.SigningAlgorithms...),
+		}),
 		oauth2: oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -89,6 +123,11 @@ func New(ctx context.Context, cfg Config) (*OIDCAuth, error) {
 		sessionName:   "puppet_forge_web",
 		logoutURL:     logoutURL,
 		publicBaseURL: strings.TrimRight(cfg.PublicBaseURL, "/"),
+		stateStore:    cfg.StateStore,
+		stateKey:      stateKey[:],
+		sessionStore:  cfg.SessionStore,
+		sessionKey:    sessionKey[:],
+		httpClient:    httpClient,
 	}
 
 	return auth, nil
@@ -133,32 +172,68 @@ func (a *OIDCAuth) Require(next http.Handler) http.Handler {
 }
 
 func (a *OIDCAuth) Session(r *http.Request) (Session, bool) {
+	if a == nil || a.sessionStore == nil {
+		return Session{}, false
+	}
 	cookie, err := r.Cookie(a.sessionName)
 	if err != nil {
 		return Session{}, false
 	}
-
-	var session Session
-	if err := a.cookies.Decode(a.cookieName, cookie.Value, &session); err != nil {
+	persisted, err := a.sessionStore.GetOIDCSession(r.Context(), a.hashSessionID(cookie.Value), time.Now().UTC())
+	if err != nil {
 		return Session{}, false
 	}
-
-	return session, true
+	return Session{
+		Email: persisted.Email, Name: persisted.Name, Sub: persisted.Subject,
+		Groups: append([]string(nil), persisted.Groups...), CSRFSecret: persisted.CSRFSecret,
+	}, true
 }
 
 func (a *OIDCAuth) Login(w http.ResponseWriter, r *http.Request) {
 	state, err := randomString(32)
 	if err != nil {
-		http.Error(w, "failed to generate OIDC state token: "+err.Error(), http.StatusInternalServerError)
+		slog.Error("generate OIDC state token", "err", err)
+		http.Error(w, "failed to start OIDC login", http.StatusInternalServerError)
+		return
+	}
+	nonce, err := randomString(32)
+	if err != nil {
+		slog.Error("generate OIDC nonce", "err", err)
+		http.Error(w, "failed to start OIDC login", http.StatusInternalServerError)
+		return
+	}
+	pkceVerifier, err := randomString(32)
+	if err != nil {
+		slog.Error("generate OIDC PKCE verifier", "err", err)
+		http.Error(w, "failed to start OIDC login", http.StatusInternalServerError)
+		return
+	}
+	now := time.Now().UTC()
+	if err := a.stateStore.CreateOIDCState(r.Context(), store.OIDCState{
+		StateHash:    a.hashState(state),
+		Nonce:        nonce,
+		PKCEVerifier: pkceVerifier,
+		NextPath:     safeRedirectPath(r.URL.Query().Get("next")),
+		CreatedAt:    now,
+		ExpiresAt:    now.Add(oidcStateTTL),
+	}); err != nil {
+		http.Error(w, "failed to persist OIDC state", http.StatusInternalServerError)
 		return
 	}
 	if err := a.setStateCookie(w, r, state, r.URL.Query().Get("next")); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("encode OIDC state cookie", "err", err)
+		http.Error(w, "failed to start OIDC login", http.StatusInternalServerError)
 		return
 	}
 
 	oauth2Config := a.oauth2Config(r)
-	http.Redirect(w, r, oauth2Config.AuthCodeURL(state), http.StatusFound)
+	slog.Debug("oidc login started",
+		"next", safeRedirectPath(r.URL.Query().Get("next")),
+		"redirect_url", oauth2Config.RedirectURL,
+		"state_ttl", oidcStateTTL,
+	)
+	// #nosec G710 -- the provider authorization endpoint comes from validated OIDC discovery over the hardened client.
+	http.Redirect(w, r, oauth2Config.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(pkceVerifier)), http.StatusFound)
 }
 
 func (a *OIDCAuth) Callback(w http.ResponseWriter, r *http.Request) {
@@ -182,17 +257,27 @@ func (a *OIDCAuth) Callback(w http.ResponseWriter, r *http.Request) {
 		a.failState(w, r, "OIDC session cookie is invalid. Start login again.")
 		return
 	}
-	if r.URL.Query().Get("state") != statePayload["state"] {
+	callbackState := r.URL.Query().Get("state")
+	if !hmac.Equal([]byte(callbackState), []byte(statePayload["state"])) {
 		a.failState(w, r, "OIDC state mismatch. Start login again.")
 		return
 	}
+	state, err := a.stateStore.ConsumeOIDCState(r.Context(), a.hashState(callbackState), time.Now().UTC())
+	if err != nil {
+		a.failState(w, r, "OIDC session expired or was already used. Start login again.")
+		return
+	}
+	slog.Debug("oidc callback state accepted", "next", state.NextPath)
+	a.clearCookie(w, a.stateName, requestIsHTTPS(r, a.publicBaseURL))
 
 	oauth2Config := a.oauth2Config(r)
-	token, err := oauth2Config.Exchange(r.Context(), r.URL.Query().Get("code"))
+	oidcContext := context.WithValue(r.Context(), oauth2.HTTPClient, a.httpClient)
+	token, err := oauth2Config.Exchange(oidcContext, r.URL.Query().Get("code"), oauth2.VerifierOption(state.PKCEVerifier))
 	if err != nil {
 		http.Error(w, "oidc exchange failed", http.StatusBadGateway)
 		return
 	}
+	slog.Debug("oidc code exchange succeeded")
 
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok {
@@ -200,9 +285,13 @@ func (a *OIDCAuth) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idToken, err := a.verifier.Verify(r.Context(), rawIDToken)
+	idToken, err := a.verifier.Verify(oidcContext, rawIDToken)
 	if err != nil {
 		http.Error(w, "invalid id_token", http.StatusUnauthorized)
+		return
+	}
+	if !hmac.Equal([]byte(idToken.Nonce), []byte(state.Nonce)) {
+		http.Error(w, "invalid id_token nonce", http.StatusUnauthorized)
 		return
 	}
 
@@ -216,24 +305,78 @@ func (a *OIDCAuth) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid claims", http.StatusUnauthorized)
 		return
 	}
+	slog.Debug("oidc id token verified", "groups", len(claims.Groups), "has_email", claims.Email != "", "has_name", claims.Name != "")
 
-	if err := a.setSessionCookie(w, r, Session{
-		Sub:    claims.Sub,
-		Email:  claims.Email,
-		Name:   claims.Name,
-		Groups: claims.Groups,
-	}); err != nil {
+	sessionID, err := a.createSession(r.Context(), Session{
+		Sub: claims.Sub, Email: claims.Email, Name: claims.Name, Groups: claims.Groups,
+	})
+	if err != nil {
 		http.Error(w, "failed to persist session", http.StatusInternalServerError)
 		return
 	}
+	a.setSessionCookie(w, r, sessionID)
+	slog.Debug("oidc session created", "next", state.NextPath, "groups", len(claims.Groups))
 
-	a.clearCookie(w, a.stateName, requestIsHTTPS(r, a.publicBaseURL))
-	http.Redirect(w, r, safeRedirectPath(statePayload["next"]), http.StatusFound)
+	http.Redirect(w, r, state.NextPath, http.StatusFound)
+}
+
+func (a *OIDCAuth) hashState(state string) string {
+	mac := hmac.New(sha256.New, a.stateKey)
+	_, _ = mac.Write([]byte(state))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func (a *OIDCAuth) createSession(ctx context.Context, session Session) (string, error) {
+	if a == nil || a.sessionStore == nil {
+		return "", errors.New("oidc session store is not configured")
+	}
+	sessionID, err := randomString(32)
+	if err != nil {
+		return "", err
+	}
+	csrfSecret, err := randomString(32)
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().UTC()
+	if err := a.sessionStore.CreateOIDCSession(ctx, store.OIDCSession{
+		SessionHash: a.hashSessionID(sessionID), Subject: session.Sub, Email: session.Email, Name: session.Name,
+		Groups: append([]string(nil), session.Groups...), CSRFSecret: csrfSecret,
+		CreatedAt: now, ExpiresAt: now.Add(oidcSessionTTL), LastSeenAt: now,
+	}); err != nil {
+		return "", err
+	}
+	return sessionID, nil
+}
+
+func (a *OIDCAuth) hashSessionID(sessionID string) string {
+	mac := hmac.New(sha256.New, a.sessionKey)
+	_, _ = mac.Write([]byte(sessionID))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func safeRedirectPath(next string) string {
 	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
 		return "/"
+	}
+	candidate := next
+	for {
+		decoded, err := url.PathUnescape(candidate)
+		if err != nil {
+			return "/"
+		}
+		if decoded == candidate {
+			break
+		}
+		candidate = decoded
+	}
+	if strings.Contains(candidate, `\`) || strings.HasPrefix(candidate, "//") {
+		return "/"
+	}
+	for _, value := range candidate {
+		if value < ' ' || value == '\x7f' {
+			return "/"
+		}
 	}
 	return next
 }
@@ -257,6 +400,24 @@ func (a *OIDCAuth) Logout(w http.ResponseWriter, r *http.Request, next string) {
 		redirectTo = a.providerLogoutURL(r, next)
 	}
 	http.Redirect(w, r, redirectTo, http.StatusFound)
+}
+
+// LogoutOrigin returns the provider origin that browser form redirects must be
+// allowed to reach under Content Security Policy.
+func (a *OIDCAuth) LogoutOrigin() string {
+	if a == nil {
+		return ""
+	}
+	logoutURL, err := url.Parse(a.logoutURL)
+	if err != nil || logoutURL.User != nil || logoutURL.Host == "" {
+		return ""
+	}
+	switch logoutURL.Scheme {
+	case "http", "https":
+		return logoutURL.Scheme + "://" + logoutURL.Host
+	default:
+		return ""
+	}
 }
 
 func (a *OIDCAuth) providerLogoutURL(r *http.Request, next string) string {
@@ -298,6 +459,7 @@ func (a *OIDCAuth) setStateCookie(w http.ResponseWriter, r *http.Request, state,
 		return err
 	}
 
+	// #nosec G124 -- Secure is derived from the validated external HTTPS scheme so local HTTP development remains usable.
 	http.SetCookie(w, &http.Cookie{
 		Name:     a.stateName,
 		Value:    encoded,
@@ -311,31 +473,31 @@ func (a *OIDCAuth) setStateCookie(w http.ResponseWriter, r *http.Request, state,
 	return nil
 }
 
-func (a *OIDCAuth) setSessionCookie(w http.ResponseWriter, r *http.Request, session Session) error {
-	encoded, err := a.cookies.Encode(a.cookieName, session)
-	if err != nil {
-		return err
-	}
-
+func (a *OIDCAuth) setSessionCookie(w http.ResponseWriter, r *http.Request, sessionID string) {
+	// #nosec G124 -- Secure is derived from the validated external HTTPS scheme so local HTTP development remains usable.
 	http.SetCookie(w, &http.Cookie{
 		Name:     a.sessionName,
-		Value:    encoded,
+		Value:    sessionID,
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   requestIsHTTPS(r, a.publicBaseURL),
-		MaxAge:   int((8 * time.Hour).Seconds()),
+		MaxAge:   int(oidcSessionTTL.Seconds()),
 	})
-
-	return nil
 }
 
 func (a *OIDCAuth) clearSession(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(a.sessionName); err == nil && a.sessionStore != nil {
+		if err := a.sessionStore.RevokeOIDCSession(r.Context(), a.hashSessionID(cookie.Value), time.Now().UTC()); err != nil {
+			slog.Default().Warn("revoke oidc session failed", "err", err)
+		}
+	}
 	a.clearCookie(w, a.sessionName, requestIsHTTPS(r, a.publicBaseURL))
 	a.clearCookie(w, a.stateName, requestIsHTTPS(r, a.publicBaseURL))
 }
 
 func (a *OIDCAuth) clearCookie(w http.ResponseWriter, name string, secure bool) {
+	// #nosec G124 -- deletion preserves the original scheme-dependent Secure attribute.
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
 		Value:    "",
