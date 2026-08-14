@@ -1,5 +1,20 @@
 # Metrics
 
+[Українська версія](METRICS.uk.md)
+
+> **Runtime context:** [SCHEMA.md](SCHEMA.md) explains which metrics are local to
+> a replica, which gauges describe shared state, and how to aggregate them in a
+> multi-instance deployment.
+
+## Build Metric
+
+### `puppet_forge_build_info`
+
+- Type: gauge fixed at `1` for the running build
+- Labels:
+  - `version`: application version injected during the build
+  - `go_version`: Go runtime version
+
 ## HTTP Metrics
 
 ### `puppet_forge_http_requests_total`
@@ -35,7 +50,7 @@
 ### `puppet_forge_http_in_flight_requests`
 
 - Type: gauge
-- Value: current number of in-flight HTTP requests
+- Value: current number of active HTTP requests
 - Labels: none
 
 Normalized `route` values currently include:
@@ -43,9 +58,9 @@ Normalized `route` values currently include:
 - `/`
 - `/healthz`
 - `/readyz`
-- `/metrics`
 - `/manage`
 - `/manage/*`
+- `/auth/*`
 - `/api/v1/modules`
 - `/api/v1/modules/`
 - `/api/v1/modules/*`
@@ -56,19 +71,14 @@ Normalized `route` values currently include:
 
 ## Inventory Metrics
 
-### `puppet_forge_module_info`
+### `puppet_forge_modules`
 
 - Type: gauge
-- Value: always `1`
+- Value: number of locally indexed modules for the owner
 - Labels:
-  - `module`
   - `owner`
-  - `name`
-  - `latest_version`
 - Notes:
-  - exported once per locally indexed module
-  - `module` currently has format `<owner>-<name>`
-  - `latest_version` may be empty for a module shell without indexed releases
+  - per-module names and versions are not exported to avoid high-cardinality series
 
 ### `puppet_forge_module_releases`
 
@@ -86,6 +96,20 @@ Normalized `route` values currently include:
 - Labels:
   - `source`
 
+### Module inventory collector health
+
+The inventory collector refreshes its bounded snapshot in the background. Prometheus
+scrapes only that in-memory snapshot and therefore never wait for SQL queries.
+
+- `puppet_forge_module_metrics_ready`: `1` after the first successful refresh, otherwise `0`
+- `puppet_forge_module_metrics_last_success_timestamp_seconds`: Unix timestamp of the last successful refresh
+- `puppet_forge_module_metrics_refresh_errors_total`: failed background refresh attempts
+- `puppet_forge_module_metrics_owners_total`: owners found before applying `METRICS_MODULE_LIMIT`
+- `puppet_forge_module_metrics_truncated`: `1` when owner-labeled series were truncated by the configured limit
+
+Each service process maintains its own snapshot. Use the existing Prometheus `instance`
+label to diagnose a stale or failing replica.
+
 ## Operation Metrics
 
 ### `puppet_forge_publish_total`
@@ -94,7 +118,6 @@ Normalized `route` values currently include:
 - Value: total number of module publish attempts handled by the service layer
 - Labels:
   - `result`: `success` or `error`
-  - `owner`
 
 ### `puppet_forge_delete_total`
 
@@ -103,7 +126,6 @@ Normalized `route` values currently include:
 - Labels:
   - `result`: `success` or `error`
   - `kind`: `module` or `release`
-  - `owner`
 
 ### `puppet_forge_release_usage_mark_total`
 
@@ -111,9 +133,46 @@ Normalized `route` values currently include:
 - Value: total number of release usage mark attempts
 - Labels:
   - `result`: `success` or `error`
-  - `owner`
 
-Release usage marks are written when clients download module releases through the API or request local `/v3/*` module/release/file metadata. The Manage UI uses the same release usage data to hide delete actions for in-use releases.
+Release usage marks are written when clients request a concrete release or download its archive through the API or compatible `/v3/releases/*` and `/v3/files/*` routes. Listing module metadata does not mark its latest release as active. Repeated observations are coalesced to at most one SQL write per release per minute on each replica. Therefore, the counter records attempted store writes rather than every matching HTTP request. The Manage UI uses the same shared release usage data to hide delete actions for in-use releases.
+
+### `puppet_forge_artifact_deletion_total`
+
+- Type: counter
+- Value: durable local-artifact deletion processing attempts
+- Labels:
+  - `result`: `deleted`, `canceled`, or `error`
+
+`canceled` means the same content-addressed path became referenced by a republished release before cleanup; the worker removed the stale outbox task without deleting the live object.
+An `error` leaves the task pending and defers its next attempt for one minute so
+one failing object cannot starve later queue entries.
+
+### `puppet_forge_artifact_deletions_pending`
+
+- Type: gauge
+- Value: local artifact deletions currently waiting in the shared SQL outbox
+- Multi-replica aggregation: use `max by (job)`, because every replica reads the same durable queue
+
+### `puppet_forge_artifact_stream_total`
+
+- Type: counter
+- Value: completed artifact response streams, including failures after HTTP headers were sent
+- Labels:
+  - `source`: `local` or `upstream_cache`
+  - `result`: `success`, `client_cancel`, or `error`
+
+An HTTP request can already have status `200` or `206` when object storage or the
+client connection fails during streaming. Use this counter, rather than only HTTP
+status metrics, to detect truncated archives and likely client checksum failures.
+`PuppetForgeArtifactStreamErrors` alerts only on `result="error"`; client cancellations
+remain visible in the dashboard but do not page operators.
+
+### `puppet_forge_artifact_stream_bytes_total`
+
+- Type: counter
+- Value: artifact response bytes successfully written, grouped by `source`
+- Labels:
+  - `source`: `local` or `upstream_cache`
 
 ## Upstream Metrics
 
@@ -170,12 +229,39 @@ Release usage marks are written when clients download module releases through th
 - Notes:
   - JSON `stale` is emitted only when the cached response is expired but still inside `UPSTREAM_PROXY_JSON_STALE_TTL`
 
-## Compatibility Notes
+### `puppet_forge_upstream_artifact_integrity_total`
 
-`puppet_forge_module_info` is intentionally shaped close to `puppetfile_module_info` from `prometheus-puppetfile-exporter`, so dashboards and PromQL can compare:
+- Type: counter
+- Value: outcomes of coalesced upstream artifact cache integrity operations
+- Labels:
+  - `result`: `valid`, `repaired`, or `error`
+- Notes:
+  - `valid` means the cached object already matched the expected checksum and size
+  - `repaired` means a missing or invalid object was fetched and passed the subsequent integrity check
+  - concurrent checks for the same object on one replica are coalesced and counted once
 
-- `current_version` from `Puppetfile`
-- `latest_version` from this Forge service
-- shared labels such as `owner` and `name`
+### `puppet_forge_upstream_artifact_cleanup_total`
 
-The `module` label is not identical across the two services, so joins should prefer `owner` and `name`.
+- Type: counter
+- Value: outcomes of upstream artifact cache cleanup cycles
+- Labels:
+  - `result`: `success` or `error`
+- Note: only the lease-elected worker emits a cleanup outcome
+
+### `puppet_forge_upstream_artifact_cleanup_objects_total`
+
+- Type: counter
+- Value: number of unreferenced `upstream-cache/` objects deleted after they exceeded `UPSTREAM_ARTIFACT_ORPHAN_TTL`
+- Labels: none
+- Note: successful deletions are counted even if a later object makes the cleanup cycle fail
+
+### `puppet_forge_upstream_artifact_cleanup_failures_total`
+
+- Type: counter
+- Value: number of individual `upstream-cache/` objects that a cleanup cycle failed to delete
+- Labels: none
+- Note: the worker continues with later objects, while the cycle also increments `puppet_forge_upstream_artifact_cleanup_total{result="error"}`
+
+## Cardinality Notes
+
+Inventory metrics are aggregated by bounded enums or module owner. Per-module names, release versions, users, tokens, request IDs, and error text are never metric labels.
