@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Global Access</title>
+  <style nonce="{{.Navigation.CSPNonce}}">
+    :root {
+      color-scheme: light;
+      --bg: #f3f0ea;
+      --panel: #ffffff;
+      --ink: #1f2428;
+      --muted: #66717a;
+      --accent: #2f6f73;
+      --line: #d9e0e2;
+      --danger: #a33a32;
+      --ok: #2e7146;
+    }
+    {{template "manage-navigation-styles" .Navigation}}
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+    main { max-width: 1080px; margin: 0 auto; padding: 32px 20px 56px; }
+    h1 { margin: 0; font-size: 32px; line-height: 1.15; }
+    .subtitle { margin: 8px 0 0; color: var(--muted); line-height: 1.45; }
+    .panel { margin-top: 20px; padding: 22px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: 0 10px 30px rgba(31, 36, 40, 0.05); }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 13px; font-weight: 700; }
+    textarea { width: 100%; min-height: 110px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: white; font: inherit; resize: vertical; }
+    textarea:focus { border-color: #81aeb0; outline: 3px solid #dceced; }
+    button { min-height: 42px; margin-top: 16px; padding: 0 18px; border: 0; border-radius: 6px; background: var(--accent); color: white; font: inherit; font-weight: 700; cursor: pointer; }
+    .notice { margin-bottom: 16px; padding: 12px 14px; border-radius: 6px; color: var(--ok); background: rgba(46, 113, 70, 0.1); font-size: 14px; }
+    .notice.error { color: var(--danger); background: rgba(163, 58, 50, 0.1); }
+    @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    {{template "manage-navigation" .Navigation}}
+    <header>
+      <h1>Global Access</h1>
+      <p class="subtitle">Configure identities that administer the whole Forge service. Team-specific access and tokens are managed from each team page.</p>
+    </header>
+    {{if .Message}}<div class="notice" role="status">{{.Message}}</div>{{end}}
+    {{if .Error}}<div class="notice error" role="alert">{{.Error}}</div>{{end}}
+    <section class="panel">
+      <form method="post" action="/manage/admin/access">
+        {{csrfInput .CSRFToken}}
+        <input type="hidden" name="action" value="save_global_admins">
+        <div class="grid">
+          <div>
+            <label for="global-admin-groups">OIDC admin groups</label>
+            <textarea id="global-admin-groups" name="oidc_admin_groups" placeholder="forge-admins">{{.AdminOIDCGroups}}</textarea>
+          </div>
+          <div>
+            <label for="global-admin-emails">OIDC admin emails</label>
+            <textarea id="global-admin-emails" name="oidc_admin_emails" placeholder="admin@example.com">{{.AdminOIDCEmails}}</textarea>
+          </div>
+          <div>
+            <label for="global-admin-subjects">OIDC admin subjects</label>
+            <textarea id="global-admin-subjects" name="oidc_admin_subjects">{{.AdminOIDCSubjects}}</textarea>
+          </div>
+        </div>
+        <button type="submit">Save Global Access</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

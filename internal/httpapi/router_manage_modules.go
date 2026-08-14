@@ -11,12 +11,16 @@ import (
 	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
-const manageModulePageSize = 50
+const (
+	manageModulePageSize   = 50
+	manageModuleListTarget = "manage-module-list"
+)
 
-func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
-	if req.URL.Path != "/manage" {
+func (r *Router) manageModulesPage(w http.ResponseWriter, req *http.Request) {
+	if req.URL.Path != "/manage/modules" {
 		writeError(w, http.StatusNotFound, errors.New("route not found"))
 		return
 	}
@@ -31,12 +35,12 @@ func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 
 	owners := manageableOwners(principal)
 	query := strings.TrimSpace(req.URL.Query().Get("q"))
-	page, err := requestedManagePage(req)
+	page, pageSize, err := requestedManageModulePage(req, "/manage/modules", manageModuleListTarget)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	rows, total, err := r.loadManageModuleRows(req.Context(), principal, nil, query, page)
+	rows, total, err := r.loadManageModuleRows(req.Context(), principal, nil, query, page, pageSize)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -48,22 +52,35 @@ func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	err = managePageTemplate.Execute(w, managePageData{
+	executeHTMLTemplate(w, managePageTemplate, managePageData{
+		Navigation: r.manageNavigation(req, principal, csrfToken, "modules", ""),
 		Principal:  principal,
+		Teams:      manageableTeams(principal),
 		Owners:     owners,
 		Modules:    rows,
 		Message:    req.URL.Query().Get("message"),
 		Error:      req.URL.Query().Get("error"),
 		CSRFToken:  csrfToken,
 		Query:      query,
-		Pagination: managePagination("/manage", query, page, total),
+		Pagination: managePaginationForRequest("/manage/modules", req.URL.Query(), manageModuleListTarget, manageModuleListTarget, page, pageSize, total),
 	})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+}
+
+func (r *Router) manageModulesRoot(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodGet:
+		r.manageModulesPage(w, req)
+	case http.MethodPost:
+		r.manageModules(w, req)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 	}
 }
 
-func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Principal, allowedOwners map[string]struct{}, query string, page int) ([]manageModuleRow, int, error) {
+func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Principal, allowedOwners map[string]struct{}, query string, page, pageSize int) ([]manageModuleRow, int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	var owners []string
 	if allowedOwners != nil {
 		owners = make([]string, 0, len(allowedOwners))
@@ -75,7 +92,7 @@ func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Princi
 		owners = manageableOwners(principal)
 	}
 
-	modules, total, err := r.modules.ListModulesPageFiltered(ctx, owners, query, manageModulePageSize, (page-1)*manageModulePageSize)
+	modules, total, err := r.modules.ListModulesPageFiltered(ctx, owners, query, pageSize, (page-1)*pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -87,13 +104,14 @@ func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Princi
 	for _, release := range activeReleases {
 		activeReleaseSet[struct{ owner, name, version string }{release.Owner, release.Name, release.Version}] = struct{}{}
 	}
+	releasesByModule, err := r.modules.ListReleasesForModules(ctx, modules)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	rows := make([]manageModuleRow, 0, len(modules))
 	for _, module := range modules {
-		versions, err := r.modules.ListReleases(ctx, module.Owner, module.Name)
-		if err != nil {
-			return nil, 0, err
-		}
+		versions := releasesByModule[module.Owner+"\x00"+module.Name]
 		versionRows := make([]manageVersionRow, 0, len(versions))
 		for _, version := range versions {
 			_, active := activeReleaseSet[struct{ owner, name, version string }{module.Owner, module.Name, version.Version}]
@@ -112,48 +130,55 @@ func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Princi
 	return rows, total, nil
 }
 
-func requestedManagePage(req *http.Request) (int, error) {
+func requestedManagePageWithSize(req *http.Request, pageSize int) (int, error) {
 	raw := strings.TrimSpace(req.URL.Query().Get("page"))
 	if raw == "" {
 		return 1, nil
 	}
 	page, err := strconv.Atoi(raw)
-	if err != nil || page < 1 {
+	maxPage := store.MaxModulePageOffset/pageSize + 1
+	if err != nil || page < 1 || page > maxPage {
 		return 0, errors.New("invalid page")
 	}
 	return page, nil
 }
 
-func managePagination(basePath, query string, page, total int) paginationData {
-	totalPages := (total + manageModulePageSize - 1) / manageModulePageSize
-	pagination := paginationData{
-		Page:       page,
-		Total:      total,
-		TotalPages: totalPages,
-		HasPrev:    page > 1,
-		HasNext:    page < totalPages,
-	}
-	if pagination.HasPrev {
-		pagination.PrevURL = managePageURL(basePath, query, page-1)
-	}
-	if pagination.HasNext {
-		pagination.NextURL = managePageURL(basePath, query, page+1)
-	}
-	return pagination
+func requestedManageModulePage(req *http.Request, action, target string) (int, int, error) {
+	pageSize := requestedPageSize(req, action, "per_page", target, manageModulePageSize)
+	page, err := requestedManagePageWithSize(req, pageSize)
+	return page, pageSize, err
 }
 
-func managePageURL(basePath, query string, page int) string {
+func managePaginationForRequest(basePath string, current url.Values, anchor, target string, page, pageSize, total int) paginationData {
+	pagination := paginationFor(page, pageSize, total, func(targetPage int) string {
+		return managePageURLWithValues(basePath, current, targetPage, anchor)
+	})
+	return configurePageSize(pagination, current, basePath, "per_page", "page", anchor, target)
+}
+
+func managePageURLWithValues(basePath string, current url.Values, page int, anchor string) string {
 	values := url.Values{}
-	if query != "" {
-		values.Set("q", query)
+	for key, entries := range current {
+		if key == "page" || isPageSizeParameter(key) || key == "message" || key == "error" {
+			continue
+		}
+		for _, value := range entries {
+			values.Add(key, value)
+		}
 	}
 	if page > 1 {
 		values.Set("page", strconv.Itoa(page))
+	} else {
+		values.Del("page")
 	}
+	result := basePath
 	if encoded := values.Encode(); encoded != "" {
-		return basePath + "?" + encoded
+		result += "?" + encoded
 	}
-	return basePath
+	if anchor != "" {
+		result += "#" + anchor
+	}
+	return result
 }
 
 func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
@@ -169,16 +194,22 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	if !requireManageCSRF(w, req) {
+	if !r.requireManageCSRF(w, req) {
 		return
 	}
-	if !r.rateLimiter.Allow(r.rateLimitKey(req, "manage-publish"), 60, time.Minute) {
+	allowed, rateLimitErr := r.allowSharedRateLimit(req, "manage-publish", 60, time.Minute)
+	if rateLimitErr != nil {
+		redirectManageError(w, req, errors.New("publish rate limit service is unavailable"))
+		return
+	}
+	if !allowed {
 		redirectManageError(w, req, errors.New("too many publish attempts"))
 		return
 	}
 
-	input, err := readPublishInput(w, req, r.moduleUploadMax)
+	input, cleanup, err := readPublishInput(w, req, r.moduleUploadMax)
 	if err != nil {
+		r.audit(req, principal, "publish_module", "failure", auditReason(err))
 		if isRequestTooLarge(err) {
 			writeError(w, http.StatusRequestEntityTooLarge, err)
 			return
@@ -186,15 +217,20 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 		redirectManageError(w, req, err)
 		return
 	}
+	defer cleanup()
 	if !principal.CanPublishOwner(input.Owner) {
+		r.audit(req, principal, "publish_module", "failure", "forbidden", "space", input.Owner)
 		redirectManageError(w, req, errors.New("token is not allowed to publish to this space"))
 		return
 	}
-	if _, err := r.modules.Publish(req.Context(), input); err != nil {
+	release, err := r.modules.Publish(req.Context(), input)
+	if err != nil {
+		r.audit(req, principal, "publish_module", "failure", auditReason(err), "space", input.Owner)
 		redirectManageError(w, req, err)
 		return
 	}
-	redirectManageResult(w, req, "/manage", "message", "module published")
+	r.audit(req, principal, "publish_module", "success", "none", "space", release.Owner, "module", release.Owner+"/"+release.Name, "release", release.Version, "sha256", release.SHA256)
+	redirectManageResult(w, req, "/manage/modules", "message", "module published")
 }
 
 func (r *Router) manageUpstreamModule(w http.ResponseWriter, req *http.Request) {
@@ -210,7 +246,7 @@ func (r *Router) manageUpstreamModule(w http.ResponseWriter, req *http.Request) 
 	if !ok {
 		return
 	}
-	if !requireManageCSRF(w, req) {
+	if !r.requireManageCSRF(w, req) {
 		return
 	}
 	if !principal.CanAdmin {
@@ -224,10 +260,12 @@ func (r *Router) manageUpstreamModule(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 	if err := r.modules.SyncUpstreamModule(req.Context(), owner, name); err != nil {
+		r.audit(req, principal, "import_upstream_module", "failure", auditReason(err), "module", owner+"/"+name)
 		redirectManageError(w, req, err)
 		return
 	}
-	http.Redirect(w, req, "/manage?message="+url.QueryEscape("upstream module added"), http.StatusFound)
+	r.audit(req, principal, "import_upstream_module", "success", "none", "module", owner+"/"+name)
+	http.Redirect(w, req, "/manage/modules?message="+url.QueryEscape("upstream module added"), http.StatusFound)
 }
 
 func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
@@ -239,7 +277,7 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	if !requireManageCSRF(w, req) {
+	if !r.requireManageCSRF(w, req) {
 		return
 	}
 
@@ -251,15 +289,13 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 			redirectManageError(w, req, errors.New("admin or team admin access required"))
 			return
 		}
-		if err := r.ensureModuleDeletable(req.Context(), owner, name); err != nil {
+		if err := r.modules.DeleteModuleIfAllowed(req.Context(), owner, name, time.Now().Add(-r.activeReleaseTTL)); err != nil {
+			r.audit(req, principal, "delete_module", "failure", auditReason(err), "space", owner, "module", owner+"/"+name)
 			redirectManageError(w, req, err)
 			return
 		}
-		if err := r.modules.DeleteModule(req.Context(), owner, name); err != nil {
-			redirectManageError(w, req, err)
-			return
-		}
-		redirectManageResult(w, req, "/manage", "message", "module deleted")
+		r.audit(req, principal, "delete_module", "success", "none", "space", owner, "module", owner+"/"+name)
+		redirectManageResult(w, req, "/manage/modules", "message", "module deleted")
 		return
 	}
 	if len(parts) == 5 && parts[2] == "versions" && parts[4] == "delete" {
@@ -268,15 +304,13 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 			redirectManageError(w, req, errors.New("admin or team admin access required"))
 			return
 		}
-		if err := r.ensureReleaseDeletable(req.Context(), owner, name, version); err != nil {
+		if err := r.modules.DeleteReleaseIfAllowed(req.Context(), owner, name, version, time.Now().Add(-r.activeReleaseTTL)); err != nil {
+			r.audit(req, principal, "delete_release", "failure", auditReason(err), "space", owner, "module", owner+"/"+name, "release", version)
 			redirectManageError(w, req, err)
 			return
 		}
-		if err := r.modules.DeleteRelease(req.Context(), owner, name, version); err != nil {
-			redirectManageError(w, req, err)
-			return
-		}
-		redirectManageResult(w, req, "/manage", "message", "version deleted")
+		r.audit(req, principal, "delete_release", "success", "none", "space", owner, "module", owner+"/"+name, "release", version)
+		redirectManageResult(w, req, "/manage/modules", "message", "version deleted")
 		return
 	}
 
@@ -312,7 +346,7 @@ func parseUpstreamModuleFormValue(raw string) (string, string, error) {
 }
 
 func redirectManageError(w http.ResponseWriter, req *http.Request, err error) {
-	redirectManageResult(w, req, "/manage", "error", err.Error())
+	redirectManageResult(w, req, "/manage/modules", "error", err.Error())
 }
 
 func redirectManageResult(w http.ResponseWriter, req *http.Request, fallback, key, message string) {
@@ -321,12 +355,13 @@ func redirectManageResult(w http.ResponseWriter, req *http.Request, fallback, ke
 	if strings.Contains(target, "?") {
 		separator = "&"
 	}
+	// #nosec G710 -- manageReturnPath accepts only validated local manage paths or a fixed local fallback.
 	http.Redirect(w, req, target+separator+url.QueryEscape(key)+"="+url.QueryEscape(message), http.StatusFound)
 }
 
 func manageReturnPath(req *http.Request, fallback string) string {
 	next := strings.TrimSpace(req.FormValue("next"))
-	if next == "/manage/teams" || strings.HasPrefix(next, "/manage/teams/") {
+	if next == "/manage/modules" || next == "/manage/teams" || strings.HasPrefix(next, "/manage/teams/") || next == "/manage/admin/access" {
 		parsed, err := url.ParseRequestURI(next)
 		if err == nil && !parsed.IsAbs() && parsed.Host == "" && !strings.HasPrefix(next, "//") {
 			return next
@@ -359,4 +394,16 @@ func manageableOwners(principal auth.Principal) []string {
 	}
 	sort.Strings(owners)
 	return owners
+}
+
+func manageableTeams(principal auth.Principal) []string {
+	teams := make([]string, 0, max(1, len(principal.ManagedTeams)))
+	for team := range principal.ManagedTeams {
+		teams = append(teams, team)
+	}
+	if len(teams) == 0 && principal.Team != "" && !principal.CanAdmin {
+		teams = append(teams, principal.Team)
+	}
+	sort.Strings(teams)
+	return teams
 }

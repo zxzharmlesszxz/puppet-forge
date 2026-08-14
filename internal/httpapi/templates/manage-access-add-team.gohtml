@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Add Team</title>
-  <style>
+  <style nonce="{{.Navigation.CSPNonce}}">
     :root {
       color-scheme: light;
       --bg: #f3f0ea;
@@ -15,6 +15,7 @@
       --line: #d9e0e2;
       --danger: #a33a32;
     }
+    {{template "manage-navigation-styles" .Navigation}}
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -23,7 +24,7 @@
       color: var(--ink);
     }
     main {
-      max-width: 780px;
+      max-width: 1080px;
       margin: 0 auto;
       padding: 32px 20px 56px;
     }
@@ -43,28 +44,6 @@
       color: var(--accent);
       font-weight: 700;
       text-decoration: none;
-    }
-    .header-links {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-    .header-links > * + *::before {
-      content: "·";
-      color: var(--muted);
-      margin-right: 8px;
-    }
-    .header-links form {
-      margin: 0;
-    }
-    .link-button {
-      border: 0;
-      background: transparent;
-      padding: 0;
-      color: var(--accent);
-      cursor: pointer;
-      font: inherit;
-      font-weight: 700;
     }
     .panel {
       background: var(--panel);
@@ -107,13 +86,6 @@
       font-weight: 700;
       cursor: pointer;
     }
-    .header-links .link-button {
-      height: auto;
-      padding: 0;
-      border: 0;
-      background: transparent;
-      color: var(--accent);
-    }
     .button-row {
       display: flex;
       gap: 10px;
@@ -130,8 +102,6 @@
     }
     @media (max-width: 720px) {
       header, .button-row { display: block; }
-      .header-links { margin-top: 10px; }
-      header a, .header-links a { display: inline-block; margin-top: 10px; }
       .grid { grid-template-columns: 1fr; }
       .button-row button { width: 100%; }
     }
@@ -139,37 +109,19 @@
 </head>
 <body>
   <main>
+    {{template "manage-navigation" .Navigation}}
     <header>
       <h1>Add Team</h1>
-      <div class="header-links">
-        <a href="/">Public modules</a>
-        <a href="/manage">Manage</a>
-        <a href="/manage/teams">Teams</a>
-        <a href="/manage/access">Access</a>
-        <form method="post" action="/manage/logout">{{csrfInput $.CSRFToken}}<button class="link-button" type="submit">Sign out</button></form>
-      </div>
     </header>
-    {{if .Error}}<div class="notice error">{{.Error}}</div>{{end}}
+    {{if .Error}}<div class="notice error" role="alert">{{.Error}}</div>{{end}}
     <section class="panel">
-      <form method="post" action="/manage/access">
+      <form method="post" action="/manage/teams/new">
         {{csrfInput $.CSRFToken}}
         <input type="hidden" name="action" value="save_team">
         <div class="grid">
           <div>
             <label for="new-team">Team</label>
-            <input id="new-team" name="team" placeholder="platform">
-          </div>
-          <div>
-            <label for="new-extra-publish-spaces">Extra publish spaces</label>
-            <textarea id="new-extra-publish-spaces" name="extra_publish_spaces" placeholder="shared-modules"></textarea>
-          </div>
-          <div>
-            <label for="new-read-tokens">Read tokens</label>
-            <textarea id="new-read-tokens" name="read_tokens"></textarea>
-          </div>
-          <div>
-            <label for="new-publish-tokens">Publish tokens</label>
-            <textarea id="new-publish-tokens" name="publish_tokens"></textarea>
+            <input id="new-team" name="team" placeholder="platform" required>
           </div>
           <div>
             <label for="new-oidc-groups">OIDC publish groups</label>

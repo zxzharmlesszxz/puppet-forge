@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Module.Owner}}/{{.Module.Name}}</title>
-  <style>
+  <style nonce="{{.Navigation.CSPNonce}}">
     :root {
       color-scheme: light;
       --bg: #f6f1e8;
@@ -26,6 +26,7 @@
       margin: 0 auto;
       padding: 48px 20px 64px;
     }
+    {{template "public-navigation-styles" .Navigation}}
     .hero, .panel {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -35,15 +36,6 @@
     .hero {
       padding: 28px 30px;
       margin-bottom: 24px;
-    }
-    .back {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 18px;
-      color: var(--accent);
-      text-decoration: none;
-      font-weight: 700;
     }
     h1 {
       margin: 0 0 10px;
@@ -58,35 +50,36 @@
       color: var(--accent);
       font-weight: 700;
     }
+    .section-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .section-links a {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 7px 11px;
+      color: var(--accent);
+      background: rgba(255, 255, 255, 0.5);
+      font-family: system-ui, sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .section-links a:hover, .section-links a:focus-visible {
+      border-color: var(--accent);
+      background: #fff;
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(157, 60, 42, 0.12);
+    }
     .panel {
       padding: 24px 26px;
       min-width: 0;
+      scroll-margin-top: 18px;
     }
     .panel + .panel {
       margin-top: 20px;
-    }
-    .versionbar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      align-items: center;
-      margin-top: 18px;
-    }
-    .versionbar label {
-      color: var(--muted);
-      font-size: 14px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-    .versionbar select {
-      min-width: 220px;
-      padding: 12px 14px;
-      border-radius: 12px;
-      border: 1px solid var(--line);
-      background: #fff;
-      color: var(--ink);
-      font-size: 15px;
     }
     h2 {
       margin: 0 0 16px;
@@ -129,6 +122,41 @@
       display: grid;
       gap: 18px;
       min-width: 0;
+    }
+    .install-panel {
+      padding: 0;
+    }
+    .install-panel > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 22px 26px;
+      cursor: pointer;
+      list-style: none;
+      font-size: 24px;
+      font-weight: 700;
+    }
+    .install-panel > summary::-webkit-details-marker {
+      display: none;
+    }
+    .install-panel > summary::after {
+      content: "+";
+      flex: 0 0 auto;
+      color: var(--accent);
+      font-family: system-ui, sans-serif;
+      font-size: 24px;
+      line-height: 1;
+    }
+    .install-panel[open] > summary::after {
+      content: "−";
+    }
+    .install-panel > summary:hover, .install-panel > summary:focus-visible {
+      color: var(--accent);
+      outline: none;
+    }
+    .install-panel > .install-grid {
+      padding: 0 26px 24px;
     }
     .install-grid > div {
       min-width: 0;
@@ -215,26 +243,18 @@
 </head>
 <body>
   <main>
+    {{template "public-navigation" .Navigation}}
     <section class="hero">
-      <a class="back" href="/">← Back to modules</a>
       <div class="meta accent">Module</div>
       <h1>{{.Module.Owner}}/{{.Module.Name}}</h1>
       <div class="meta">{{if .IsUpstream}}Source: official Puppet Forge cache{{else}}Source: local registry{{end}}</div>
-      <div class="versionbar">
-        <label for="version-select">Version</label>
-        <select id="version-select">
-          {{range .Versions}}
-          {{if eq $.SelectedVersion .Version}}
-          <option value="{{.Version}}" selected>{{.Version}}</option>
-          {{else}}
-          <option value="{{.Version}}">{{.Version}}</option>
-          {{end}}
-          {{end}}
-        </select>
-      </div>
       {{if .Release.Description}}<p>{{.Release.Description}}</p>{{end}}
+      <nav class="section-links" aria-label="Module sections">
+        <a href="#readme">README</a>
+        {{if .Release.Version}}<a href="#install">Install</a>{{end}}
+      </nav>
     </section>
-    <section class="panel">
+    <section class="panel" id="readme">
       <h2>README</h2>
       {{if .Release.Readme}}
       <div class="readme">{{.ReadmeHTML}}</div>
@@ -243,8 +263,8 @@
       {{end}}
     </section>
     {{if .Release.Version}}
-    <section class="panel">
-      <h2>Install</h2>
+    <details class="panel install-panel" id="install">
+      <summary>Install</summary>
       <div class="install-grid">
         <div>
           <h3>Direct Tarball Install</h3>
@@ -306,11 +326,14 @@ mod "{{.ModuleInstallID}}", "{{.Release.Version}}"</code></pre>
           </div>
         </div>
       </div>
-    </section>
+    </details>
     {{end}}
   </main>
-  <script>
-    const versionSelect = document.getElementById('version-select');
+  <script nonce="{{.Navigation.CSPNonce}}">
+    {{template "clipboard-script" .}}
+    /** @type {(text: string) => Promise<boolean>} */
+    const copyText = window['copyTextToClipboard'];
+    const versionSelect = /** @type {HTMLSelectElement|null} */ (document.getElementById('version-select'));
     if (versionSelect) {
       versionSelect.addEventListener('change', () => {
         const url = new URL(window.location.href);
@@ -318,6 +341,37 @@ mod "{{.ModuleInstallID}}", "{{.Release.Version}}"</code></pre>
         window.location.href = url.toString();
       });
     }
+    const copyVersionLink = document.getElementById('copy-version-link');
+    if (copyVersionLink && versionSelect) {
+      copyVersionLink.addEventListener('click', async () => {
+        const url = new URL(window.location.href);
+        url.search = '';
+        url.hash = '';
+        url.searchParams.set('version', versionSelect.value);
+        if (await copyText(url.toString())) {
+          copyVersionLink.classList.add('is-copied');
+          copyVersionLink.title = 'Copied';
+          copyVersionLink.setAttribute('aria-label', 'Link copied');
+          window.setTimeout(() => {
+            copyVersionLink.classList.remove('is-copied');
+            copyVersionLink.title = 'Copy link to this version';
+            copyVersionLink.setAttribute('aria-label', 'Copy link to this version');
+          }, 1400);
+        } else {
+          copyVersionLink.title = 'Copy failed';
+          copyVersionLink.setAttribute('aria-label', 'Copy failed');
+        }
+      });
+    }
+    const installPanel = /** @type {HTMLDetailsElement|null} */ (document.getElementById('install'));
+    const openInstallPanel = () => {
+      if (installPanel && window.location.hash === '#install') installPanel.open = true;
+    };
+    document.querySelector('a[href="#install"]')?.addEventListener('click', () => {
+      if (installPanel) installPanel.open = true;
+    });
+    window.addEventListener('hashchange', openInstallPanel);
+    openInstallPanel();
     const setCopyStatus = (button, text) => {
       const original = button.textContent || 'Copy';
       button.textContent = text;
@@ -325,21 +379,12 @@ mod "{{.ModuleInstallID}}", "{{.Release.Version}}"</code></pre>
         button.textContent = original;
       }, 1400);
     };
-    document.querySelectorAll('.copy-button').forEach((button) => {
+    document.querySelectorAll('button.copy-button').forEach((button) => {
       button.addEventListener('click', async () => {
         const code = button.closest('.code-window')?.querySelector('code');
         if (!code) return;
-        const text = code.innerText;
-        if (!navigator.clipboard || !window.isSecureContext) {
-          setCopyStatus(button, 'Failed');
-          return;
-        }
-        try {
-          await navigator.clipboard.writeText(text);
-          setCopyStatus(button, 'Copied');
-        } catch {
-          setCopyStatus(button, 'Failed');
-        }
+        const text = code.textContent || '';
+        setCopyStatus(button, await copyText(text) ? 'Copied' : 'Failed');
       });
     });
   </script>

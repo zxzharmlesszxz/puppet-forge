@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Team {{.Team.Team}}</title>
+  <style nonce="{{.Navigation.CSPNonce}}">
+    :root {
+      color-scheme: light;
+      --bg: #f3f0ea;
+      --panel: #ffffff;
+      --ink: #1f2428;
+      --muted: #66717a;
+      --accent: #2f6f73;
+      --line: #d9e0e2;
+      --danger: #a33a32;
+      --ok: #2e7146;
+    }
+    {{template "manage-navigation-styles" .Navigation}}
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+    main { max-width: 1080px; margin: 0 auto; padding: 32px 20px 56px; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; }
+    h1 { margin: 0; font-size: 32px; }
+    h2 { margin: 0 0 16px; font-size: 20px; }
+    .meta, .muted { color: var(--muted); }
+    .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .panel { margin-bottom: 18px; padding: 22px; scroll-margin-top: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .field-wide { grid-column: 1 / -1; }
+    .readonly-field { min-width: 0; }
+    .readonly-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 13px; font-weight: 700; }
+    .readonly-value { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 42px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 6px; background: #f4f6f5; color: #465057; }
+    label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 13px; font-weight: 700; }
+    input, select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink); font: inherit; }
+    input, select { height: 42px; padding: 0 11px; }
+    textarea { min-height: 90px; padding: 10px 11px; resize: vertical; }
+    input:focus, select:focus, textarea:focus { border-color: #81aeb0; outline: 3px solid #dceced; }
+    button { min-height: 40px; margin-top: 16px; padding: 0 16px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+    .danger-button, .release-danger-button { border-color: #d6a09b; background: #fff; color: var(--danger); }
+    .danger-button:hover, .danger-button:focus-visible, .release-danger-button:hover, .release-danger-button:focus-visible { border-color: var(--danger); background: #f9eceb; outline: none; }
+    .notice { margin-bottom: 16px; padding: 11px 13px; border-radius: 6px; background: #eef5ef; color: var(--ok); }
+    .notice.error { background: #f9eceb; color: var(--danger); }
+    .badge, .usage-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 8px; border: 1px solid #cbd8d9; border-radius: 999px; background: #f7fbfb; color: #355f62; font-size: 12px; font-weight: 700; }
+    .catalog-filter { position: relative; margin-bottom: 12px; }
+    .catalog-filter input { padding-right: 42px; }
+    .filter-clear { position: absolute; right: 14px; top: 7px; color: var(--muted); text-decoration: none; font-size: 22px; }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .section-disclosure { margin-top: 12px; border: 1px solid var(--line); border-radius: 7px; background: #fbfcfb; overflow: hidden; }
+    .section-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 54px; padding: 12px 14px; cursor: pointer; list-style: none; font-weight: 750; transition: background-color .15s ease; }
+    .section-summary::-webkit-details-marker { display: none; }
+    .section-summary::after { content: "+"; color: var(--accent); font-size: 22px; font-weight: 500; line-height: 1; }
+    .section-disclosure[open] > .section-summary::after { content: "−"; }
+    .section-summary:hover, .section-summary:focus-visible { background: #eef6f5; outline: none; }
+    .section-title { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
+    .section-content { padding: 16px 14px; border-top: 1px solid var(--line); }
+    .release-version form { margin: 0; }
+    .module-actions button, .release-version button { min-height: 32px; margin: 0; padding: 0 10px; font-size: 12px; }
+    .release-version { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; background: #f7f8f8; transition: border-color .15s ease, box-shadow .15s ease; }
+    .release-version.is-latest { border-color: #87b79a; background: #eef7f1; }
+    .release-version.is-active { border-color: #d3b66d; background: #fff8e5; }
+    .release-version:hover, .release-version:focus-within { border-color: #81aeb0; box-shadow: 0 0 0 3px #dceced; }
+    .release-version:has(.release-danger-button:hover), .release-version:has(.release-danger-button:focus-visible) { border-color: var(--danger); box-shadow: 0 0 0 3px #f2d7d4; }
+    .empty { color: var(--muted); padding: 16px 0 0; }
+    .pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+    .pagination-links { display: flex; gap: 12px; }
+    .pagination-disabled { color: #a2aaaf; font-weight: 700; }
+    .delete-team { margin-top: 12px; }
+    .token-list { display: grid; gap: 8px; margin-bottom: 12px; }
+    .token-row { display: grid; grid-template-columns: 80px minmax(140px, 1fr) minmax(160px, 1fr) auto auto; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: #f8faf9; font-size: 13px; }
+    .token-prefix { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; }
+    .token-meta { color: var(--muted); }
+    .token-actions form { display: flex; gap: 6px; margin: 0; }
+    .token-actions button { min-height: 32px; margin: 0; padding: 0 10px; font-size: 12px; }
+    .token-create { display: grid; grid-template-columns: minmax(180px, 1fr) 120px 120px auto; gap: 10px; align-items: end; margin-bottom: 18px; }
+    .token-create button { margin: 0; }
+    .token-history-row { display: grid; grid-template-columns: 80px minmax(150px, 1fr) minmax(120px, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+    .token-history-row:last-child { border-bottom: 0; }
+    .token-status { font-weight: 700; }
+    .token-status.is-revoked { color: var(--danger); }
+    .token-status.is-expired { color: #765b17; }
+    @media (max-width: 760px) {
+      header { display: block; }
+      .grid { grid-template-columns: 1fr; }
+      .token-row, .token-create, .token-history-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    {{template "manage-navigation" .Navigation}}
+    <header>
+      <div>
+        <h1>{{.Team.Team}}</h1>
+        <div class="meta">{{range .Spaces}}<span class="badge">{{.}}</span>{{end}}</div>
+      </div>
+    </header>
+
+    {{if .Message}}<div class="notice" role="status">{{.Message}}</div>{{end}}
+    {{if .Error}}<div class="notice error" role="alert">{{.Error}}</div>{{end}}
+
+    {{if .ShowAccess}}
+    <section id="team-access" class="panel">
+      <h2>Access</h2>
+      <form method="post" action="/manage/access">
+        {{csrfInput $.CSRFToken}}
+        <input type="hidden" name="action" value="save_team">
+        <input type="hidden" name="original_team" value="{{.Team.Team}}">
+        <input type="hidden" name="next" value="/manage/teams/{{.Team.Team}}/access">
+        <div class="grid">
+          <div class="readonly-field">
+            <span class="readonly-label">Team</span>
+            <div class="readonly-value"><strong>{{.Team.Team}}</strong></div>
+            <input type="hidden" name="team" value="{{.Team.Team}}">
+          </div>
+          <div class="readonly-field">
+            <span class="readonly-label">Publish spaces</span>
+            <div class="readonly-value">{{range .Spaces}}<span class="badge">{{.}}</span>{{end}}</div>
+            <p class="muted">The primary team space is automatic. Extra publish spaces are assigned by global administrators.{{if .Principal.CanAdmin}} <a href="/manage/admin/spaces">Manage publish spaces</a>.{{end}}</p>
+          </div>
+          <div>
+            <label for="team-publish-groups">OIDC publish groups</label>
+            <textarea id="team-publish-groups" name="oidc_groups">{{.Team.OIDCGroups}}</textarea>
+          </div>
+          <div>
+            <label for="team-admin-emails">OIDC team admins (emails)</label>
+            <textarea id="team-admin-emails" name="oidc_team_admin_emails">{{.Team.OIDCTeamAdminEmails}}</textarea>
+          </div>
+          <div>
+            <label for="team-admin-groups">OIDC team admins (groups)</label>
+            <textarea id="team-admin-groups" name="oidc_team_admin_groups">{{.Team.OIDCTeamAdminGroups}}</textarea>
+          </div>
+        </div>
+        <button type="submit">Save Team</button>
+      </form>
+      {{if .Principal.CanAdmin}}
+      <form class="delete-team" method="post" action="/manage/access">
+        {{csrfInput $.CSRFToken}}
+        <input type="hidden" name="action" value="delete_team">
+        <input type="hidden" name="team" value="{{.Team.Team}}">
+        <input type="hidden" name="next" value="/manage/teams">
+        <button class="danger-button" type="submit">Delete Team</button>
+      </form>
+      {{end}}
+    </section>
+    {{end}}
+
+    {{if .ShowTokens}}
+    <section id="team-tokens" class="panel">
+      <h2>Tokens</h2>
+      <form class="token-create" method="post" action="/manage/access/token">{{csrfInput $.CSRFToken}}<input type="hidden" name="action" value="create"><input type="hidden" name="team" value="{{.Team.Team}}"><input type="hidden" name="next" value="/manage/teams/{{.Team.Team}}/tokens"><div><label for="team-token-name">Name</label><input id="team-token-name" name="name" required maxlength="200" placeholder="Production r10k"></div><div><label for="team-token-role">Role</label><select id="team-token-role" name="role" required><option value="read">Read</option><option value="publish">Publish</option></select></div><div><label for="team-token-expiry">Expires</label><select id="team-token-expiry" name="expires_days"><option value="0">Never</option><option value="30">30 days</option><option value="90">90 days</option><option value="365">1 year</option></select></div><button type="submit">Create token</button></form>
+      <details id="active-tokens" class="section-disclosure" data-section-key="active-tokens" data-async-list{{if or .ActiveTokenQuery (gt .TokenPagination.Page 1)}} open{{end}}>
+        <summary class="section-summary"><span class="section-title">Active tokens <span class="badge">{{.TokenPagination.Total}}</span></span></summary>
+        <div class="section-content">
+          <form class="catalog-filter" method="get" action="/manage/teams/{{.Team.Team}}/tokens#active-tokens" data-async-filter="active-tokens">
+            {{range .ActiveTokenParams}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+            <label class="visually-hidden" for="active-token-query">Filter active tokens</label>
+            <input id="active-token-query" name="active_token_query" type="search" placeholder="Filter by role, status, prefix, or name…" value="{{.ActiveTokenQuery}}">
+            {{if .ActiveTokenQuery}}<a class="filter-clear" href="{{.ActiveTokenClearURL}}" aria-label="Clear active token filter">×</a>{{end}}
+          </form>
+          <div class="token-list">
+          {{range .Team.Tokens}}
+          <div class="token-row">
+            <span class="badge">{{.Kind}}</span><span>{{if .Description}}{{.Description}}{{else}}Unnamed token{{end}}</span><span class="token-prefix">{{.Prefix}}</span><span class="token-meta">{{.Status}} · expires {{.ExpiresAt}}</span>
+            {{if not .Revoked}}<div class="token-actions"><form method="post" action="/manage/access/token">{{csrfInput $.CSRFToken}}<input type="hidden" name="team" value="{{$.Team.Team}}"><input type="hidden" name="next" value="/manage/teams/{{$.Team.Team}}/tokens"><input type="hidden" name="token_id" value="{{.ID}}"><button type="submit" name="action" value="rotate">Rotate</button><button class="danger-button" type="submit" name="action" value="revoke">Revoke</button></form></div>{{end}}
+          </div>
+          {{else}}<p class="muted">No active tokens match this filter.</p>{{end}}
+          </div>
+          {{if .TokenPagination.Total}}
+          <nav class="pagination" aria-label="Active token pages">
+            <span>{{.TokenPagination.Total}} active tokens · page {{.TokenPagination.Page}} of {{.TokenPagination.TotalPages}}</span>
+            {{template "page-size-control" .TokenPagination}}
+            <span class="pagination-links">{{if .TokenPagination.HasPrev}}<a href="{{.TokenPagination.PrevURL}}">Previous</a>{{else}}<span class="pagination-disabled">Previous</span>{{end}}{{if .TokenPagination.HasNext}}<a href="{{.TokenPagination.NextURL}}">Next</a>{{else}}<span class="pagination-disabled">Next</span>{{end}}</span>
+          </nav>
+          {{end}}
+        </div>
+      </details>
+      {{if .TokenHistoryAvailable}}
+      <details id="token-history" class="section-disclosure" data-section-key="token-history" data-async-list{{if or .TokenHistoryQuery (gt .TokenHistoryPagination.Page 1)}} open{{end}}>
+        <summary class="section-summary"><span class="section-title">Revoked and expired tokens <span class="badge">{{.TokenHistoryPagination.Total}}</span></span></summary>
+        <div class="section-content">
+          <form class="catalog-filter" method="get" action="/manage/teams/{{.Team.Team}}/tokens#token-history" data-async-filter="token-history">
+            {{range .TokenHistoryParams}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+            <label class="visually-hidden" for="token-history-query">Filter revoked and expired tokens</label>
+            <input id="token-history-query" name="token_query" type="search" placeholder="Filter by role, status, prefix, or name…" value="{{.TokenHistoryQuery}}">
+            {{if .TokenHistoryQuery}}<a class="filter-clear" href="{{.TokenHistoryClearURL}}" aria-label="Clear revoked and expired token filter">×</a>{{end}}
+          </form>
+          {{if .TokenHistory}}
+          <div class="token-list">
+          {{range .TokenHistory}}
+            <div class="token-history-row">
+              <span class="badge">{{.Kind}}</span>
+              <span class="token-prefix">{{.Prefix}}</span>
+              <span>{{if .Description}}{{.Description}}{{else}}Unnamed token{{end}}</span>
+              <span class="token-status {{if .Revoked}}is-revoked{{else}}is-expired{{end}}">{{.Status}} · {{.ChangedAt}}</span>
+            </div>
+          {{end}}
+          </div>
+          {{else}}
+          <p class="muted">No revoked or expired tokens match this filter.</p>
+          {{end}}
+          {{if .TokenHistoryPagination.Total}}
+          <nav class="pagination" aria-label="Revoked and expired token pages">
+            <span>{{.TokenHistoryPagination.Total}} revoked or expired tokens · page {{.TokenHistoryPagination.Page}} of {{.TokenHistoryPagination.TotalPages}}</span>
+            {{template "page-size-control" .TokenHistoryPagination}}
+            <span class="pagination-links">
+              {{if .TokenHistoryPagination.HasPrev}}<a href="{{.TokenHistoryPagination.PrevURL}}">Previous</a>{{else}}<span class="pagination-disabled">Previous</span>{{end}}
+              {{if .TokenHistoryPagination.HasNext}}<a href="{{.TokenHistoryPagination.NextURL}}">Next</a>{{else}}<span class="pagination-disabled">Next</span>{{end}}
+            </span>
+          </nav>
+          {{end}}
+        </div>
+      </details>
+      {{end}}
+    </section>
+    {{end}}
+
+    {{if .ShowModules}}
+    <section id="team-modules" class="panel">
+      <h2>Modules</h2>
+      {{if .PublishSpaces}}
+      <details class="section-disclosure" data-section-key="upload-module">
+        <summary class="section-summary"><span class="section-title">Upload or Update</span></summary>
+        <div class="section-content">
+          <form method="post" action="/manage/modules" enctype="multipart/form-data">
+            {{csrfInput $.CSRFToken}}
+            <input type="hidden" name="next" value="/manage/teams/{{.Team.Team}}/modules">
+            <div class="grid">
+              <div>
+                <label for="team-publish-space">Space</label>
+                <select id="team-publish-space" name="space" required>{{range .PublishSpaces}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+              </div>
+              <div>
+                <label for="team-module-archive">Archive</label>
+                <input id="team-module-archive" name="file" type="file" accept=".gz,.tgz,.tar.gz" required>
+              </div>
+            </div>
+            <button type="submit">Publish</button>
+          </form>
+        </div>
+      </details>
+      {{end}}
+      <details id="module-list" class="section-disclosure" data-section-key="module-list" data-async-list{{if .Query}} open{{end}}>
+        <summary class="section-summary"><span class="section-title">Modules <span class="badge">{{.Pagination.Total}}</span></span></summary>
+        <div class="section-content">
+          <form class="catalog-filter" method="get" action="/manage/teams/{{.Team.Team}}/modules" data-async-filter="module-list">
+        <label class="visually-hidden" for="team-catalog-query">Filter modules</label>
+        <input id="team-catalog-query" name="q" type="search" placeholder="Filter by owner/name…" value="{{.Query}}" autocomplete="off">
+        {{if .Query}}<a class="filter-clear" href="/manage/teams/{{.Team.Team}}/modules">×</a>{{end}}
+          </form>
+          {{if .Modules}}
+          {{range .Modules}}
+          {{$row := .}}
+          {{$owner := .Module.Owner}}
+          {{$name := .Module.Name}}
+          <details class="module-details" data-section-key="module:{{$owner}}/{{$name}}">
+        <summary class="catalog-item">
+          <span class="item-title">{{$owner}}/{{$name}}</span>
+          <span class="item-subtitle">{{if .Module.LatestVersion}}{{.Module.LatestVersion}}{{else}}none{{end}}</span>
+          <span class="badge">{{len .Versions}} version{{if ne (len .Versions) 1}}s{{end}}</span>
+          {{if .CanDelete}}
+          <span class="module-actions">
+            <button class="danger-button" type="submit" form="delete-module-{{$owner}}-{{$name}}">Delete module</button>
+          </span>
+          {{end}}
+        </summary>
+        {{if .CanDelete}}<form id="delete-module-{{$owner}}-{{$name}}" method="post" action="/manage/modules/{{$owner}}/{{$name}}/delete" hidden>{{csrfInput $.CSRFToken}}<input type="hidden" name="next" value="/manage/teams/{{$.Team.Team}}/modules"></form>{{end}}
+        <div class="release-list">
+          {{range .Versions}}
+          <div class="release-version{{if .Latest}} is-latest{{else if .Active}} is-active{{end}}">
+            {{.Version}}
+            {{if .Latest}}<span class="usage-badge">latest</span>{{end}}
+            {{if .Active}}<span class="usage-badge">in use</span>{{end}}
+            {{if and (not .Latest) (not .Active) $row.CanDelete}}
+            <form method="post" action="/manage/modules/{{$row.Module.Owner}}/{{$row.Module.Name}}/versions/{{.Version}}/delete">
+              {{csrfInput $.CSRFToken}}
+              <input type="hidden" name="next" value="/manage/teams/{{$.Team.Team}}/modules">
+              <button class="release-danger-button" type="submit">Delete</button>
+            </form>
+            {{end}}
+          </div>
+          {{end}}
+        </div>
+          </details>
+          {{end}}
+          {{else}}
+          <div class="empty">No modules in this team scope.</div>
+          {{end}}
+          {{if .Pagination.Total}}
+          <nav class="pagination" aria-label="Module pages">
+            <span>{{.Pagination.Total}} modules · page {{.Pagination.Page}} of {{.Pagination.TotalPages}}</span>
+            {{template "page-size-control" .Pagination}}
+            <span class="pagination-links">
+              {{if .Pagination.HasPrev}}<a href="{{.Pagination.PrevURL}}">Previous</a>{{else}}<span class="pagination-disabled">Previous</span>{{end}}
+              {{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">Next</a>{{else}}<span class="pagination-disabled">Next</span>{{end}}
+            </span>
+          </nav>
+          {{end}}
+        </div>
+      </details>
+    </section>
+    {{end}}
+  </main>
+  <script nonce="{{.Navigation.CSPNonce}}">
+    (() => {
+      const storageKey = "puppet-forge:manage-team:{{.Team.Team}}:open-sections";
+      let openSections = new Set();
+      try { openSections = new Set(JSON.parse(window.localStorage.getItem(storageKey) || "[]")); } catch {}
+      const bindSections = (root) => {
+        const sections = [];
+        if (root instanceof HTMLDetailsElement && root.dataset.sectionKey) sections.push(root);
+        root.querySelectorAll?.("details[data-section-key]").forEach((section) => sections.push(section));
+        sections.forEach((section) => {
+          if (section.dataset.sectionStateBound) return;
+          section.dataset.sectionStateBound = "true";
+          if (openSections.has(section.dataset.sectionKey)) section.open = true;
+          section.addEventListener("toggle", () => {
+            if (section.open) openSections.add(section.dataset.sectionKey); else openSections.delete(section.dataset.sectionKey);
+            try {
+              window.localStorage.setItem(storageKey, JSON.stringify(Array.from(openSections)));
+            } catch (_) {}
+          });
+        });
+      };
+      bindSections(document);
+      document.addEventListener("puppet-forge:list-updated", (event) => bindSections(event.target));
+    })();
+  </script>
+</body>
+</html>

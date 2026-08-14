@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Overview</title>
+  <style nonce="{{.Navigation.CSPNonce}}">
+    :root {
+      color-scheme: light;
+      --bg: #f3f0ea;
+      --panel: #ffffff;
+      --ink: #1f2428;
+      --muted: #66717a;
+      --accent: #2f6f73;
+      --line: #d9e0e2;
+    }
+    {{template "manage-navigation-styles" .Navigation}}
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    main {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 32px 20px 56px;
+    }
+    header { margin-bottom: 20px; }
+    h1 {
+      margin: 0;
+      font-size: 32px;
+      line-height: 1.15;
+    }
+    h2 {
+      margin: 0;
+      font-size: 20px;
+    }
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 700;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--panel);
+      box-shadow: 0 10px 30px rgba(31, 36, 40, 0.05);
+    }
+    .summary-item {
+      display: block;
+      min-width: 0;
+      padding: 20px 22px;
+      color: var(--ink);
+      text-decoration: none;
+      transition: background-color .15s ease, box-shadow .15s ease;
+    }
+    .summary-item + .summary-item { border-left: 1px solid var(--line); }
+    .summary-item:hover,
+    .summary-item:focus-visible {
+      background: #eef6f5;
+      box-shadow: inset 0 -4px 0 var(--accent);
+      outline: none;
+    }
+    .summary-value {
+      display: block;
+      font-size: 30px;
+      font-weight: 800;
+      line-height: 1;
+    }
+    .summary-label {
+      display: block;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 18px;
+    }
+    .panel {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 10px 30px rgba(31, 36, 40, 0.05);
+    }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 64px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--line);
+    }
+    .panel-header a { font-size: 13px; }
+    .item-list { margin: 0; padding: 0; list-style: none; }
+    .item-list li + li { border-top: 1px solid var(--line); }
+    .item-link {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 14px;
+      min-height: 58px;
+      padding: 12px 20px;
+      color: var(--ink);
+      font-weight: 700;
+    }
+    .item-link:hover,
+    .item-link:focus-visible {
+      background: rgba(47, 111, 115, 0.08);
+      outline: none;
+    }
+    .item-name {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .item-meta {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .resource-scroll {
+      max-height: 360px;
+      overflow: auto;
+      scrollbar-gutter: stable;
+    }
+    .resource-scroll thead {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--panel);
+      box-shadow: 0 1px 0 var(--line);
+    }
+    .panel-pagination {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 48px;
+      padding: 10px 20px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .pagination-links {
+      display: flex;
+      gap: 12px;
+    }
+    .pagination-disabled {
+      color: #a2aaaf;
+      font-weight: 700;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+    th,
+    td { padding: 13px 20px; }
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    tbody tr { border-top: 1px solid var(--line); }
+    tbody tr:hover { background: #f6faf9; }
+    .resource-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      max-width: 100%;
+      padding: 0 7px;
+      margin-left: -7px;
+      border-radius: 5px;
+      overflow-wrap: anywhere;
+    }
+    .resource-link:hover,
+    .resource-link:focus-visible,
+    .count-link:hover,
+    .count-link:focus-visible {
+      background: rgba(47, 111, 115, 0.1);
+      outline: none;
+    }
+    .count-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 0 9px;
+      border: 1px solid #cbd8d9;
+      border-radius: 999px;
+      background: #f7fbfb;
+      color: #355f62;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .spaces-panel { margin-top: 18px; }
+    .empty {
+      padding: 28px 20px;
+      color: var(--muted);
+      text-align: center;
+    }
+    @media (max-width: 760px) {
+      .overview-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 520px) {
+      main { padding: 24px 14px 40px; }
+      .summary { grid-template-columns: 1fr; }
+      .panel-pagination { align-items: flex-start; flex-direction: column; }
+      .summary-item + .summary-item {
+        border-top: 1px solid var(--line);
+        border-left: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    {{template "manage-navigation" .Navigation}}
+    <header><h1>Overview</h1></header>
+
+    <section class="summary" aria-label="Management summary">
+      <a class="summary-item" href="/manage/modules"><span class="summary-value">{{.ModuleTotal}}</span><span class="summary-label">Modules in scope</span></a>
+      <a class="summary-item" href="{{if .Navigation.CanAdmin}}/manage/admin/spaces{{else}}#spaces{{end}}"><span class="summary-value">{{.SpaceTotal}}</span><span class="summary-label">Available spaces</span></a>
+      {{if .Navigation.CanTeams}}<a class="summary-item" href="/manage/teams"><span class="summary-value">{{.TeamTotal}}</span><span class="summary-label">Manageable teams</span></a>{{end}}
+    </section>
+
+    <div class="overview-grid">
+      <section class="panel" id="modules" data-async-list>
+        <div class="panel-header"><h2>Modules</h2><a href="/manage/modules">Manage modules</a></div>
+        <div data-overview-items>{{if .Modules}}<div class="resource-scroll"><ul class="item-list">
+          {{range .Modules}}<li><a class="item-link" href="/modules/{{.Owner}}/{{.Name}}"><span class="item-name">{{.Owner}}/{{.Name}}</span><span class="item-meta">{{if .LatestVersion}}{{.LatestVersion}}{{else}}No releases{{end}}</span></a></li>{{end}}
+        </ul></div>{{else}}<div class="empty">No modules in this scope.</div>{{end}}</div>
+        {{if .ModulePages.Total}}<nav class="panel-pagination" aria-label="Modules pagination"><span>{{.ModulePages.Total}} modules · page {{.ModulePages.Page}} of {{.ModulePages.TotalPages}}</span>{{template "page-size-control" .ModulePages}}<span class="pagination-links">{{if .ModulePages.HasPrev}}<a href="{{.ModulePages.PrevURL}}">Previous</a>{{else}}<span class="pagination-disabled">Previous</span>{{end}}{{if .ModulePages.HasNext}}<a href="{{.ModulePages.NextURL}}">Next</a>{{else}}<span class="pagination-disabled">Next</span>{{end}}</span></nav>{{end}}
+      </section>
+
+      <section class="panel" id="teams" data-async-list>
+        <div class="panel-header"><h2>Teams</h2>{{if .Navigation.CanTeams}}<a href="/manage/teams">View teams</a>{{end}}</div>
+        <div data-overview-items>{{if .Teams}}<div class="resource-scroll"><table>
+          <thead><tr><th scope="col">Team</th><th scope="col">Modules</th></tr></thead>
+          <tbody>{{range .Teams}}<tr><td><a class="resource-link" href="{{.TeamURL}}">{{.Name}}</a></td><td><a class="count-link" href="{{.ModulesURL}}">{{.ModuleCount}} module{{if ne .ModuleCount 1}}s{{end}}</a></td></tr>{{end}}</tbody>
+        </table></div>{{else}}<div class="empty">No manageable teams.</div>{{end}}</div>
+        {{if .TeamPages.Total}}<nav class="panel-pagination" aria-label="Teams pagination"><span>{{.TeamPages.Total}} teams · page {{.TeamPages.Page}} of {{.TeamPages.TotalPages}}</span>{{template "page-size-control" .TeamPages}}<span class="pagination-links">{{if .TeamPages.HasPrev}}<a href="{{.TeamPages.PrevURL}}">Previous</a>{{else}}<span class="pagination-disabled">Previous</span>{{end}}{{if .TeamPages.HasNext}}<a href="{{.TeamPages.NextURL}}">Next</a>{{else}}<span class="pagination-disabled">Next</span>{{end}}</span></nav>{{end}}
+      </section>
+    </div>
+
+    <section class="panel spaces-panel" id="spaces" data-async-list>
+      <div class="panel-header"><h2>Available spaces</h2>{{if .Navigation.CanAdmin}}<a href="/manage/admin/spaces">Manage spaces</a>{{else}}<a href="/manage/modules">Manage modules</a>{{end}}</div>
+      <div data-overview-items>{{if .Spaces}}<div class="resource-scroll"><table>
+        <thead><tr><th scope="col">Space</th><th scope="col">Modules</th></tr></thead>
+        <tbody>{{range .Spaces}}<tr><td><a class="resource-link" href="{{.ModulesURL}}">{{.Name}}</a></td><td><a class="count-link" href="{{.ModulesURL}}">{{.ModuleCount}} module{{if ne .ModuleCount 1}}s{{end}}</a></td></tr>{{end}}</tbody>
+      </table></div>{{else}}<div class="empty">No spaces available.</div>{{end}}</div>
+      {{if .SpacePages.Total}}<nav class="panel-pagination" aria-label="Spaces pagination"><span>{{.SpacePages.Total}} spaces · page {{.SpacePages.Page}} of {{.SpacePages.TotalPages}}</span>{{template "page-size-control" .SpacePages}}<span class="pagination-links">{{if .SpacePages.HasPrev}}<a href="{{.SpacePages.PrevURL}}">Previous</a>{{else}}<span class="pagination-disabled">Previous</span>{{end}}{{if .SpacePages.HasNext}}<a href="{{.SpacePages.NextURL}}">Next</a>{{else}}<span class="pagination-disabled">Next</span>{{end}}</span></nav>{{end}}
+    </section>
+  </main>
+</body>
+</html>

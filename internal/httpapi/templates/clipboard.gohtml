@@ -1,0 +1,30 @@
+{{define "clipboard-script"}}
+    window['copyTextToClipboard'] = async (text) => {
+      if (navigator.clipboard && window.isSecureContext) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch {}
+      }
+
+      const field = document.createElement('textarea');
+      field.value = text;
+      field.setAttribute('readonly', '');
+      field.setAttribute('aria-hidden', 'true');
+      field.style.position = 'fixed';
+      field.style.left = '-9999px';
+      field.style.opacity = '0';
+      document.body.appendChild(field);
+      field.focus();
+      field.select();
+      field.setSelectionRange(0, field.value.length);
+
+      let copied = false;
+      try {
+        // noinspection JSDeprecatedSymbols -- required fallback for non-secure HTTP origins.
+        copied = document.execCommand('copy');
+      } catch {}
+      field.remove();
+      return copied;
+    };
+{{end}}

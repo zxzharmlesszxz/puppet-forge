@@ -1,0 +1,178 @@
+{{define "async-lists"}}
+  <script nonce="{{.CSPNonce}}">
+    (() => {
+      const allowedPageSizes = new Set(["10", "20", "50", "100"]);
+      const storagePrefix = "puppet-forge:page-size:";
+      const requests = new Map();
+      const inputTimers = new WeakMap();
+      const asyncLists = () => Array.from(document.querySelectorAll("[data-async-list][id]"));
+      const asyncList = (id) => id ? document.getElementById(id) : null;
+      const targetForForm = (form) => form.dataset.asyncFilter || form.closest("[data-async-list]")?.id || "";
+
+      const readStoredPageSize = (form) => {
+        const cookiePrefix = `${encodeURIComponent(form.dataset.pageSizeCookie)}=`;
+        const cookie = document.cookie.split("; ").find((value) => value.startsWith(cookiePrefix));
+        const cookieValue = cookie ? decodeURIComponent(cookie.slice(cookiePrefix.length)) : "";
+        let localValue = "";
+        try {
+          localValue = window.localStorage.getItem(storagePrefix + form.dataset.pageSizeKey) || "";
+        } catch (_) {}
+        return allowedPageSizes.has(cookieValue) ? cookieValue : allowedPageSizes.has(localValue) ? localValue : form.dataset.renderedPageSize;
+      };
+      const persistPageSize = (form, value) => {
+        if (!allowedPageSizes.has(value)) return;
+        try {
+          window.localStorage.setItem(storagePrefix + form.dataset.pageSizeKey, value);
+        } catch (_) {}
+        const secure = window.location.protocol === "https:" ? "; Secure" : "";
+        document.cookie = `${encodeURIComponent(form.dataset.pageSizeCookie)}=${encodeURIComponent(value)}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
+      };
+      /**
+       * @param {HTMLFormElement} form
+       * @returns {URL}
+       */
+      const formURL = (form) => {
+        const url = new URL(form.action, window.location.href);
+        url.search = new URLSearchParams(new FormData(form)).toString();
+        if (form.dataset.pageSizeParam) {
+          url.searchParams.delete(form.dataset.pageSizeParam);
+          if (form.dataset.pageParam) url.searchParams.delete(form.dataset.pageParam);
+        }
+        return url;
+      };
+      const replaceList = (current, replacement, forceOpen) => {
+        const preserveOpen = current instanceof HTMLDetailsElement && current.open;
+        current.replaceWith(replacement);
+        if (replacement instanceof HTMLDetailsElement && (preserveOpen || forceOpen)) replacement.open = true;
+        replacement.dispatchEvent(new CustomEvent("puppet-forge:list-updated", { bubbles: true }));
+        return replacement;
+      };
+      /**
+       * @param {string} targetID
+       * @param {string | URL} requestURL
+       * @param {Object} options
+       * @param {boolean} [options.forceOpen]
+       * @param {string} [options.history]
+       * @param {string} [options.focusName]
+       */
+      const refreshList = async (targetID, requestURL, options = {}) => {
+        const current = asyncList(targetID);
+        if (!current) return;
+        const url = requestURL.toString();
+        requests.get(targetID)?.abort();
+        const request = new AbortController();
+        requests.set(targetID, request);
+        current.setAttribute("aria-busy", "true");
+        try {
+          const response = await window.fetch(url, {
+            headers: { Accept: "text/html", "X-Puppet-Forge-Fragment": targetID },
+            signal: request.signal,
+          });
+          if (requests.get(targetID) !== request) return;
+          if (response.redirected) {
+            window.location.assign(response.url);
+            return;
+          }
+          if (!response.ok) {
+            window.location.assign(url);
+            return;
+          }
+          const responseText = await response.text();
+          if (requests.get(targetID) !== request) return;
+          const nextPage = new DOMParser().parseFromString(responseText, "text/html");
+          const replacement = nextPage.getElementById(targetID);
+          if (!replacement) {
+            window.location.assign(url);
+            return;
+          }
+          const updated = replaceList(current, replacement, options.forceOpen === true);
+          if (options.history === "push") window.history.pushState(null, "", url);
+          if (options.history === "replace") window.history.replaceState(null, "", url);
+          if (options.focusName) {
+            const input = updated.querySelector(`[name="${CSS.escape(options.focusName)}"]`);
+            if (input instanceof HTMLInputElement) {
+              input.focus({ preventScroll: true });
+              input.setSelectionRange(input.value.length, input.value.length);
+            }
+          }
+        } catch (error) {
+          if (requests.get(targetID) === request && error.name !== "AbortError") window.location.assign(url);
+        } finally {
+          if (requests.get(targetID) === request) {
+            requests.delete(targetID);
+            asyncList(targetID)?.removeAttribute("aria-busy");
+          }
+        }
+      };
+      const refreshAllLists = async () => {
+        const ids = asyncLists().map((list) => list.id);
+        if (!ids.length) return;
+        await Promise.all(ids.map((id) => refreshList(id, new URL(window.location.href))));
+      };
+
+      document.addEventListener("submit", (event) => {
+        if (!(event.target instanceof HTMLFormElement) || !event.target.dataset.asyncFilter) return;
+        event.preventDefault();
+        const input = event.target.querySelector('input[type="search"]');
+        refreshList(targetForForm(event.target), formURL(event.target), {
+          history: "replace",
+          focusName: input?.name || "",
+          forceOpen: true,
+        });
+      });
+      document.addEventListener("input", (event) => {
+        if (!(event.target instanceof HTMLInputElement) || event.target.type !== "search") return;
+        const input = event.target;
+        const form = input.form;
+        if (!form?.dataset.asyncFilter) return;
+        window.clearTimeout(inputTimers.get(form));
+        requests.get(targetForForm(form))?.abort();
+        inputTimers.set(form, window.setTimeout(() => {
+          refreshList(targetForForm(form), formURL(form), {
+            history: "replace",
+            focusName: input.name,
+            forceOpen: true,
+          });
+        }, 500));
+      });
+      document.addEventListener("click", (event) => {
+        if (!(event.target instanceof Element)) return;
+        const link = event.target.closest("[data-async-list] .pagination-links a, [data-async-list] .list-pagination-links a, [data-async-list] .filter-clear, [data-async-list] .list-filter-clear");
+        if (!(link instanceof HTMLAnchorElement)) return;
+        const list = link.closest("[data-async-list]");
+        if (!list?.id) return;
+        event.preventDefault();
+        refreshList(list.id, new URL(link.href, window.location.href), { history: "push", forceOpen: true });
+      });
+      document.addEventListener("change", (event) => {
+        if (!(event.target instanceof HTMLSelectElement)) return;
+        const form = event.target.closest("form[data-page-size-key]");
+        const targetID = form ? targetForForm(form) : "";
+        if (!(form instanceof HTMLFormElement) || !targetID || !asyncList(targetID)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        persistPageSize(form, event.target.value);
+        refreshList(targetID, formURL(form), { history: "replace", forceOpen: true });
+      }, true);
+      window.addEventListener("popstate", () => {
+        refreshAllLists().catch(() => window.location.reload());
+      });
+      window.addEventListener("pageshow", async () => {
+        for (const list of asyncLists()) {
+          const form = list.querySelector("form[data-page-size-key]");
+          const select = form?.querySelector("select");
+          if (!(form instanceof HTMLFormElement) || !(select instanceof HTMLSelectElement)) continue;
+          const preferred = readStoredPageSize(form);
+          if (!allowedPageSizes.has(preferred)) continue;
+          persistPageSize(form, preferred);
+          select.value = preferred;
+          if (preferred !== form.dataset.renderedPageSize) {
+            const url = new URL(window.location.href);
+            if (form.dataset.pageParam) url.searchParams.delete(form.dataset.pageParam);
+            await refreshList(list.id, url, { history: "replace", forceOpen: list instanceof HTMLDetailsElement && list.open });
+          }
+        }
+      }, { once: true });
+    })();
+  </script>
+{{end}}

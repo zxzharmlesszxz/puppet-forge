@@ -4,24 +4,31 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
+	"math"
 	"net/http"
+	"net/url"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/httputil"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/service"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
 func (r *Router) modulesCollection(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case http.MethodGet:
+		if !r.rateLimiter.Allow(r.rateLimitKey(req, "module-search"), 600, time.Minute) {
+			writeError(w, http.StatusTooManyRequests, errors.New("too many module search requests"))
+			return
+		}
 		r.listModules(w, req)
 	case http.MethodPost:
 		r.publishModule(w, req)
@@ -41,9 +48,10 @@ func (r *Router) publishSpaces(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	principal, ok := authorizer.RequirePublishAny(w, req)
-	if !ok {
+	if !ok || !r.requireActiveAccessToken(w, req, principal) {
 		return
 	}
+	r.recordAccessTokenUsed(req.Context(), principal)
 	spaces := make([]string, 0, len(principal.PublishOwners))
 	for space := range principal.PublishOwners {
 		spaces = append(spaces, space)
@@ -74,7 +82,11 @@ func (r *Router) moduleItem(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if len(parts) == 5 && parts[2] == "versions" && parts[4] == "download" && req.Method == http.MethodGet {
+	if len(parts) == 5 && parts[2] == "versions" && parts[4] == "download" && (req.Method == http.MethodGet || req.Method == http.MethodHead) {
+		if !r.rateLimiter.Allow(r.rateLimitKey(req, "module-download"), 1200, time.Minute) {
+			writeError(w, http.StatusTooManyRequests, errors.New("too many module download requests"))
+			return
+		}
 		r.serveDownload(w, req, parts[0], parts[1], parts[3])
 		return
 	}
@@ -131,32 +143,37 @@ func (r *Router) modulePage(w http.ResponseWriter, req *http.Request) {
 	var release domain.Release
 	if selectedVersion != "" {
 		release, err = r.modules.GetRelease(req.Context(), module.Owner, module.Name, selectedVersion)
-		if errors.Is(err, store.ErrNotFound) {
-			err = nil
-		}
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
+			writeServiceError(w, err)
 			return
 		}
 	}
 
+	navigation := r.publicNavigation(
+		req,
+		"/manage",
+		"Manage",
+		publicBreadcrumb{Label: "Modules", URL: "/"},
+		publicBreadcrumb{Label: module.Owner, URL: "/?owner=" + url.QueryEscape(module.Owner)},
+		publicBreadcrumb{Label: module.Name, URL: req.URL.Path},
+	)
+	navigation.Versions = versions
+	navigation.SelectedVersion = selectedVersion
+
 	page := modulePageData{
+		Navigation:      navigation,
 		Module:          module,
 		Release:         release,
-		Versions:        versions,
-		SelectedVersion: selectedVersion,
 		ReadmeHTML:      renderMarkdown(release.Readme, readmeBaseHref(module.Owner, module.Name, release.Version)),
 		DownloadPath:    downloadPath(module.Owner, module.Name, release.Version),
 		IsUpstream:      release.Source == "upstream",
 		PublicBaseURL:   httputil.ExternalBaseURL(req, r.publicBaseURL),
 		ModuleInstallID: moduleSlug(module.Owner, module.Name),
-		ReadTokenHint:   "Bearer <READ_TOKEN>",
+		ReadTokenHint:   "Bearer <READ_TOKEN>", // #nosec G101 -- documentation placeholder, not a credential.
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := modulePageTemplate.Execute(w, page); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	executeHTMLTemplate(w, modulePageTemplate, page)
 }
 
 func (r *Router) serveModuleFile(w http.ResponseWriter, req *http.Request, owner, name, version, filePath string) {
@@ -166,7 +183,7 @@ func (r *Router) serveModuleFile(w http.ResponseWriter, req *http.Request, owner
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeServiceError(w, err)
 		return
 	}
 
@@ -194,7 +211,7 @@ func (r *Router) listModules(w http.ResponseWriter, req *http.Request) {
 	limit := 20
 	if raw := req.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed <= 0 || parsed > 100 {
+		if err != nil || parsed <= 0 || parsed > store.MaxModulePageSize {
 			writeError(w, http.StatusBadRequest, errors.New("invalid limit"))
 			return
 		}
@@ -203,14 +220,16 @@ func (r *Router) listModules(w http.ResponseWriter, req *http.Request) {
 	offset := 0
 	if raw := req.URL.Query().Get("offset"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 0 {
+		if err != nil || parsed < 0 || parsed > store.MaxModulePageOffset {
 			writeError(w, http.StatusBadRequest, errors.New("invalid offset"))
 			return
 		}
 		offset = parsed
 	}
 
-	modules, total, err := r.modules.ListModulesPage(req.Context(), limit, offset)
+	ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
+	defer cancel()
+	modules, total, err := r.modules.ListModulesPage(ctx, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -250,27 +269,31 @@ func (r *Router) requireDeleteAccess(w http.ResponseWriter, req *http.Request, o
 		writeError(w, http.StatusInternalServerError, errors.New("authorizer is not configured"))
 		return false
 	}
-	_, ok := authorizer.RequireDelete(w, req, owner)
-	return ok
+	principal, ok := authorizer.RequireDelete(w, req, owner)
+	if ok && r.requireActiveAccessToken(w, req, principal) {
+		r.recordAccessTokenUsed(req.Context(), principal)
+		return true
+	}
+	return false
 }
 
-func writeDeleteResponse(w http.ResponseWriter, owner, entityType string, data map[string]string, err error) {
+func writeDeleteResponse(w http.ResponseWriter, entityType string, data map[string]string, err error) {
 	if errors.Is(err, store.ErrNotFound) {
-		metrics.ObserveDelete(entityType, owner, err)
+		metrics.ObserveDelete(entityType, err)
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	if _, ok := errors.AsType[protectedDeleteError](err); ok {
-		metrics.ObserveDelete(entityType, owner, err)
+	if errors.Is(err, service.ErrProtectedDelete) {
+		metrics.ObserveDelete(entityType, err)
 		writeError(w, http.StatusConflict, err)
 		return
 	}
 	if err != nil {
-		metrics.ObserveDelete(entityType, owner, err)
+		metrics.ObserveDelete(entityType, err)
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	metrics.ObserveDelete(entityType, owner, nil)
+	metrics.ObserveDelete(entityType, nil)
 	writeJSON(w, http.StatusOK, data)
 }
 
@@ -278,11 +301,8 @@ func (r *Router) deleteModule(w http.ResponseWriter, req *http.Request, owner, n
 	if !r.requireDeleteAccess(w, req, owner) {
 		return
 	}
-	err := r.ensureModuleDeletable(req.Context(), owner, name)
-	if err == nil {
-		err = r.modules.DeleteModule(req.Context(), owner, name)
-	}
-	writeDeleteResponse(w, owner, "module", map[string]string{
+	err := r.modules.DeleteModuleIfAllowed(req.Context(), owner, name, time.Now().Add(-r.activeReleaseTTL))
+	writeDeleteResponse(w, "module", map[string]string{
 		"status": "deleted",
 		"owner":  owner,
 		"name":   name,
@@ -294,72 +314,28 @@ func (r *Router) getRelease(w http.ResponseWriter, req *http.Request, owner, nam
 		return
 	}
 	release, err := r.modules.GetRelease(req.Context(), owner, name, version)
-	writeStoreResponse(w, release, err)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, newReleaseAPIResponse(release))
 }
 
 func (r *Router) deleteRelease(w http.ResponseWriter, req *http.Request, owner, name, version string) {
 	if !r.requireDeleteAccess(w, req, owner) {
 		return
 	}
-	err := r.ensureReleaseDeletable(req.Context(), owner, name, version)
-	if err == nil {
-		err = r.modules.DeleteRelease(req.Context(), owner, name, version)
-	}
-	writeDeleteResponse(w, owner, "release", map[string]string{
+	err := r.modules.DeleteReleaseIfAllowed(req.Context(), owner, name, version, time.Now().Add(-r.activeReleaseTTL))
+	writeDeleteResponse(w, "release", map[string]string{
 		"status":  "deleted",
 		"owner":   owner,
 		"name":    name,
 		"version": version,
 	}, err)
-}
-
-func (r *Router) ensureModuleDeletable(ctx context.Context, owner, name string) error {
-	if _, err := r.modules.GetModule(ctx, owner, name); err != nil {
-		return err
-	}
-
-	versions, err := r.modules.ListReleases(ctx, owner, name)
-	if err != nil {
-		return err
-	}
-	for _, version := range versions {
-		activeSince := time.Now().Add(-r.activeReleaseTTL)
-		active, err := r.modules.IsReleaseActive(ctx, owner, name, version.Version, activeSince)
-		if err != nil {
-			return err
-		}
-		if active {
-			err := protectedDeleteError{message: fmt.Sprintf("active release %s/%s %s cannot be deleted", owner, name, version.Version)}
-			return protectedDeleteError{message: "module contains " + err.Error()}
-		}
-	}
-	return nil
-}
-
-func (r *Router) ensureReleaseDeletable(ctx context.Context, owner, name, version string) error {
-	module, err := r.modules.GetModule(ctx, owner, name)
-	if err != nil {
-		return err
-	}
-	if _, err := r.modules.GetRelease(ctx, owner, name, version); err != nil {
-		return err
-	}
-	return r.protectedReleaseDeleteError(ctx, module, version)
-}
-
-func (r *Router) protectedReleaseDeleteError(ctx context.Context, module domain.Module, version string) error {
-	if version != "" && module.LatestVersion == version {
-		return protectedDeleteError{message: fmt.Sprintf("latest release %s/%s %s cannot be deleted", module.Owner, module.Name, version)}
-	}
-	activeSince := time.Now().Add(-r.activeReleaseTTL)
-	active, err := r.modules.IsReleaseActive(ctx, module.Owner, module.Name, version, activeSince)
-	if err != nil {
-		return err
-	}
-	if active {
-		return protectedDeleteError{message: fmt.Sprintf("active release %s/%s %s cannot be deleted", module.Owner, module.Name, version)}
-	}
-	return nil
 }
 
 func (r *Router) serveDownload(w http.ResponseWriter, req *http.Request, owner, name, version string) {
@@ -381,20 +357,12 @@ func (r *Router) serveDownload(w http.ResponseWriter, req *http.Request, owner, 
 
 	if release.Source == "upstream" {
 		localPath := "/v3/files/" + releaseV3FileName(release)
+		// #nosec G710 -- localPath is an application-relative path built from a validated release identity.
 		http.Redirect(w, req, localPath, http.StatusFound)
 		return
 	}
 
-	object, err := r.modules.ReadReleaseArchive(req.Context(), owner, name, version)
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeObject(w, req, object)
+	r.writeReleaseArchive(w, req, release)
 }
 
 func (r *Router) markReleaseUsed(ctx context.Context, owner, name, version string) {
@@ -404,7 +372,14 @@ func (r *Router) markReleaseUsed(ctx context.Context, owner, name, version strin
 }
 
 func (r *Router) publishModule(w http.ResponseWriter, req *http.Request) {
-	if !r.rateLimiter.Allow(r.rateLimitKey(req, "publish"), 60, time.Minute) {
+	allowed, rateLimitErr := r.allowSharedRateLimit(req, "publish", 60, time.Minute)
+	if rateLimitErr != nil {
+		r.audit(req, auth.Principal{}, "publish_module", "failure", "rate_limit_unavailable")
+		writeError(w, http.StatusServiceUnavailable, errors.New("publish rate limit service is unavailable"))
+		return
+	}
+	if !allowed {
+		r.audit(req, auth.Principal{}, "publish_module", "failure", "rate_limited")
 		writeError(w, http.StatusTooManyRequests, errors.New("too many publish attempts"))
 		return
 	}
@@ -414,12 +389,15 @@ func (r *Router) publishModule(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	principal, ok := authorizer.RequirePublishAny(w, req)
-	if !ok {
+	if !ok || !r.requireActiveAccessToken(w, req, principal) {
+		r.audit(req, auth.Principal{}, "publish_module", "failure", "unauthorized")
 		return
 	}
+	r.recordAccessTokenUsed(req.Context(), principal)
 
-	input, err := readPublishInput(w, req, r.moduleUploadMax)
+	input, cleanup, err := readPublishInput(w, req, r.moduleUploadMax)
 	if err != nil {
+		r.audit(req, principal, "publish_module", "failure", auditReason(err))
 		if isRequestTooLarge(err) {
 			writeError(w, http.StatusRequestEntityTooLarge, err)
 			return
@@ -427,68 +405,131 @@ func (r *Router) publishModule(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	defer cleanup()
 	if authorizer.Enabled() && !principal.CanPublishOwner(input.Owner) {
+		r.audit(req, principal, "publish_module", "failure", "forbidden", "space", input.Owner)
 		writeError(w, http.StatusForbidden, errors.New("token is not allowed to publish to this space"))
 		return
 	}
 	release, err := r.modules.Publish(req.Context(), input)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		r.audit(req, principal, "publish_module", "failure", auditReason(err), "space", input.Owner)
+		writeServiceError(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, release)
+	r.audit(req, principal, "publish_module", "success", "none", "space", release.Owner, "module", release.Owner+"/"+release.Name, "release", release.Version, "sha256", release.SHA256)
+	writeJSON(w, http.StatusCreated, newReleaseAPIResponse(release))
 }
 
-func readPublishInput(w http.ResponseWriter, req *http.Request, maxBytes int64) (domain.PublishModuleInput, error) {
-	if maxBytes > 0 {
-		req.Body = http.MaxBytesReader(w, req.Body, maxBytes)
+type releaseAPIResponse struct {
+	ID          string         `json:"id"`
+	ModuleID    string         `json:"module_id"`
+	Owner       string         `json:"owner"`
+	Name        string         `json:"name"`
+	Source      string         `json:"source,omitempty"`
+	Version     string         `json:"version"`
+	Description string         `json:"description,omitempty"`
+	Readme      string         `json:"readme,omitempty"`
+	FileName    string         `json:"file_name"`
+	ContentType string         `json:"content_type"`
+	SizeBytes   int64          `json:"size_bytes"`
+	MD5         string         `json:"md5"`
+	SHA256      string         `json:"sha256"`
+	DownloadURL string         `json:"download_url"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+}
+
+func newReleaseAPIResponse(release domain.Release) releaseAPIResponse {
+	return releaseAPIResponse{
+		ID:          release.ID,
+		ModuleID:    release.ModuleID,
+		Owner:       release.Owner,
+		Name:        release.Name,
+		Source:      release.Source,
+		Version:     release.Version,
+		Description: release.Description,
+		Readme:      release.Readme,
+		FileName:    release.FileName,
+		ContentType: release.ContentType,
+		SizeBytes:   release.SizeBytes,
+		MD5:         release.MD5,
+		SHA256:      release.SHA256,
+		DownloadURL: fmt.Sprintf(
+			"/api/v1/modules/%s/%s/versions/%s/download",
+			url.PathEscape(release.Owner),
+			url.PathEscape(release.Name),
+			url.PathEscape(release.Version),
+		),
+		Metadata:  release.Metadata,
+		CreatedAt: release.CreatedAt,
 	}
-	if err := req.ParseMultipartForm(64 << 20); err != nil {
-		return domain.PublishModuleInput{}, fmt.Errorf("parse multipart form: %w", err)
+}
+
+func readPublishInput(w http.ResponseWriter, req *http.Request, maxBytes int64) (domain.PublishModuleInput, func(), error) {
+	if maxBytes > 0 {
+		requestLimit := maxBytes
+		const multipartOverheadLimit int64 = 1 << 20
+		if requestLimit <= math.MaxInt64-multipartOverheadLimit {
+			requestLimit += multipartOverheadLimit
+		} else {
+			requestLimit = math.MaxInt64
+		}
+		req.Body = http.MaxBytesReader(w, req.Body, requestLimit)
+	}
+	// #nosec G120 -- MaxBytesReader above bounds the archive plus controlled multipart overhead.
+	if err := req.ParseMultipartForm(1 << 20); err != nil {
+		if req.MultipartForm != nil {
+			_ = req.MultipartForm.RemoveAll()
+		}
+		return domain.PublishModuleInput{}, nil, fmt.Errorf("parse multipart form: %w", err)
+	}
+	removeForm := func() {
+		_ = req.MultipartForm.RemoveAll()
 	}
 	for _, field := range []string{"owner", "name", "version", "summary", "description", "metadata"} {
 		if _, exists := req.MultipartForm.Value[field]; exists {
-			return domain.PublishModuleInput{}, fmt.Errorf("manual field %q is not allowed; use space and file only", field)
+			removeForm()
+			return domain.PublishModuleInput{}, nil, fmt.Errorf("manual field %q is not allowed; use space and file only", field)
 		}
 	}
 	space := strings.TrimSpace(req.FormValue("space"))
 	if space == "" {
-		return domain.PublishModuleInput{}, errors.New("space is required")
+		removeForm()
+		return domain.PublishModuleInput{}, nil, errors.New("space is required")
 	}
 
 	file, header, err := req.FormFile("file")
 	if err != nil {
+		removeForm()
 		if errors.Is(err, http.ErrMissingFile) {
-			return domain.PublishModuleInput{}, errors.New("artifact file is required")
+			return domain.PublishModuleInput{}, nil, errors.New("artifact file is required")
 		}
-		return domain.PublishModuleInput{}, fmt.Errorf("read file: %w", err)
+		return domain.PublishModuleInput{}, nil, fmt.Errorf("read file: %w", err)
 	}
 	if maxBytes > 0 && header.Size > maxBytes {
 		_ = file.Close()
-		return domain.PublishModuleInput{}, requestTooLargeError{limit: maxBytes}
+		removeForm()
+		return domain.PublishModuleInput{}, nil, requestTooLargeError{limit: maxBytes}
 	}
-
-	body, err := io.ReadAll(file)
-	closeErr := file.Close()
-	if err != nil {
-		return domain.PublishModuleInput{}, fmt.Errorf("read file content: %w", err)
-	}
-	if closeErr != nil {
-		return domain.PublishModuleInput{}, fmt.Errorf("close file: %w", closeErr)
+	cleanup := func() {
+		_ = file.Close()
+		removeForm()
 	}
 
 	input := domain.PublishModuleInput{
 		Owner:       space,
 		FileName:    header.Filename,
 		ContentType: header.Header.Get("Content-Type"),
-		FileBytes:   body,
+		File:        file,
+		SizeBytes:   header.Size,
 	}
 
 	if input.ContentType == "" {
 		input.ContentType = "application/gzip"
 	}
-	return input, nil
+	return input, cleanup, nil
 }
 
 func isRequestTooLarge(err error) bool {

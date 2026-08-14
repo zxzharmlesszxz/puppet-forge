@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Puppet Forge</title>
+  <style nonce="{{.Navigation.CSPNonce}}">
+    :root {
+      color-scheme: light;
+      --bg: #efe7d8;
+      --panel: #fffaf3;
+      --ink: #1f1a14;
+      --muted: #73695d;
+      --accent: #b14a2b;
+      --line: #dacdbb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      background:
+        radial-gradient(circle at top right, rgba(177, 74, 43, 0.12), transparent 28%),
+        linear-gradient(180deg, #fbf6ee 0%, var(--bg) 100%);
+      color: var(--ink);
+    }
+    main {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 48px 20px 72px;
+    }
+    {{template "public-navigation-styles" .Navigation}}
+    .hero, .list {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 18px 50px rgba(64, 40, 10, 0.08);
+    }
+    .hero {
+      padding: 30px 32px;
+      margin-bottom: 24px;
+    }
+    .eyebrow {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 10px 0 12px;
+      font-size: 46px;
+      line-height: 1.05;
+    }
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.6;
+      max-width: 720px;
+    }
+    .toolbar {
+      margin-top: 24px;
+      display: grid;
+      gap: 12px;
+    }
+    .search {
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.75);
+      color: var(--ink);
+      font-size: 16px;
+      outline: none;
+    }
+    .search:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 4px rgba(177, 74, 43, 0.12);
+    }
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    .list {
+      padding: 10px 0;
+      overflow: hidden;
+    }
+    .row {
+      display: block;
+      padding: 18px 26px;
+      text-decoration: none;
+      color: inherit;
+      border-top: 1px solid var(--line);
+    }
+    .row[hidden] {
+      display: none;
+    }
+    .row:first-child { border-top: 0; }
+    .row:hover {
+      background: rgba(177, 74, 43, 0.05);
+    }
+    .name {
+      font-size: 24px;
+      margin-bottom: 6px;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 15px;
+    }
+    .empty {
+      padding: 24px 26px;
+      color: var(--muted);
+      font-style: italic;
+    }
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 16px 26px 6px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+    }
+    .page-size-control, .pagination-links { display: inline-flex; align-items: center; gap: 8px; }
+    .page-size-control { margin: 0; white-space: nowrap; }
+    .page-size-control select {
+      height: 34px;
+      padding: 0 24px 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+    }
+    .pagination-links a,
+    .pagination-disabled {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 0 11px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+      transition: border-color .15s ease, background-color .15s ease, box-shadow .15s ease;
+    }
+    .pagination-links a:hover,
+    .pagination-links a:focus-visible {
+      border-color: #81aeb0;
+      background: #eef6f5;
+      box-shadow: 0 0 0 3px #dceced;
+      outline: 0;
+    }
+    .pagination-disabled { opacity: .5; }
+    @media (max-width: 640px) {
+      .pagination { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    {{template "public-navigation" .Navigation}}
+    <section class="hero">
+      <div class="eyebrow">Local Forge</div>
+      <h1>{{if .Owner}}{{.Owner}} Modules{{else}}Published Modules{{end}}</h1>
+      <p class="subtitle">{{if .Owner}}Modules published in the {{.Owner}} space.{{else}}Index of all modules currently stored in this service.{{end}} Open any module to view its latest release and extracted README.</p>
+      <form id="module-filter-form" class="toolbar" method="get" action="/" data-async-filter="module-list">
+        {{if .Owner}}<input type="hidden" name="owner" value="{{.Owner}}">{{end}}
+        <label class="visually-hidden" for="module-filter">Filter modules</label>
+        <input id="module-filter" class="search" name="q" type="search" placeholder="{{if .Owner}}Filter {{.Owner}} modules{{else}}Filter by owner or module name{{end}}" value="{{.Query}}" autocomplete="off">
+      </form>
+    </section>
+    <section class="list" id="module-list" data-async-list>
+      {{if .Modules}}
+        {{range .Modules}}
+        <!--suppress HtmlUnknownTarget -->
+        <a class="row" href="/modules/{{.Owner}}/{{.Name}}" data-module="{{.Owner}}/{{.Name}}">
+          <div class="name">{{.Owner}}/{{.Name}}</div>
+          <div class="meta">Latest version: {{if .LatestVersion}}{{.LatestVersion}}{{else}}n/a{{end}}</div>
+        </a>
+        {{end}}
+      {{else}}
+      <div class="empty">{{if .Owner}}No modules were found in the {{.Owner}} space.{{else}}No modules have been published yet.{{end}}</div>
+      {{end}}
+      {{if .Pagination.Total}}<nav class="pagination" aria-label="Module pages">
+        <span>{{.Pagination.Total}} modules · page {{.Pagination.Page}} of {{.Pagination.TotalPages}}</span>
+        <form class="page-size-control" method="get" action="/" data-page-size-key="{{.Pagination.SizeStorageKey}}" data-page-size-cookie="{{.Pagination.SizeCookieName}}" data-page-size-param="{{.Pagination.SizeParam}}" data-page-param="{{.Pagination.SizePageParam}}" data-rendered-page-size="{{.Pagination.PageSize}}" data-async-filter="module-list">
+          {{range .Pagination.SizeParams}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+          <label>Per page <select name="{{.Pagination.SizeParam}}" aria-label="Items per page">{{range .Pagination.SizeOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Value}}</option>{{end}}</select></label>
+        </form>
+        <span class="pagination-links">{{if .Pagination.HasPrev}}<a href="{{.Pagination.PrevURL}}">Previous</a>{{else}}<span class="pagination-disabled">Previous</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">Next</a>{{else}}<span class="pagination-disabled">Next</span>{{end}}</span>
+      </nav>{{end}}
+    </section>
+  </main>
+  {{template "async-lists" .Navigation}}
+  {{template "page-size-persistence" .Navigation}}
+</body>
+</html>

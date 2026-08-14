@@ -2,13 +2,17 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
 func (r *Router) manageAccessPage(w http.ResponseWriter, req *http.Request) {
@@ -16,20 +20,35 @@ func (r *Router) manageAccessPage(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	if !principal.CanAdmin && !principal.CanManageTeam {
-		writeError(w, http.StatusForbidden, errors.New("admin access required"))
-		return
-	}
-
 	switch req.Method {
 	case http.MethodGet:
-		r.renderManageAccess(w, req, principal, "")
-	case http.MethodPost:
-		if !requireManageCSRF(w, req) {
+		if req.URL.Path == "/manage/access" {
+			http.Redirect(w, req, "/manage/admin/access", http.StatusFound)
 			return
 		}
+		if !principal.CanAdmin {
+			writeError(w, http.StatusForbidden, errors.New("global admin access required"))
+			return
+		}
+		r.renderManageAccess(w, req, principal, "")
+	case http.MethodPost:
+		if !principal.CanAdmin && !principal.CanManageTeam {
+			writeError(w, http.StatusForbidden, errors.New("team admin access required"))
+			return
+		}
+		if !r.requireManageCSRF(w, req) {
+			return
+		}
+		unlock, err := r.modules.LockAccessConfig(req.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		defer releaseAccessConfigLock(unlock)
+		action := strings.TrimSpace(req.FormValue("action"))
 		configs, message, err := r.accessConfigsFromForm(req, principal)
 		if err != nil {
+			r.audit(req, principal, "change_access_config", "failure", auditReason(err), "config_action", action)
 			if next := manageReturnPath(req, ""); next != "" {
 				redirectManageResult(w, req, next, "error", err.Error())
 				return
@@ -38,6 +57,7 @@ func (r *Router) manageAccessPage(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if err := r.saveAccessConfigs(req.Context(), configs); err != nil {
+			r.audit(req, principal, "change_access_config", "failure", auditReason(err), "config_action", action)
 			if next := manageReturnPath(req, ""); next != "" {
 				redirectManageResult(w, req, next, "error", err.Error())
 				return
@@ -45,7 +65,8 @@ func (r *Router) manageAccessPage(w http.ResponseWriter, req *http.Request) {
 			r.renderManageAccess(w, req, principal, err.Error())
 			return
 		}
-		redirectManageResult(w, req, "/manage/access", "message", message)
+		r.audit(req, principal, "change_access_config", "success", "none", "config_action", action)
+		redirectManageResult(w, req, "/manage/admin/access", "message", message)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 	}
@@ -60,10 +81,50 @@ func (r *Router) manageAccessAddPage(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusForbidden, errors.New("admin access required"))
 		return
 	}
+	if req.Method == http.MethodPost {
+		if !r.requireManageCSRF(w, req) {
+			return
+		}
+		if req.FormValue("action") != "save_team" {
+			err := errors.New("unknown add-team form action")
+			r.audit(req, principal, "create_team", "failure", auditReason(err))
+			r.renderManageAccessAddPage(w, req, principal, err.Error(), http.StatusBadRequest)
+			return
+		}
+		unlock, err := r.modules.LockAccessConfig(req.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		defer releaseAccessConfigLock(unlock)
+		configs, message, err := r.accessConfigsWithUpsertedTeam(req, principal)
+		if err != nil {
+			r.audit(req, principal, "create_team", "failure", auditReason(err))
+			r.renderManageAccessAddPage(w, req, principal, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := r.saveAccessConfigs(req.Context(), configs); err != nil {
+			r.audit(req, principal, "create_team", "failure", auditReason(err))
+			r.renderManageAccessAddPage(w, req, principal, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		team := strings.TrimSpace(req.FormValue("team"))
+		r.audit(req, principal, "create_team", "success", "none", "team", team)
+		redirectManageResult(w, req, "/manage/teams/"+url.PathEscape(team)+"/access", "message", message)
+		return
+	}
 	if req.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 		return
 	}
+	if req.URL.Path == "/manage/access/add" {
+		http.Redirect(w, req, "/manage/teams/new", http.StatusFound)
+		return
+	}
+	r.renderManageAccessAddPage(w, req, principal, req.URL.Query().Get("error"), http.StatusOK)
+}
+
+func (r *Router) renderManageAccessAddPage(w http.ResponseWriter, req *http.Request, principal auth.Principal, errorMessage string, status int) {
 	csrfToken, err := r.ensureManageCSRFToken(w, req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -71,13 +132,14 @@ func (r *Router) manageAccessAddPage(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	err = manageAccessAddTeamTemplate.Execute(w, manageAccessAddTeamData{
-		CSRFToken: csrfToken,
-		Error:     req.URL.Query().Get("error"),
-	})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if status != http.StatusOK {
+		w.WriteHeader(status)
 	}
+	executeHTMLTemplate(w, manageAccessAddTeamTemplate, manageAccessAddTeamData{
+		Navigation: r.manageNavigation(req, principal, csrfToken, "add-team", ""),
+		CSRFToken:  csrfToken,
+		Error:      errorMessage,
+	})
 }
 
 func (r *Router) accessConfigsFromForm(req *http.Request, principal auth.Principal) ([]auth.TeamConfig, string, error) {
@@ -94,16 +156,6 @@ func (r *Router) accessConfigsFromForm(req *http.Request, principal auth.Princip
 			return nil, "", errors.New("global admin access required")
 		}
 		return r.accessConfigsWithoutTeam(req)
-	case "replace_json", "":
-		if !principal.CanAdmin {
-			return nil, "", errors.New("global admin access required")
-		}
-		var configs []auth.TeamConfig
-		raw := strings.TrimSpace(req.FormValue("config"))
-		if err := json.Unmarshal([]byte(raw), &configs); err != nil {
-			return nil, "", fmt.Errorf("parse access config: %w", err)
-		}
-		return configs, "access config saved", nil
 	default:
 		return nil, "", errors.New("unknown access form action")
 	}
@@ -123,6 +175,18 @@ func (r *Router) accessConfigsWithUpsertedTeam(req *http.Request, principal auth
 	if cfg.Team == "" {
 		return nil, "", errors.New("team is required")
 	}
+	if originalTeam == "" {
+		if findAccessConfig(configs, cfg.Team) != nil {
+			return nil, "", fmt.Errorf("team %q already exists", cfg.Team)
+		}
+	} else if cfg.Team != originalTeam && findAccessConfig(configs, cfg.Team) != nil {
+		return nil, "", fmt.Errorf("team %q already exists", cfg.Team)
+	}
+
+	existing := findAccessConfig(configs, originalTeam)
+	if existing != nil {
+		cfg.PublishOwners = publishOwnersFromExtra(cfg.Team, extraPublishOwnersForForm(existing.Team, existing.PublishOwners))
+	}
 
 	if !principal.CanAdmin {
 		if !principal.CanManageTeam {
@@ -131,17 +195,19 @@ func (r *Router) accessConfigsWithUpsertedTeam(req *http.Request, principal auth
 		if !canManageAccessTeam(principal, originalTeam) || !canManageAccessTeam(principal, cfg.Team) {
 			return nil, "", errors.New("team admins can edit only their own team")
 		}
-		existing := findAccessConfig(configs, originalTeam)
 		if existing == nil {
 			return nil, "", fmt.Errorf("team %q was not found", originalTeam)
 		}
-		cfg.PublishOwners = append([]string(nil), existing.PublishOwners...)
 		cfg.OIDCEmails = append([]string(nil), existing.OIDCEmails...)
 		cfg.OIDCSubjects = append([]string(nil), existing.OIDCSubjects...)
 		cfg.OIDCDomains = append([]string(nil), existing.OIDCDomains...)
 		cfg.OIDCAdminEmails = append([]string(nil), existing.OIDCAdminEmails...)
 		cfg.OIDCAdminSubjects = append([]string(nil), existing.OIDCAdminSubjects...)
 		cfg.OIDCAdminGroups = append([]string(nil), existing.OIDCAdminGroups...)
+	}
+	if existing != nil {
+		cfg.ReadTokenRecords = append([]auth.AccessTokenRecord(nil), existing.ReadTokenRecords...)
+		cfg.PublishTokenRecords = append([]auth.AccessTokenRecord(nil), existing.PublishTokenRecords...)
 	}
 
 	next := make([]auth.TeamConfig, 0, len(configs)+1)
@@ -191,7 +257,13 @@ func (r *Router) saveAccessConfigs(ctx context.Context, configs []auth.TeamConfi
 	if len(configs) == 0 {
 		return errors.New("access config must contain at least one team")
 	}
-	newAuthorizer, err := auth.NewAuthorizer(auth.AccessConfigsWithRuntimeAdmin(configs, r.adminToken))
+	var newAuthorizer *auth.Authorizer
+	var err error
+	if r.tokenHasher != nil {
+		newAuthorizer, err = auth.NewAuthorizerWithTokenHasher(auth.AccessConfigsWithRuntimeAdmin(configs, r.adminToken), r.tokenHasher)
+	} else {
+		newAuthorizer, err = auth.NewAuthorizer(auth.AccessConfigsWithRuntimeAdmin(configs, r.adminToken))
+	}
 	if err != nil {
 		return err
 	}
@@ -201,22 +273,23 @@ func (r *Router) saveAccessConfigs(ctx context.Context, configs []auth.TeamConfi
 	if err := r.modules.ReplaceTeamConfigs(ctx, configs); err != nil {
 		return err
 	}
-	r.setAuthorizer(newAuthorizer)
+	r.setAuthorizer(newAuthorizer, time.Now())
 	return nil
+}
+
+func releaseAccessConfigLock(unlock store.AccessConfigUnlock) {
+	if unlock == nil {
+		return
+	}
+	if err := unlock(); err != nil {
+		slog.Error("release access config lock failed", "err", err)
+	}
 }
 
 func (r *Router) renderManageAccess(w http.ResponseWriter, req *http.Request, principal auth.Principal, errorMessage string) {
 	configs, err := r.modules.LoadTeamConfigs(req.Context())
 	if err != nil && errorMessage == "" {
 		errorMessage = err.Error()
-	}
-	var raw []byte
-	if len(configs) > 0 {
-		var marshalErr error
-		raw, marshalErr = json.MarshalIndent(configs, "", "  ")
-		if marshalErr != nil && errorMessage == "" {
-			errorMessage = marshalErr.Error()
-		}
 	}
 	adminGroups, adminEmails, adminSubjects := globalAdminFormValues(configs)
 	csrfToken, csrfErr := r.ensureManageCSRFToken(w, req)
@@ -226,29 +299,22 @@ func (r *Router) renderManageAccess(w http.ResponseWriter, req *http.Request, pr
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	err = manageAccessTemplate.Execute(w, manageAccessData{
-		ConfigJSON:        string(raw),
-		Teams:             accessTeamFormRows(configs, principal),
+	executeHTMLTemplate(w, manageAccessTemplate, manageAccessData{
+		Navigation:        r.manageNavigation(req, principal, csrfToken, "global-access", ""),
 		AdminOIDCGroups:   adminGroups,
 		AdminOIDCEmails:   adminEmails,
 		AdminOIDCSubjects: adminSubjects,
-		CanAdmin:          principal.CanAdmin,
 		Message:           req.URL.Query().Get("message"),
 		Error:             errorMessage,
 		CSRFToken:         csrfToken,
 	})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
 }
 
 func accessTeamConfigFromForm(req *http.Request) auth.TeamConfig {
 	team := strings.TrimSpace(req.FormValue("team"))
 	return auth.TeamConfig{
 		Team:                team,
-		ReadTokens:          splitLineValues(req.FormValue("read_tokens")),
-		PublishTokens:       splitLineValues(req.FormValue("publish_tokens")),
-		PublishOwners:       publishOwnersFromExtra(team, extraPublishSpacesFromForm(req)),
+		PublishOwners:       publishOwnersFromExtra(team, nil),
 		OIDCGroups:          splitLineValues(req.FormValue("oidc_groups")),
 		OIDCTeamAdminEmails: splitLineValues(req.FormValue("oidc_team_admin_emails")),
 		OIDCTeamAdminGroups: splitLineValues(req.FormValue("oidc_team_admin_groups")),
@@ -265,11 +331,18 @@ func accessTeamFormRows(configs []auth.TeamConfig, principal auth.Principal) []a
 			continue
 		}
 		extraSpaces := extraPublishOwnersForForm(cfg.Team, cfg.PublishOwners)
+		now := time.Now()
+		readTokens, readHistory := splitAccessTokenFormRows(accessTokenFormRows(cfg.ReadTokenRecords, "Read", now))
+		publishTokens, publishHistory := splitAccessTokenFormRows(accessTokenFormRows(cfg.PublishTokenRecords, "Publish", now))
+		tokens := append(readTokens, publishTokens...)
+		sort.Slice(tokens, func(i, j int) bool { return tokens[i].sortAt.After(tokens[j].sortAt) })
+		tokenHistory := append(readHistory, publishHistory...)
+		sort.Slice(tokenHistory, func(i, j int) bool { return tokenHistory[i].sortAt.After(tokenHistory[j].sortAt) })
 		var badges []string
-		if n := len(cfg.ReadTokens); n > 0 {
+		if n := len(readTokens); n > 0 {
 			badges = append(badges, fmt.Sprintf("Read: %d", n))
 		}
-		if n := len(cfg.PublishTokens); n > 0 {
+		if n := len(publishTokens); n > 0 {
 			badges = append(badges, fmt.Sprintf("Publish: %d", n))
 		}
 		if n := len(extraSpaces); n > 0 {
@@ -280,8 +353,8 @@ func accessTeamFormRows(configs []auth.TeamConfig, principal auth.Principal) []a
 		}
 		rows = append(rows, accessTeamFormRow{
 			Team:                cfg.Team,
-			ReadTokens:          joinLineValues(cfg.ReadTokens),
-			PublishTokens:       joinLineValues(cfg.PublishTokens),
+			Tokens:              tokens,
+			TokenHistory:        tokenHistory,
 			ExtraPublishSpaces:  joinLineValues(extraSpaces),
 			OIDCGroups:          joinLineValues(cfg.OIDCGroups),
 			OIDCTeamAdminEmails: joinLineValues(cfg.OIDCTeamAdminEmails),
@@ -292,8 +365,16 @@ func accessTeamFormRows(configs []auth.TeamConfig, principal auth.Principal) []a
 	return rows
 }
 
-func extraPublishSpacesFromForm(req *http.Request) []string {
-	return splitLineValues(req.FormValue("extra_publish_spaces"))
+func splitAccessTokenFormRows(rows []accessTokenFormRow) (active, history []accessTokenFormRow) {
+	for _, row := range rows {
+		if row.Active {
+			active = append(active, row)
+		} else {
+			history = append(history, row)
+		}
+	}
+	sort.Slice(active, func(i, j int) bool { return active[i].sortAt.After(active[j].sortAt) })
+	return active, history
 }
 
 func publishOwnersFromExtra(team string, extraOwners []string) []string {
@@ -384,6 +465,8 @@ func globalAdminFormValues(configs []auth.TeamConfig) (groups, emails, subjects 
 func hasNoAccessConfig(cfg auth.TeamConfig) bool {
 	return len(cfg.ReadTokens) == 0 &&
 		len(cfg.PublishTokens) == 0 &&
+		len(cfg.ReadTokenRecords) == 0 &&
+		len(cfg.PublishTokenRecords) == 0 &&
 		len(cfg.PublishOwners) == 0 &&
 		len(cfg.OIDCGroups) == 0 &&
 		len(cfg.OIDCTeamAdminEmails) == 0 &&
@@ -391,6 +474,16 @@ func hasNoAccessConfig(cfg auth.TeamConfig) bool {
 		len(cfg.OIDCEmails) == 0 &&
 		len(cfg.OIDCSubjects) == 0 &&
 		len(cfg.OIDCDomains) == 0
+}
+
+func activeTokenCount(records []auth.AccessTokenRecord, now time.Time) int {
+	count := 0
+	for _, record := range records {
+		if record.Active(now) {
+			count++
+		}
+	}
+	return count
 }
 
 func isGlobalAdminConfig(cfg auth.TeamConfig) bool {

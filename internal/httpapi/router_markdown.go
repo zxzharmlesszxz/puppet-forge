@@ -29,6 +29,7 @@ func renderMarkdown(source, basePath string) template.HTML {
 
 	var buf bytes.Buffer
 	if err := markdownRenderer.Convert([]byte(source), &buf); err != nil {
+		// #nosec G203 -- the fallback source is explicitly HTML-escaped.
 		return template.HTML(template.HTMLEscapeString(source))
 	}
 
@@ -39,6 +40,7 @@ func renderMarkdown(source, basePath string) template.HTML {
 	html = wrapReadmeCodeBlocks(html)
 	html = markdownSanitizer.Sanitize(html)
 
+	// #nosec G203 -- rendered HTML is sanitized by the restrictive bluemonday policy immediately above.
 	return template.HTML(html)
 }
 

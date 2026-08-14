@@ -1,0 +1,96 @@
+{{define "page-size-persistence"}}
+  <script nonce="{{.CSPNonce}}">
+    (() => {
+      const storagePrefix = "puppet-forge:page-size:";
+      const allowedPageSizes = new Set(["10", "20", "50", "100"]);
+      const isAllowedPageSize = (value) => typeof value === "string" && allowedPageSizes.has(value);
+
+      const readLegacyPageSize = (key) => {
+        try {
+          return window.localStorage.getItem(storagePrefix + key);
+        } catch (_) {
+          return null;
+        }
+      };
+      const writeLegacyPageSize = (key, value) => {
+        if (!key || !isAllowedPageSize(value)) return;
+        try {
+          window.localStorage.setItem(storagePrefix + key, value);
+        } catch (_) {}
+      };
+      const readCookie = (name) => {
+        const prefix = `${encodeURIComponent(name)}=`;
+        const entry = document.cookie.split("; ").find((value) => value.startsWith(prefix));
+        return entry ? entry.slice(prefix.length) : null;
+      };
+      const writeCookie = (name, value) => {
+        if (!name || !isAllowedPageSize(value)) return false;
+        const secure = window.location.protocol === "https:" ? "; Secure" : "";
+        document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
+        return readCookie(name) === value;
+      };
+      const pageSizeForms = () => Array.from(document.querySelectorAll("form[data-page-size-key]"));
+
+      const restorePageSizes = () => {
+        const url = new URL(window.location.href);
+        let reload = false;
+        let cleanURL = false;
+        pageSizeForms().forEach((form) => {
+          if (form.closest("[data-async-list]")) return;
+          const parameter = form.dataset.pageSizeParam;
+          const key = form.dataset.pageSizeKey;
+          const cookieName = form.dataset.pageSizeCookie;
+          const rendered = form.dataset.renderedPageSize;
+          const select = form.querySelector(`select[name="${parameter}"]`);
+          if (!parameter || !key || !cookieName || !isAllowedPageSize(rendered) || !select) return;
+
+          const requested = url.searchParams.get(parameter);
+          const cookieValue = readCookie(cookieName);
+          const legacyValue = readLegacyPageSize(key);
+          const preferred = isAllowedPageSize(requested)
+            ? requested
+            : isAllowedPageSize(cookieValue)
+              ? cookieValue
+              : isAllowedPageSize(legacyValue)
+                ? legacyValue
+                : rendered;
+
+          if (isAllowedPageSize(requested)) {
+            url.searchParams.delete(parameter);
+            if (form.dataset.pageParam) url.searchParams.delete(form.dataset.pageParam);
+            cleanURL = true;
+          }
+          writeLegacyPageSize(key, preferred);
+          const cookieStored = writeCookie(cookieName, preferred);
+          if (preferred !== rendered && cookieStored) reload = true;
+          select.value = rendered;
+        });
+        if (reload) {
+          window.location.replace(url.toString());
+        } else if (cleanURL) {
+          window.history.replaceState(null, "", url);
+        }
+      };
+
+      document.addEventListener("change", (event) => {
+        if (!(event.target instanceof HTMLSelectElement)) return;
+        const form = event.target.closest("form[data-page-size-key]");
+        if (!form || event.target.name !== form.dataset.pageSizeParam) return;
+        if (form.closest("[data-async-list]")) return;
+        writeLegacyPageSize(form.dataset.pageSizeKey, event.target.value);
+        writeCookie(form.dataset.pageSizeCookie, event.target.value);
+        const url = new URL(form.action, window.location.href);
+        url.search = new URLSearchParams(new FormData(form)).toString();
+        url.searchParams.delete(form.dataset.pageSizeParam);
+        if (form.dataset.pageParam) url.searchParams.delete(form.dataset.pageParam);
+        window.location.assign(url);
+      });
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", restorePageSizes);
+      } else {
+        restorePageSizes();
+      }
+    })();
+  </script>
+{{end}}

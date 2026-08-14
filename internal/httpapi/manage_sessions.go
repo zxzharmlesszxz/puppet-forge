@@ -1,157 +1,80 @@
 package httpapi
 
 import (
-	"crypto/rand"
+	"context"
+	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/base64"
-	"fmt"
-	"sync"
+	"encoding/hex"
+	"errors"
 	"time"
 
-	"github.com/gorilla/securecookie"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
-const defaultMaxManageSessions = 4096
-
-type manageSession struct {
-	token     string
-	expiresAt time.Time
+type manageSessionBackend interface {
+	CreateManageSession(ctx context.Context, session store.ManageSession) error
+	GetManageSession(ctx context.Context, sessionHash string, now time.Time) (store.ManageSession, error)
+	RevokeManageSession(ctx context.Context, sessionHash string, revokedAt time.Time) error
 }
 
 type manageSessionStore struct {
-	cookies     *securecookie.SecureCookie
-	mu          sync.RWMutex
-	sessions    map[string]manageSession
-	order       []string
-	maxSessions int
+	backend manageSessionBackend
+	key     []byte
 }
 
-func newManageSessionStore(secret string) *manageSessionStore {
-	return &manageSessionStore{
-		cookies:     newManageSessionCookie(secret),
-		sessions:    make(map[string]manageSession),
-		maxSessions: defaultMaxManageSessions,
-	}
+func newManageSessionStore(backend manageSessionBackend, secret string) *manageSessionStore {
+	key := sha256.Sum256([]byte(secret + "|manage-session-id"))
+	return &manageSessionStore{backend: backend, key: key[:]}
 }
 
-func (s *manageSessionStore) Create(token string, ttl time.Duration) (string, error) {
-	if s.cookies != nil {
-		encoded, err := s.cookies.Encode(manageTokenCookie, manageCookieSession{
-			Token:     token,
-			ExpiresAt: time.Now().Add(ttl),
-		})
-		if err != nil {
-			return "", err
-		}
-		return encoded, nil
+func (s *manageSessionStore) Create(ctx context.Context, credentialHash, credentialID string, ttl time.Duration) (string, string, error) {
+	if s == nil || s.backend == nil {
+		return "", "", errors.New("manage session store is not configured")
 	}
-
+	if credentialHash == "" {
+		return "", "", errors.New("manage session credential is required")
+	}
 	sessionID, err := randomBase64URL(32)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	now := time.Now()
-	session := manageSession{
-		token:     token,
-		expiresAt: now.Add(ttl),
+	csrfSecret, err := randomBase64URL(32)
+	if err != nil {
+		return "", "", err
 	}
-
-	s.mu.Lock()
-	s.sessions[sessionID] = session
-	s.order = append(s.order, sessionID)
-	s.deleteExpiredLocked(now)
-	s.evictOldestLocked()
-	s.compactOrderLocked()
-	s.mu.Unlock()
-
-	return sessionID, nil
+	now := time.Now().UTC()
+	if err := s.backend.CreateManageSession(ctx, store.ManageSession{
+		SessionHash:    s.hashSessionID(sessionID),
+		CredentialHash: credentialHash,
+		CredentialID:   credentialID,
+		AuthMethod:     "token",
+		CSRFSecret:     csrfSecret,
+		CreatedAt:      now,
+		ExpiresAt:      now.Add(ttl),
+		LastSeenAt:     now,
+	}); err != nil {
+		return "", "", err
+	}
+	return sessionID, csrfSecret, nil
 }
 
-func (s *manageSessionStore) Token(sessionID string, now time.Time) (string, bool) {
-	if s.cookies != nil {
-		var session manageCookieSession
-		if err := s.cookies.Decode(manageTokenCookie, sessionID, &session); err != nil {
-			return "", false
-		}
-		if session.Token == "" || now.After(session.ExpiresAt) {
-			return "", false
-		}
-		return session.Token, true
+func (s *manageSessionStore) Session(ctx context.Context, sessionID string, now time.Time) (store.ManageSession, bool) {
+	if s == nil || s.backend == nil || sessionID == "" {
+		return store.ManageSession{}, false
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	session, ok := s.sessions[sessionID]
-	if !ok {
-		return "", false
-	}
-	if now.After(session.expiresAt) {
-		delete(s.sessions, sessionID)
-		return "", false
-	}
-	return session.token, true
+	session, err := s.backend.GetManageSession(ctx, s.hashSessionID(sessionID), now.UTC())
+	return session, err == nil
 }
 
-func (s *manageSessionStore) Delete(sessionID string) {
-	if s.cookies != nil {
-		return
-	}
-	s.mu.Lock()
-	delete(s.sessions, sessionID)
-	s.mu.Unlock()
-}
-
-type manageCookieSession struct {
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expires_at"`
-}
-
-func newManageSessionCookie(secret string) *securecookie.SecureCookie {
-	if secret == "" {
+func (s *manageSessionStore) Delete(ctx context.Context, sessionID string, now time.Time) error {
+	if s == nil || s.backend == nil || sessionID == "" {
 		return nil
 	}
-	hashKey := sha256.Sum256([]byte(secret + "|manage-session-hash"))
-	blockKey := sha256.Sum256([]byte(secret + "|manage-session-block"))
-	return securecookie.New(hashKey[:], blockKey[:])
+	return s.backend.RevokeManageSession(ctx, s.hashSessionID(sessionID), now.UTC())
 }
 
-func randomManageSessionSecret() string {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
-	}
-	return base64.RawURLEncoding.EncodeToString(buf)
-}
-
-func (s *manageSessionStore) deleteExpiredLocked(now time.Time) {
-	for sessionID, session := range s.sessions {
-		if now.After(session.expiresAt) {
-			delete(s.sessions, sessionID)
-		}
-	}
-}
-
-func (s *manageSessionStore) evictOldestLocked() {
-	if s.maxSessions <= 0 {
-		return
-	}
-	for len(s.sessions) > s.maxSessions && len(s.order) > 0 {
-		sessionID := s.order[0]
-		s.order = s.order[1:]
-		delete(s.sessions, sessionID)
-	}
-}
-
-func (s *manageSessionStore) compactOrderLocked() {
-	if len(s.order) <= len(s.sessions)+s.maxSessions {
-		return
-	}
-	compacted := s.order[:0]
-	for _, sessionID := range s.order {
-		if _, ok := s.sessions[sessionID]; ok {
-			compacted = append(compacted, sessionID)
-		}
-	}
-	s.order = compacted
+func (s *manageSessionStore) hashSessionID(sessionID string) string {
+	mac := hmac.New(sha256.New, s.key)
+	_, _ = mac.Write([]byte(sessionID))
+	return hex.EncodeToString(mac.Sum(nil))
 }

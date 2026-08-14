@@ -1,0 +1,167 @@
+{{define "public-navigation-styles"}}
+    .public-navigation {
+      min-width: 0;
+      margin-bottom: 18px;
+    }
+    .public-global-navigation {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 36px;
+      margin-bottom: 12px;
+    }
+    .public-brand {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 700;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .public-navigation-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .public-navigation-links a,
+    .public-breadcrumbs a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .public-navigation-links a {
+      font-size: 15px;
+      white-space: nowrap;
+    }
+    .public-navigation-links a:hover,
+    .public-breadcrumbs a:hover {
+      text-decoration: underline;
+    }
+    .public-navigation-links [aria-current="page"] {
+      color: var(--ink);
+    }
+    .public-breadcrumbs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      overflow-x: auto;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      scrollbar-width: thin;
+    }
+    .public-breadcrumbs span {
+      white-space: nowrap;
+    }
+    .public-breadcrumbs span + span::before {
+      content: "/";
+      margin-right: 8px;
+      color: #a49a8d;
+    }
+    .public-breadcrumbs [aria-current="page"] {
+      color: var(--ink);
+    }
+    .public-version-picker {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .public-version-picker label {
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+    .public-version-picker select {
+      min-width: 104px;
+      height: 30px;
+      padding: 0 28px 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--panel);
+      color: var(--ink);
+      font: inherit;
+      cursor: pointer;
+    }
+    .public-version-picker select:focus-visible {
+      border-color: var(--accent);
+      outline: 3px solid rgba(177, 74, 43, 0.13);
+    }
+    .public-version-link-copy {
+      display: inline-grid;
+      width: 30px;
+      height: 30px;
+      flex: 0 0 30px;
+      place-items: center;
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--panel);
+      color: var(--accent);
+      cursor: pointer;
+    }
+    .public-version-link-copy:hover {
+      border-color: var(--accent);
+      background: #fff;
+    }
+    .public-version-link-copy:focus-visible {
+      border-color: var(--accent);
+      outline: 3px solid rgba(177, 74, 43, 0.13);
+    }
+    .public-version-link-copy svg {
+      width: 16px;
+      height: 16px;
+      fill: none;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 2;
+    }
+    .public-version-link-copy .copy-success-icon {
+      display: none;
+    }
+    .public-version-link-copy.is-copied {
+      border-color: #537b5c;
+      color: #3f6f49;
+    }
+    .public-version-link-copy.is-copied .copy-link-icon {
+      display: none;
+    }
+    .public-version-link-copy.is-copied .copy-success-icon {
+      display: block;
+    }
+    @media (max-width: 620px) {
+      .public-global-navigation {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .public-navigation-links {
+        justify-content: flex-start;
+        width: 100%;
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+    }
+{{end}}
+
+{{define "public-navigation"}}
+    <div class="public-navigation">
+      <nav class="public-global-navigation" aria-label="Main navigation">
+        <a class="public-brand" href="/">Puppet Forge</a>
+        <span class="public-navigation-links">
+          <a href="/"{{if .ModulesActive}} aria-current="page"{{end}}>Modules</a>
+          <!--suppress HtmlUnknownTarget -->
+          <a href="{{.AuthLink}}">{{.AuthLabel}}</a>
+        </span>
+      </nav>
+      <nav class="public-breadcrumbs" aria-label="Breadcrumb">
+        {{range .Breadcrumbs}}<span{{if .Current}} aria-current="page"{{end}}>{{if .URL}}<a href="{{.URL}}">{{.Label}}</a>{{else}}{{.Label}}{{end}}</span>{{end}}
+        {{if .Versions}}<span class="public-version-picker" aria-current="page"><label for="version-select">Version</label><select id="version-select" aria-label="Module version">{{range .Versions}}{{if eq $.SelectedVersion .Version}}<option value="{{.Version}}" selected>{{.Version}}</option>{{else}}<option value="{{.Version}}">{{.Version}}</option>{{end}}{{end}}</select><button id="copy-version-link" class="public-version-link-copy" type="button" title="Copy link to this version" aria-label="Copy link to this version"><svg class="copy-link-icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg><svg class="copy-success-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg></button></span>{{end}}
+      </nav>
+    </div>
+{{end}}

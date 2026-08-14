@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Teams</title>
-  <style>
+  <style nonce="{{.Navigation.CSPNonce}}">
     :root {
       color-scheme: light;
       --bg: #f3f0ea;
@@ -16,6 +16,7 @@
       --danger: #a33a32;
       --ok: #2e7146;
     }
+    {{template "manage-navigation-styles" .Navigation}}
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -37,27 +38,6 @@
     }
     h1 { margin: 0; font-size: 32px; }
     .subtitle { margin-top: 8px; color: var(--muted); }
-    .header-links {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-      gap: 10px;
-      min-height: 38px;
-    }
-    .header-links a, .link-button {
-      color: var(--accent);
-      text-decoration: none;
-      font-weight: 650;
-    }
-    .header-links form { margin: 0; }
-    .link-button {
-      border: 0;
-      padding: 0;
-      background: transparent;
-      font: inherit;
-      cursor: pointer;
-    }
     .panel {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -117,9 +97,7 @@
       .team-row .team-name, .team-row .spaces { grid-column: 1 / -1; }
     }
     @media (max-width: 640px) {
-      header, .header-links { display: block; }
-      .header-links { margin-top: 12px; }
-      .header-links > * { margin-right: 10px; }
+      header { display: block; }
       .team-row { grid-template-columns: 1fr; }
       .team-row .team-name, .team-row .spaces { grid-column: auto; }
     }
@@ -127,28 +105,26 @@
 </head>
 <body>
   <main>
+    {{template "manage-navigation" .Navigation}}
     <header>
       <div>
         <h1>Teams</h1>
         <div class="subtitle">Access, publishing spaces, and owned modules.</div>
       </div>
-      <nav class="header-links" aria-label="Manage navigation">
-        <a href="/">Public modules</a>
-        <a href="/manage">Manage</a>
-        <a href="/manage/teams">Teams</a>
-        <a href="/manage/access">Access</a>
-        {{if .Principal.CanAdmin}}<a href="/manage/access/add">Add team</a>{{end}}
-        <form method="post" action="/manage/logout">{{csrfInput $.CSRFToken}}<button class="link-button" type="submit">Sign out</button></form>
-      </nav>
     </header>
 
-    {{if .Message}}<div class="notice">{{.Message}}</div>{{end}}
-    {{if .Error}}<div class="notice error">{{.Error}}</div>{{end}}
+    {{if .Message}}<div class="notice" role="status">{{.Message}}</div>{{end}}
+    {{if .Error}}<div class="notice error" role="alert">{{.Error}}</div>{{end}}
 
-    <section class="panel" aria-label="Manageable teams">
+    <section class="panel" id="teams-list" data-async-list aria-label="Manageable teams">
+      <form class="list-filter" method="get" data-async-filter="teams-list">
+        <label class="visually-hidden" for="teams-query">Filter teams</label>
+        <input id="teams-query" name="q" type="search" placeholder="Filter by team or publish space" value="{{.Query}}" autocomplete="off">
+        {{if .Query}}<a class="list-filter-clear" href="{{.ClearURL}}" aria-label="Clear team filter">&times;</a>{{end}}
+      </form>
       {{if .Teams}}
       {{range .Teams}}
-      <a class="team-row" href="/manage/teams/{{.Team}}">
+      <a class="team-row" href="/manage/teams/{{.Team}}/access">
         <span class="team-name">{{.Team}}</span>
         <span class="spaces">{{range .Spaces}}<span class="badge">{{.}}</span>{{end}}</span>
         <span class="metric"><strong>{{.ModuleCount}}</strong><span>modules</span></span>
@@ -157,8 +133,16 @@
       </a>
       {{end}}
       {{else}}
-      <div class="empty">No manageable teams.</div>
+      <div class="empty">{{if .Query}}No teams match this filter.{{else}}No manageable teams.{{end}}</div>
       {{end}}
+      {{if .Pagination.Total}}<nav class="list-pagination" aria-label="Team pages">
+        <span>{{.Pagination.Total}} teams &middot; page {{.Pagination.Page}} of {{.Pagination.TotalPages}}</span>
+        {{template "page-size-control" .Pagination}}
+        <span class="list-pagination-links">
+          {{if .Pagination.HasPrev}}<a href="{{.Pagination.PrevURL}}">Previous</a>{{else}}<span class="list-pagination-disabled">Previous</span>{{end}}
+          {{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">Next</a>{{else}}<span class="list-pagination-disabled">Next</span>{{end}}
+        </span>
+      </nav>{{end}}
     </section>
   </main>
 </body>

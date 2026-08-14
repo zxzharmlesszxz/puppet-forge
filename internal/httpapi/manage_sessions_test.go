@@ -1,117 +1,121 @@
 package httpapi
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
-func TestManageSessionStoreEvictsOldestWhenSessionLimitIsExceeded(t *testing.T) {
-	t.Parallel()
-
-	store := newManageSessionStore("")
-	store.maxSessions = 2
-
-	firstID, err := store.Create("first-token", time.Minute)
-	if err != nil {
-		t.Fatalf("Create(first) error = %v", err)
-	}
-	secondID, err := store.Create("second-token", time.Minute)
-	if err != nil {
-		t.Fatalf("Create(second) error = %v", err)
-	}
-	thirdID, err := store.Create("third-token", time.Minute)
-	if err != nil {
-		t.Fatalf("Create(third) error = %v", err)
-	}
-
-	if _, ok := store.Token(firstID, time.Now()); ok {
-		t.Fatal("expected oldest session to be evicted")
-	}
-	if token, ok := store.Token(secondID, time.Now()); !ok || token != "second-token" {
-		t.Fatalf("expected second session to remain, got token=%q ok=%v", token, ok)
-	}
-	if token, ok := store.Token(thirdID, time.Now()); !ok || token != "third-token" {
-		t.Fatalf("expected third session to remain, got token=%q ok=%v", token, ok)
-	}
+type testManageSessionBackend struct {
+	mu       sync.Mutex
+	sessions map[string]store.ManageSession
 }
 
-func TestManageSessionStoreCompactsDeletedSessionOrder(t *testing.T) {
-	t.Parallel()
-
-	store := newManageSessionStore("")
-	store.maxSessions = 2
-
-	firstID, err := store.Create("first-token", time.Minute)
-	if err != nil {
-		t.Fatalf("Create(first) error = %v", err)
-	}
-	store.Delete(firstID)
-	secondID, err := store.Create("second-token", time.Minute)
-	if err != nil {
-		t.Fatalf("Create(second) error = %v", err)
-	}
-	thirdID, err := store.Create("third-token", time.Minute)
-	if err != nil {
-		t.Fatalf("Create(third) error = %v", err)
-	}
-
-	if token, ok := store.Token(secondID, time.Now()); !ok || token != "second-token" {
-		t.Fatalf("expected second session to remain, got token=%q ok=%v", token, ok)
-	}
-	if token, ok := store.Token(thirdID, time.Now()); !ok || token != "third-token" {
-		t.Fatalf("expected third session to remain, got token=%q ok=%v", token, ok)
-	}
+func newTestManageSessionBackend() *testManageSessionBackend {
+	return &testManageSessionBackend{sessions: make(map[string]store.ManageSession)}
 }
 
-func TestManageSessionStoreTokenDeletesExpiredSession(t *testing.T) {
+func (b *testManageSessionBackend) CreateManageSession(_ context.Context, session store.ManageSession) error {
+	b.mu.Lock()
+	b.sessions[session.SessionHash] = session
+	b.mu.Unlock()
+	return nil
+}
+
+func (b *testManageSessionBackend) GetManageSession(_ context.Context, sessionHash string, now time.Time) (store.ManageSession, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	session, ok := b.sessions[sessionHash]
+	if !ok || session.RevokedAt != nil || !now.Before(session.ExpiresAt) {
+		return store.ManageSession{}, store.ErrNotFound
+	}
+	return session, nil
+}
+
+func (b *testManageSessionBackend) RevokeManageSession(_ context.Context, sessionHash string, revokedAt time.Time) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	session, ok := b.sessions[sessionHash]
+	if !ok {
+		return nil
+	}
+	session.RevokedAt = &revokedAt
+	b.sessions[sessionHash] = session
+	return nil
+}
+
+func TestManageSessionStoreWorksAcrossReplicasWithSharedSecret(t *testing.T) {
 	t.Parallel()
 
-	store := newManageSessionStore("")
-	sessionID, err := store.Create("expired-token", time.Nanosecond)
+	backend := newTestManageSessionBackend()
+	firstStore := newManageSessionStore(backend, "shared-secret")
+	secondStore := newManageSessionStore(backend, "shared-secret")
+	sessionID, csrfSecret, err := firstStore.Create(context.Background(), "credential-digest", "token-id", time.Minute)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-
-	if token, ok := store.Token(sessionID, time.Now().Add(time.Minute)); ok || token != "" {
-		t.Fatalf("expected expired session to be rejected, got token=%q ok=%v", token, ok)
+	if sessionID == "credential-digest" || csrfSecret == "" {
+		t.Fatalf("unexpected browser session values session=%q csrf=%q", sessionID, csrfSecret)
 	}
-	store.mu.RLock()
-	_, exists := store.sessions[sessionID]
-	store.mu.RUnlock()
-	if exists {
-		t.Fatal("expected expired session to be deleted")
+	session, ok := secondStore.Session(context.Background(), sessionID, time.Now())
+	if !ok || session.CredentialHash != "credential-digest" || session.CredentialID != "token-id" || session.CSRFSecret != csrfSecret {
+		t.Fatalf("second replica session = %#v ok=%v", session, ok)
 	}
+	backend.mu.Lock()
+	for hash, persisted := range backend.sessions {
+		if hash == sessionID || persisted.SessionHash == sessionID {
+			t.Fatal("backend persisted the raw browser session ID")
+		}
+	}
+	backend.mu.Unlock()
 }
 
-func TestManageSessionStoreEncryptedCookieWorksAcrossStores(t *testing.T) {
+func TestManageSessionStoreRejectsDifferentSecret(t *testing.T) {
 	t.Parallel()
 
-	firstStore := newManageSessionStore("shared-secret")
-	secondStore := newManageSessionStore("shared-secret")
-
-	sessionCookie, err := firstStore.Create("admin-token", time.Minute)
+	backend := newTestManageSessionBackend()
+	firstStore := newManageSessionStore(backend, "shared-secret")
+	secondStore := newManageSessionStore(backend, "other-secret")
+	sessionID, _, err := firstStore.Create(context.Background(), "credential-digest", "", time.Minute)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if sessionCookie == "admin-token" {
-		t.Fatal("expected encrypted session cookie, got raw token")
-	}
-	if token, ok := secondStore.Token(sessionCookie, time.Now()); !ok || token != "admin-token" {
-		t.Fatalf("expected second store to decode session cookie, got token=%q ok=%v", token, ok)
+	if _, ok := secondStore.Session(context.Background(), sessionID, time.Now()); ok {
+		t.Fatal("different session secret accepted copied cookie")
 	}
 }
 
-func TestManageSessionStoreEncryptedCookieRejectsDifferentSecret(t *testing.T) {
+func TestManageSessionStoreRejectsExpiredSession(t *testing.T) {
 	t.Parallel()
 
-	firstStore := newManageSessionStore("shared-secret")
-	secondStore := newManageSessionStore("other-secret")
-
-	sessionCookie, err := firstStore.Create("admin-token", time.Minute)
+	backend := newTestManageSessionBackend()
+	sessions := newManageSessionStore(backend, "shared-secret")
+	sessionID, _, err := sessions.Create(context.Background(), "credential-digest", "", time.Nanosecond)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if token, ok := secondStore.Token(sessionCookie, time.Now()); ok || token != "" {
-		t.Fatalf("expected different secret to reject session cookie, got token=%q ok=%v", token, ok)
+	if _, ok := sessions.Session(context.Background(), sessionID, time.Now().Add(time.Minute)); ok {
+		t.Fatal("expired session was accepted")
+	}
+}
+
+func TestManageSessionStoreDeleteRevokesCopiedCookie(t *testing.T) {
+	t.Parallel()
+
+	backend := newTestManageSessionBackend()
+	firstStore := newManageSessionStore(backend, "shared-secret")
+	secondStore := newManageSessionStore(backend, "shared-secret")
+	sessionID, _, err := firstStore.Create(context.Background(), "credential-digest", "", time.Minute)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := firstStore.Delete(context.Background(), sessionID, time.Now()); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if _, ok := secondStore.Session(context.Background(), sessionID, time.Now()); ok {
+		t.Fatal("revoked copied cookie was accepted by another replica")
 	}
 }

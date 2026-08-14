@@ -8,6 +8,7 @@ import (
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/httputil"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/service"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
@@ -65,10 +66,6 @@ func (r *Router) serveLocalV3Module(w http.ResponseWriter, req *http.Request, sl
 		return true
 	}
 
-	if module.LatestVersion != "" {
-		r.markReleaseUsed(req.Context(), module.Owner, module.Name, module.LatestVersion)
-	}
-
 	type releaseRef struct {
 		Slug    string `json:"slug"`
 		Version string `json:"version"`
@@ -81,16 +78,20 @@ func (r *Router) serveLocalV3Module(w http.ResponseWriter, req *http.Request, sl
 			Version: version.Version,
 		})
 	}
-
-	response := map[string]any{
-		"slug":  slug,
-		"owner": module.Owner,
-		"name":  module.Name,
-		"current_release": releaseRef{
+	var currentRelease *releaseRef
+	if module.LatestVersion != "" {
+		currentRelease = &releaseRef{
 			Slug:    releaseSlug(module.Owner, module.Name, module.LatestVersion),
 			Version: module.LatestVersion,
-		},
-		"releases": releases,
+		}
+	}
+
+	response := map[string]any{
+		"slug":            slug,
+		"owner":           module.Owner,
+		"name":            module.Name,
+		"current_release": currentRelease,
+		"releases":        releases,
 	}
 	writeJSON(w, http.StatusOK, response)
 	return true
@@ -99,23 +100,29 @@ func (r *Router) serveLocalV3Module(w http.ResponseWriter, req *http.Request, sl
 func (r *Router) serveLocalV3Release(w http.ResponseWriter, req *http.Request, slug string) bool {
 	release, ok, err := r.findReleaseBySlug(req.Context(), slug)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeServiceError(w, err)
 		return true
 	}
 	if !ok {
 		return false
 	}
 	r.markReleaseUsed(req.Context(), release.Owner, release.Name, release.Version)
-	release, err = r.modules.EnsureReleaseChecksums(req.Context(), release)
-	if errors.Is(err, store.ErrNotFound) {
-		if release.Source != "upstream" {
+	verifiedRelease, err := r.modules.EnsureReleaseChecksums(req.Context(), release)
+	if err != nil {
+		if release.Source == "upstream" {
+			// A successful local v3 response must include checksums from the exact
+			// artifact that its file_uri serves. Let the Forge proxy return the
+			// authoritative upstream response when local materialization is incomplete.
+			return false
+		}
+		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, err)
 			return true
 		}
-	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return true
 	}
+	release = verifiedRelease
 
 	response := map[string]any{
 		"slug":        releaseSlug(release.Owner, release.Name, release.Version),
@@ -146,69 +153,33 @@ func (r *Router) serveLocalV3File(w http.ResponseWriter, req *http.Request, file
 	if !ok {
 		return false
 	}
-	if release.Source == "upstream" {
+	if release.Source == "upstream" && (release.MD5 == "" || release.SHA256 == "" || release.SizeBytes <= 0 || release.StoragePath == "") {
 		r.markReleaseUsed(req.Context(), release.Owner, release.Name, release.Version)
 		return false
 	}
 
-	object, err := r.modules.ReadReleaseArchive(req.Context(), release.Owner, release.Name, release.Version)
-	if errors.Is(err, store.ErrNotFound) {
-		return false
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return true
-	}
-
 	r.markReleaseUsed(req.Context(), release.Owner, release.Name, release.Version)
-	writeObject(w, req, object)
+	r.writeReleaseArchive(w, req, release)
 	return true
 }
 
 func (r *Router) findModuleBySlug(ctx context.Context, slug string) (domain.Module, bool, error) {
-	owner, rest, ok := strings.Cut(slug, "-")
-	if !ok || owner == "" || rest == "" {
+	module, err := r.modules.GetModuleBySlug(ctx, slug)
+	if errors.Is(err, store.ErrNotFound) {
 		return domain.Module{}, false, nil
 	}
-	parts := strings.Split(rest, "-")
-	for i := len(parts); i > 0; i-- {
-		name := strings.Join(parts[:i], "-")
-		module, err := r.modules.GetModule(ctx, owner, name)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				continue
-			}
-			return domain.Module{}, false, err
-		}
-		return module, true, nil
-	}
-	return domain.Module{}, false, nil
+	return module, err == nil, err
 }
 
 func (r *Router) findReleaseBySlug(ctx context.Context, slug string) (domain.Release, bool, error) {
-	owner, rest, ok := strings.Cut(slug, "-")
-	if !ok || owner == "" || rest == "" {
+	release, err := r.modules.GetReleaseBySlug(ctx, slug)
+	if errors.Is(err, store.ErrNotFound) {
 		return domain.Release{}, false, nil
 	}
-	for i := len(rest) - 1; i >= 0; i-- {
-		if rest[i] != '-' {
-			continue
-		}
-		name := rest[:i]
-		version := rest[i+1:]
-		if name == "" || version == "" {
-			continue
-		}
-		release, err := r.modules.GetRelease(ctx, owner, name, version)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				continue
-			}
-			return domain.Release{}, false, err
-		}
-		return release, true, nil
+	if errors.Is(err, service.ErrUpstreamHydration) && !errors.Is(err, service.ErrUpstreamRestore) {
+		return domain.Release{}, false, nil
 	}
-	return domain.Release{}, false, nil
+	return release, err == nil, err
 }
 
 func (r *Router) findReleaseByFileName(ctx context.Context, filename string) (domain.Release, bool, error) {

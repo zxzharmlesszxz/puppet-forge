@@ -17,6 +17,8 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +29,7 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/storage"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/testutil"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/throttle"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/webauth"
 )
 
@@ -36,12 +39,28 @@ func (s testArtifactStorage) Upload(context.Context, string, string, []byte) err
 	return nil
 }
 
+func (s testArtifactStorage) UploadIfAbsent(context.Context, string, string, []byte) (bool, error) {
+	return true, nil
+}
+
+func (s testArtifactStorage) UploadReaderIfAbsent(context.Context, string, string, io.Reader) (bool, error) {
+	return true, nil
+}
+
+func (s testArtifactStorage) Delete(context.Context, string) error {
+	return nil
+}
+
 func (s testArtifactStorage) Exists(context.Context, string) (bool, error) {
 	return false, nil
 }
 
 func (s testArtifactStorage) Download(context.Context, string) (storage.Object, error) {
 	return storage.Object{}, store.ErrNotFound
+}
+
+func (s testArtifactStorage) Open(context.Context, string) (storage.ObjectReader, error) {
+	return storage.ObjectReader{}, store.ErrNotFound
 }
 
 func (s testArtifactStorage) Stat(context.Context, string) (storage.ObjectAttrs, error) {
@@ -62,12 +81,56 @@ type countingDownloadStorage struct {
 	downloads int
 }
 
+type trackingRangeStorage struct {
+	fixedDownloadStorage
+	mu         sync.Mutex
+	fullOpens  int
+	rangeOpens int
+}
+
+func (s *trackingRangeStorage) Open(ctx context.Context, objectPath string) (storage.ObjectReader, error) {
+	s.mu.Lock()
+	s.fullOpens++
+	s.mu.Unlock()
+	return s.fixedDownloadStorage.Open(ctx, objectPath)
+}
+
+func (s *trackingRangeStorage) OpenRange(ctx context.Context, objectPath string, offset, length int64) (storage.ObjectReader, error) {
+	s.mu.Lock()
+	s.rangeOpens++
+	s.mu.Unlock()
+	return s.fixedDownloadStorage.OpenRange(ctx, objectPath, offset, length)
+}
+
+func (s *trackingRangeStorage) openCounts() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fullOpens, s.rangeOpens
+}
+
 func (s *countingDownloadStorage) Download(ctx context.Context, objectPath string) (storage.Object, error) {
 	s.downloads++
 	return s.fixedDownloadStorage.Download(ctx, objectPath)
 }
 
+func (s *countingDownloadStorage) Open(ctx context.Context, objectPath string) (storage.ObjectReader, error) {
+	s.downloads++
+	return s.fixedDownloadStorage.Open(ctx, objectPath)
+}
+
 func (s fixedDownloadStorage) Upload(context.Context, string, string, []byte) error {
+	return nil
+}
+
+func (s fixedDownloadStorage) UploadIfAbsent(context.Context, string, string, []byte) (bool, error) {
+	return true, nil
+}
+
+func (s fixedDownloadStorage) UploadReaderIfAbsent(context.Context, string, string, io.Reader) (bool, error) {
+	return true, nil
+}
+
+func (s fixedDownloadStorage) Delete(context.Context, string) error {
 	return nil
 }
 
@@ -79,8 +142,29 @@ func (s fixedDownloadStorage) Download(context.Context, string) (storage.Object,
 	return storage.Object{Body: s.body, ContentType: s.contentType}, nil
 }
 
+func (s fixedDownloadStorage) Open(context.Context, string) (storage.ObjectReader, error) {
+	return storage.ObjectReader{
+		Body:        io.NopCloser(bytes.NewReader(s.body)),
+		ContentType: s.contentType,
+		Size:        int64(len(s.body)),
+	}, nil
+}
+
+func (s fixedDownloadStorage) OpenRange(_ context.Context, _ string, offset, length int64) (storage.ObjectReader, error) {
+	end := offset + length
+	if offset < 0 || length < 0 || end > int64(len(s.body)) {
+		return storage.ObjectReader{}, errors.New("invalid test object range")
+	}
+	body := s.body[offset:end]
+	return storage.ObjectReader{
+		Body:        io.NopCloser(bytes.NewReader(body)),
+		ContentType: s.contentType,
+		Size:        int64(len(body)),
+	}, nil
+}
+
 func (s fixedDownloadStorage) Stat(context.Context, string) (storage.ObjectAttrs, error) {
-	return storage.ObjectAttrs{}, storage.ErrObjectNotFound
+	return storage.ObjectAttrs{ContentType: s.contentType, Size: int64(len(s.body))}, nil
 }
 
 func (s fixedDownloadStorage) PublicURL(string) string {
@@ -88,16 +172,22 @@ func (s fixedDownloadStorage) PublicURL(string) string {
 }
 
 func newTestRouter(modules *service.ModuleService, forgeProxy http.Handler, publicBaseURL string, authorizer *auth.Authorizer, webAuth *webauth.OIDCAuth, adminToken string, publicModuleAccess bool, activeReleaseTTL time.Duration, opts ...RouterOption) http.Handler {
-	return NewRouter(RouterConfig{
-		Modules:            modules,
-		ForgeProxy:         forgeProxy,
-		PublicBaseURL:      publicBaseURL,
-		Authorizer:         authorizer,
-		WebAuth:            webAuth,
-		AdminToken:         adminToken,
-		PublicModuleAccess: publicModuleAccess,
-		ActiveReleaseTTL:   activeReleaseTTL,
+	handler, err := NewRouter(RouterConfig{
+		Modules:             modules,
+		ForgeProxy:          forgeProxy,
+		PublicBaseURL:       publicBaseURL,
+		Authorizer:          authorizer,
+		TokenHasher:         httpAPITestTokenHasher(),
+		WebAuth:             webAuth,
+		AdminToken:          adminToken,
+		ManageSessionSecret: "test-manage-session-secret-32-bytes",
+		PublicModuleAccess:  publicModuleAccess,
+		ActiveReleaseTTL:    activeReleaseTTL,
 	}, opts...)
+	if err != nil {
+		panic(err)
+	}
+	return handler
 }
 
 func TestRouterSecurityHeaders(t *testing.T) {
@@ -105,11 +195,15 @@ func TestRouterSecurityHeaders(t *testing.T) {
 
 	st := newHTTPAPITestStore(t)
 	moduleSvc := service.NewModuleService(st, testArtifactStorage{}, "modules", nil)
-	handler := NewRouter(RouterConfig{
+	handler, err := NewRouter(RouterConfig{
 		Modules:             moduleSvc,
 		AdminToken:          "admin-token",
+		ManageSessionSecret: "test-manage-session-secret-32-bytes",
 		SecurityHSTSEnabled: true,
 	})
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -120,6 +214,74 @@ func TestRouterSecurityHeaders(t *testing.T) {
 	}
 	if got := rec.Header().Get("Strict-Transport-Security"); got != "max-age=31536000; includeSubDomains" {
 		t.Fatalf("Strict-Transport-Security = %q", got)
+	}
+	policy := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "frame-ancestors 'none'") {
+		t.Fatalf("Content-Security-Policy = %q", policy)
+	}
+	if strings.Contains(policy, "unsafe-inline") {
+		t.Fatalf("Content-Security-Policy permits unsafe inline content: %q", policy)
+	}
+	if strings.Contains(policy, "nonce-") || strings.Contains(policy, "script-src") || strings.Contains(policy, "style-src") {
+		t.Fatalf("machine endpoint received browser-only CSP directives: %q", policy)
+	}
+	if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("X-Frame-Options = %q", got)
+	}
+
+	manageReq := httptest.NewRequest(http.MethodGet, "/manage/login", nil)
+	manageRec := httptest.NewRecorder()
+	handler.ServeHTTP(manageRec, manageReq)
+	if got := manageRec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("manage Cache-Control = %q, want no-store", got)
+	}
+	managePolicy := manageRec.Header().Get("Content-Security-Policy")
+	nonceMarker := "'nonce-"
+	nonceStart := strings.Index(managePolicy, nonceMarker)
+	if nonceStart < 0 {
+		t.Fatalf("manage Content-Security-Policy has no nonce: %q", managePolicy)
+	}
+	nonceStart += len(nonceMarker)
+	nonceEnd := strings.Index(managePolicy[nonceStart:], "'")
+	if nonceEnd < 0 {
+		t.Fatalf("manage Content-Security-Policy has malformed nonce: %q", managePolicy)
+	}
+	nonce := managePolicy[nonceStart : nonceStart+nonceEnd]
+	if !strings.Contains(manageRec.Body.String(), `nonce="`+nonce+`"`) {
+		t.Fatalf("manage login body does not use CSP nonce %q", nonce)
+	}
+	if strings.Contains(policy, nonce) {
+		t.Fatalf("CSP nonce was reused across requests: %q", nonce)
+	}
+}
+
+func TestFormActionSourcesIncludesOnlyOIDCLogoutOrigin(t *testing.T) {
+	t.Parallel()
+
+	if got := formActionSources(""); got != "'self'" {
+		t.Fatalf("formActionSources(empty) = %q", got)
+	}
+	if got := formActionSources("https://auth.example.com"); got != "'self' https://auth.example.com" {
+		t.Fatalf("formActionSources(logout origin) = %q", got)
+	}
+}
+
+func TestApplicationRouterDoesNotExposeMetrics(t *testing.T) {
+	t.Parallel()
+
+	st := newHTTPAPITestStore(t)
+	handler, err := NewRouter(RouterConfig{
+		Modules:             service.NewModuleService(st, testArtifactStorage{}, "modules", nil),
+		AdminToken:          "admin-token",
+		ManageSessionSecret: "test-manage-session-secret-32-bytes",
+	})
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /metrics on application listener status = %d, want 404", rec.Code)
 	}
 }
 
@@ -170,14 +332,14 @@ func TestManageTokenLoginCanSwitchFromPublisherToAdmin(t *testing.T) {
 	client.Jar = jar
 
 	postManageToken(t, client, server.URL, "teamname-token")
-	body := getBody(t, client, server.URL+"/manage")
+	body := getBody(t, client, server.URL+"/manage/modules")
 	if !strings.Contains(body, "Team: teamname") {
 		t.Fatalf("expected teamname manage page, got body:\n%s", body)
 	}
 
 	postManageToken(t, client, server.URL, "admin-token")
-	body = getBody(t, client, server.URL+"/manage")
-	if !strings.Contains(body, "Team: bootstrap-admin") || !strings.Contains(body, "admin") {
+	body = getBody(t, client, server.URL+"/manage/modules")
+	if !strings.Contains(body, "Global administrator") {
 		t.Fatalf("expected admin manage page, got body:\n%s", body)
 	}
 	if strings.Contains(body, "spaces: teamname") {
@@ -185,7 +347,7 @@ func TestManageTokenLoginCanSwitchFromPublisherToAdmin(t *testing.T) {
 	}
 }
 
-func TestManageTokenLoginStoresOpaqueEncryptedSession(t *testing.T) {
+func TestManageTokenLoginStoresOpaqueSessionID(t *testing.T) {
 	t.Parallel()
 
 	st := newHTTPAPITestStore(t)
@@ -219,9 +381,59 @@ func TestManageTokenLoginStoresOpaqueEncryptedSession(t *testing.T) {
 		t.Fatalf("manage session cookie leaked token: %q", sessionCookie.Value)
 	}
 
-	body := getBody(t, client, server.URL+"/manage")
-	if !strings.Contains(body, "Team: bootstrap-admin") {
-		t.Fatalf("encrypted manage session was not accepted:\n%s", body)
+	body := getBody(t, client, server.URL+"/manage/modules")
+	if !strings.Contains(body, "Global administrator") {
+		t.Fatalf("server-side manage session was not accepted:\n%s", body)
+	}
+}
+
+func TestManageLogoutRevokesCopiedSessionCookie(t *testing.T) {
+	t.Parallel()
+
+	st := newHTTPAPITestStore(t)
+	moduleSvc := service.NewModuleService(st, testArtifactStorage{}, "modules", nil)
+	server := httptest.NewServer(newTestRouter(moduleSvc, nil, "http://example.test", newAdminAuthorizer(t), nil, "admin-token", false, defaultActiveReleaseTTL))
+	t.Cleanup(server.Close)
+
+	jar := newCookieJar(t)
+	client := server.Client()
+	client.Jar = jar
+	postManageToken(t, client, server.URL, "admin-token")
+	target, err := url.Parse(server.URL + "/manage")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	var copiedSession *http.Cookie
+	for _, cookie := range jar.Cookies(target) {
+		if cookie.Name == manageTokenCookie {
+			sessionCookie := *cookie
+			copiedSession = &sessionCookie
+			break
+		}
+	}
+	if copiedSession == nil {
+		t.Fatal("manage session cookie missing")
+	}
+	resp, err := client.PostForm(server.URL+"/manage/logout", manageFormValues(t, client, server.URL, nil))
+	if err != nil {
+		t.Fatalf("POST /manage/logout error = %v", err)
+	}
+	_ = resp.Body.Close()
+
+	noRedirect := server.Client()
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/manage", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	req.AddCookie(copiedSession)
+	resp, err = noRedirect.Do(req)
+	if err != nil {
+		t.Fatalf("GET /manage with copied cookie error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/manage/login" {
+		t.Fatalf("revoked copied cookie status=%d location=%q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 }
 
@@ -244,9 +456,139 @@ func TestManageTokenSessionWorksAcrossRouterInstances(t *testing.T) {
 	client.Jar = jar
 
 	postManageToken(t, client, serverA.URL, "admin-token")
-	body := getBody(t, client, serverB.URL+"/manage")
-	if !strings.Contains(body, "Team: bootstrap-admin") {
+	body := getBody(t, client, serverB.URL+"/manage/modules")
+	if !strings.Contains(body, "Global administrator") {
 		t.Fatalf("manage token session was not accepted by another router instance:\n%s", body)
+	}
+}
+
+func TestRevokedPublishTokenInvalidatesManageSession(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	if err := st.ReplaceTeamConfigs(ctx, []auth.TeamConfig{{
+		Team:          "teamname",
+		PublishTokens: []string{"session-publish-token"},
+		PublishOwners: []string{"teamname"},
+	}}); err != nil {
+		t.Fatalf("ReplaceTeamConfigs() error = %v", err)
+	}
+	configs, err := st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() error = %v", err)
+	}
+	authorizer, err := auth.NewAuthorizerWithTokenHasher(configs, httpAPITestTokenHasher())
+	if err != nil {
+		t.Fatalf("NewAuthorizerWithTokenHasher() error = %v", err)
+	}
+	handler, err := NewRouter(RouterConfig{
+		Modules:             service.NewModuleService(st, testArtifactStorage{}, "modules", nil),
+		Authorizer:          authorizer,
+		TokenHasher:         httpAPITestTokenHasher(),
+		ManageSessionSecret: "shared-manage-session-secret-32-bytes",
+		RefreshAccessConfig: true,
+	})
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	jar := newCookieJar(t)
+	client := server.Client()
+	client.Jar = jar
+	postManageToken(t, client, server.URL, "session-publish-token")
+
+	revokedAt := time.Now().UTC()
+	configs[0].PublishTokenRecords[0].RevokedAt = &revokedAt
+	if err := st.ReplaceTeamConfigs(ctx, configs); err != nil {
+		t.Fatalf("ReplaceTeamConfigs(revoke) error = %v", err)
+	}
+	noRedirect := server.Client()
+	noRedirect.Jar = jar
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := noRedirect.Get(server.URL + "/manage")
+	if err != nil {
+		t.Fatalf("GET /manage after token revoke error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/manage/login" {
+		t.Fatalf("revoked-token session status=%d location=%q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+}
+
+func TestRecordAccessTokenUsedPrunesExpiredThrottleEntries(t *testing.T) {
+	t.Parallel()
+
+	st := newHTTPAPITestStore(t)
+	router := &Router{
+		modules:    service.NewModuleService(st, testArtifactStorage{}, "modules", nil),
+		tokenUsage: throttle.NewExpirySet(defaultTokenUsageMaxEntries, tokenUsageRecordInterval),
+	}
+	router.tokenUsage.Record("expired-one", time.Now().Add(-2*time.Minute))
+	router.tokenUsage.Record("expired-two", time.Now().Add(-time.Hour))
+	router.recordAccessTokenUsed(context.Background(), auth.Principal{TokenID: "current"})
+
+	if router.tokenUsage.Len() != 1 || !router.tokenUsage.Contains("current") {
+		t.Fatalf("token usage throttle did not retain only the current token")
+	}
+}
+
+func TestTokenUsageThrottleEvictsOldestEntryAtCapacity(t *testing.T) {
+	t.Parallel()
+
+	usage := throttle.NewExpirySet(2, tokenUsageRecordInterval)
+	now := time.Now()
+	if !usage.Record("oldest", now) || !usage.Record("newer", now.Add(time.Second)) {
+		t.Fatal("initial token usage was unexpectedly throttled")
+	}
+	if !usage.Record("newest", now.Add(2*time.Second)) {
+		t.Fatal("new token usage was rejected at capacity")
+	}
+	if usage.Len() != 2 || usage.Contains("oldest") || !usage.Contains("newer") || !usage.Contains("newest") {
+		t.Fatal("token usage throttle did not evict the oldest entry")
+	}
+}
+
+func TestBearerAuthorizationRejectsRevokedTokenWithStaleAuthorizer(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	const rawToken = "stale-read-token"
+	if err := st.ReplaceTeamConfigs(ctx, []auth.TeamConfig{{
+		Team:       "teamname",
+		ReadTokens: []string{rawToken},
+	}}); err != nil {
+		t.Fatalf("ReplaceTeamConfigs() error = %v", err)
+	}
+	configs, err := st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() error = %v", err)
+	}
+	authorizer, err := auth.NewAuthorizerWithTokenHasher(configs, httpAPITestTokenHasher())
+	if err != nil {
+		t.Fatalf("NewAuthorizerWithTokenHasher() error = %v", err)
+	}
+
+	revokedAt := time.Now().UTC()
+	configs[0].ReadTokenRecords[0].RevokedAt = &revokedAt
+	if err := st.ReplaceTeamConfigs(ctx, configs); err != nil {
+		t.Fatalf("ReplaceTeamConfigs(revoke) error = %v", err)
+	}
+
+	router := &Router{
+		modules:    service.NewModuleService(st, testArtifactStorage{}, "modules", nil),
+		authorizer: authorizer,
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/modules", nil)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	recorder := httptest.NewRecorder()
+	if router.requireReadAccess(recorder, req) {
+		t.Fatal("revoked token was accepted by stale authorizer snapshot")
+	}
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked token status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 	}
 }
 
@@ -264,23 +606,25 @@ func TestManagePrincipalRefreshesAccessConfigFromStore(t *testing.T) {
 		t.Fatalf("ReplaceTeamConfigs() error = %v", err)
 	}
 
-	staleAuthorizer, err := auth.NewAuthorizer([]auth.TeamConfig{
+	staleAuthorizer, err := auth.NewAuthorizerWithTokenHasher([]auth.TeamConfig{
 		{
 			Team:        "platform-admin",
 			AdminTokens: []string{"session-token"},
 		},
-	})
+	}, httpAPITestTokenHasher())
 	if err != nil {
 		t.Fatalf("NewAuthorizer() error = %v", err)
 	}
 	router := &Router{
 		modules:             service.NewModuleService(st, testArtifactStorage{}, "modules", nil),
 		authorizer:          staleAuthorizer,
+		tokenHasher:         httpAPITestTokenHasher(),
 		adminToken:          "runtime-admin-token",
-		manageSessions:      newManageSessionStore("shared-session-secret"),
+		manageSessions:      newManageSessionStore(service.NewModuleService(st, testArtifactStorage{}, "modules", nil), "shared-session-secret"),
+		tokenUsage:          throttle.NewExpirySet(defaultTokenUsageMaxEntries, tokenUsageRecordInterval),
 		refreshAccessConfig: true,
 	}
-	sessionID, err := router.manageSessions.Create("session-token", manageSessionTTL)
+	sessionID, _, err := router.manageSessions.Create(ctx, httpAPITestTokenHasher().Digest("session-token"), "", manageSessionTTL)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -310,22 +654,26 @@ func TestManageAccessPostRefreshesStaleAdminBeforeSaving(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ReplaceTeamConfigs() error = %v", err)
 	}
-	staleAuthorizer, err := auth.NewAuthorizer([]auth.TeamConfig{
+	staleAuthorizer, err := auth.NewAuthorizerWithTokenHasher([]auth.TeamConfig{
 		{
 			Team:        "platform-admin",
 			AdminTokens: []string{"session-token"},
 		},
-	})
+	}, httpAPITestTokenHasher())
 	if err != nil {
 		t.Fatalf("NewAuthorizer() error = %v", err)
 	}
-	router := NewRouter(RouterConfig{
+	router, err := NewRouter(RouterConfig{
 		Modules:             service.NewModuleService(st, testArtifactStorage{}, "modules", nil),
 		Authorizer:          staleAuthorizer,
+		TokenHasher:         httpAPITestTokenHasher(),
 		AdminToken:          "runtime-admin-token",
-		ManageSessionSecret: "shared-session-secret",
+		ManageSessionSecret: "shared-manage-session-secret-32-bytes",
 		RefreshAccessConfig: true,
 	})
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 
@@ -357,16 +705,295 @@ func TestManageAccessPostRefreshesStaleAdminBeforeSaving(t *testing.T) {
 	}
 }
 
-func TestIndexFilterHiddenRowsStayHidden(t *testing.T) {
+func TestIndexFilterRefreshesPaginatedResultsWithoutReload(t *testing.T) {
 	t.Parallel()
 
 	var page bytes.Buffer
 	if err := indexPageTemplate.Execute(&page, indexPageData{}); err != nil {
 		t.Fatalf("indexPageTemplate.Execute() error = %v", err)
 	}
-	if !strings.Contains(page.String(), ".row[hidden]") {
-		t.Fatalf("index page does not force filtered rows hidden:\n%s", page.String())
+	if !strings.Contains(page.String(), ".list {\n      padding: 10px 0;\n      overflow: hidden;") {
+		t.Fatalf("index page does not clip module rows to the rounded list boundary:\n%s", page.String())
 	}
+	for _, want := range []string{
+		`id="module-filter-form"`,
+		`data-async-filter="module-list"`,
+		`id="module-list" data-async-list`,
+		`name="q" type="search"`,
+		`const refreshList = async (targetID, requestURL, options = {}) =>`,
+		`const url = requestURL.toString();`,
+		`const replacement = nextPage.getElementById(targetID)`,
+		`current.replaceWith(replacement)`,
+		`window.setTimeout(() =>`,
+	} {
+		if !strings.Contains(page.String(), want) {
+			t.Fatalf("index page misses paginated live filtering %q:\n%s", want, page.String())
+		}
+	}
+}
+
+func TestIndexOwnerFilterDeepLink(t *testing.T) {
+	t.Parallel()
+
+	st := newHTTPAPITestStore(t)
+	createTeamnameApacheModuleAndRelease(t, st)
+	ctx := context.Background()
+	other, err := st.UpsertModule(ctx, "other", "nginx")
+	if err != nil {
+		t.Fatalf("UpsertModule(other/nginx) error = %v", err)
+	}
+	if _, err := st.CreateRelease(ctx, domain.Release{
+		ID:          "release-other-nginx",
+		ModuleID:    other.ID,
+		Owner:       other.Owner,
+		Name:        other.Name,
+		Source:      "local",
+		Version:     "1.0.0",
+		FileName:    "other-nginx-1.0.0.tar.gz",
+		ContentType: "application/gzip",
+		SizeBytes:   1,
+		SHA256:      "other-nginx-sha256",
+		StoragePath: "modules/other/nginx/1.0.0/other-nginx-1.0.0.tar.gz",
+	}); err != nil {
+		t.Fatalf("CreateRelease(other/nginx) error = %v", err)
+	}
+
+	handler := newTestRouter(service.NewModuleService(st, testArtifactStorage{}, "modules", nil), nil, "", nil, nil, "admin-token", true, defaultActiveReleaseTTL)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/?owner=teamname", nil))
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET /?owner=teamname status = %d body:\n%s", recorder.Code, body)
+	}
+	for _, want := range []string{
+		`<span><a href="/">Modules</a></span>`,
+		`<span aria-current="page">teamname</span>`,
+		`<h1>teamname Modules</h1>`,
+		`Modules published in the teamname space.`,
+		`placeholder="Filter teamname modules"`,
+		`href="/modules/teamname/apache"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("owner-filtered index misses %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `href="/modules/other/nginx"`) {
+		t.Fatalf("owner-filtered index contains another owner's module:\n%s", body)
+	}
+}
+
+func TestManageAccessTokenCreateRotateAndRevoke(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	client, baseURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{
+		Team:          "teamname",
+		PublishOwners: []string{"teamname"},
+		OIDCGroups:    []string{"teamname-publishers"},
+	}})
+	unnamed := manageFormValues(t, client, baseURL, url.Values{
+		"action": {"create"}, "team": {"teamname"}, "role": {"read"},
+	})
+	unnamedResp, err := client.PostForm(baseURL+"/manage/access/token", unnamed)
+	if err != nil {
+		t.Fatalf("unnamed access token request error = %v", err)
+	}
+	_ = unnamedResp.Body.Close()
+	if unnamedResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unnamed access token status = %d, want %d", unnamedResp.StatusCode, http.StatusBadRequest)
+	}
+
+	create := manageFormValues(t, client, baseURL, url.Values{
+		"action":       {"create"},
+		"team":         {"teamname"},
+		"role":         {"read"},
+		"name":         {"production r10k"},
+		"expires_days": {"30"},
+		"next":         {"/manage/teams/teamname/tokens"},
+	})
+	createReq, err := http.NewRequest(http.MethodPost, baseURL+"/manage/access/token", strings.NewReader(create.Encode()))
+	if err != nil {
+		t.Fatalf("build create access token request: %v", err)
+	}
+	createReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	createReq.Header.Set("Origin", "null")
+	resp, err := client.Do(createReq)
+	if err != nil {
+		t.Fatalf("create access token error = %v", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read create response error = %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("create response status=%d cache-control=%q body=%s", resp.StatusCode, resp.Header.Get("Cache-Control"), body)
+	}
+	oldRaw := accessTokenFromHTML(t, string(body), "pf_read_")
+	configs, err := st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() error = %v", err)
+	}
+	oldRecord := configs[0].ReadTokenRecords[0]
+	if oldRecord.Digest != httpAPITestTokenHasher().Digest(oldRaw) || oldRecord.Description != "production r10k" || oldRecord.ExpiresAt == nil {
+		t.Fatalf("unexpected created token record: %#v", oldRecord)
+	}
+	duplicate := manageFormValues(t, client, baseURL, url.Values{
+		"action": {"create"}, "team": {"teamname"}, "role": {"read"}, "name": {"Production R10K"},
+	})
+	duplicateResp, err := client.PostForm(baseURL+"/manage/access/token", duplicate)
+	if err != nil {
+		t.Fatalf("duplicate access token request error = %v", err)
+	}
+	_ = duplicateResp.Body.Close()
+	if duplicateResp.StatusCode != http.StatusConflict {
+		t.Fatalf("duplicate access token status = %d, want %d", duplicateResp.StatusCode, http.StatusConflict)
+	}
+	authorizer, err := auth.NewAuthorizerWithTokenHasher(configs, httpAPITestTokenHasher())
+	if err != nil {
+		t.Fatalf("NewAuthorizerWithTokenHasher() error = %v", err)
+	}
+	usageServer := httptest.NewServer(newTestRouter(service.NewModuleService(st, testArtifactStorage{}, "modules", nil), nil, "http://example.test", authorizer, nil, "admin-token", false, defaultActiveReleaseTTL))
+	t.Cleanup(usageServer.Close)
+	usageReq, err := http.NewRequest(http.MethodGet, usageServer.URL+"/api/v1/modules", nil)
+	if err != nil {
+		t.Fatalf("NewRequest(token usage) error = %v", err)
+	}
+	usageReq.Header.Set("Authorization", "Bearer "+oldRaw)
+	usageResp, err := usageServer.Client().Do(usageReq)
+	if err != nil {
+		t.Fatalf("GET modules with managed token error = %v", err)
+	}
+	_ = usageResp.Body.Close()
+	if usageResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET modules with managed token status = %d", usageResp.StatusCode)
+	}
+	configs, err = st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() after token use error = %v", err)
+	}
+	if configs[0].ReadTokenRecords[0].LastUsedAt == nil {
+		t.Fatal("successful read request did not update last_used_at")
+	}
+
+	pageResp, err := client.Get(baseURL + "/manage/teams/teamname/tokens")
+	if err != nil {
+		t.Fatalf("GET team page error = %v", err)
+	}
+	pageBody, _ := io.ReadAll(pageResp.Body)
+	_ = pageResp.Body.Close()
+	if strings.Contains(string(pageBody), oldRaw) || !strings.Contains(string(pageBody), oldRecord.Prefix) {
+		t.Fatalf("team page leaked raw token or omitted prefix:\n%s", pageBody)
+	}
+
+	rotate := manageFormValues(t, client, baseURL, url.Values{
+		"action":   {"rotate"},
+		"team":     {"teamname"},
+		"token_id": {oldRecord.ID},
+		"next":     {"/manage/teams/teamname/tokens"},
+	})
+	resp, err = client.PostForm(baseURL+"/manage/access/token", rotate)
+	if err != nil {
+		t.Fatalf("rotate access token error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	newRaw := accessTokenFromHTML(t, string(body), "pf_read_")
+	configs, err = st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() after rotate error = %v", err)
+	}
+	var rotatedOld, newRecord *auth.AccessTokenRecord
+	for i := range configs[0].ReadTokenRecords {
+		record := &configs[0].ReadTokenRecords[i]
+		if record.ID == oldRecord.ID {
+			rotatedOld = record
+		} else {
+			newRecord = record
+		}
+	}
+	if len(configs[0].ReadTokenRecords) != 2 || rotatedOld == nil || rotatedOld.RevokedAt == nil || newRecord == nil {
+		t.Fatalf("rotation did not revoke old and create new token: %#v", configs[0].ReadTokenRecords)
+	}
+	authorizer, err = auth.NewAuthorizerWithTokenHasher(configs, httpAPITestTokenHasher())
+	if err != nil {
+		t.Fatalf("NewAuthorizerWithTokenHasher() error = %v", err)
+	}
+	if _, ok := authorizer.AuthenticateToken(oldRaw); ok {
+		t.Fatal("rotated token still authenticates")
+	}
+	if _, ok := authorizer.AuthenticateToken(newRaw); !ok {
+		t.Fatal("replacement token does not authenticate")
+	}
+
+	revoke := manageFormValues(t, client, baseURL, url.Values{
+		"action":   {"revoke"},
+		"team":     {"teamname"},
+		"token_id": {newRecord.ID},
+		"next":     {"/manage/teams/teamname/tokens"},
+	})
+	if _, err := client.PostForm(baseURL+"/manage/access/token", revoke); err != nil {
+		t.Fatalf("revoke access token error = %v", err)
+	}
+	configs, err = st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() after revoke error = %v", err)
+	}
+	authorizer, err = auth.NewAuthorizerWithTokenHasher(configs, httpAPITestTokenHasher())
+	if err != nil {
+		t.Fatalf("NewAuthorizerWithTokenHasher() after revoke error = %v", err)
+	}
+	if _, ok := authorizer.AuthenticateToken(newRaw); ok {
+		t.Fatal("revoked replacement token still authenticates")
+	}
+}
+
+func TestManageAccessTokenNormalizesRoleBeforeStorage(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	client, baseURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{
+		Team:          "teamname",
+		PublishOwners: []string{"teamname"},
+	}})
+	form := manageFormValues(t, client, baseURL, url.Values{
+		"action": {"create"}, "team": {"teamname"}, "role": {"READ"}, "name": {"deployment"},
+	})
+	resp, err := client.PostForm(baseURL+"/manage/access/token", form)
+	if err != nil {
+		t.Fatalf("create access token error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create access token status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	configs, err := st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() error = %v", err)
+	}
+	if len(configs[0].ReadTokenRecords) != 1 || len(configs[0].PublishTokenRecords) != 0 {
+		t.Fatalf("token records stored under wrong role: read=%d publish=%d", len(configs[0].ReadTokenRecords), len(configs[0].PublishTokenRecords))
+	}
+}
+
+func accessTokenFromHTML(t *testing.T, body, prefix string) string {
+	t.Helper()
+	const marker = `<code id="created-token">`
+	markerStart := strings.Index(body, marker)
+	if markerStart < 0 {
+		t.Fatalf("created token element not found in response:\n%s", body)
+	}
+	start := markerStart + len(marker)
+	if !strings.HasPrefix(body[start:], prefix) {
+		t.Fatalf("token prefix %q not found in created token element:\n%s", prefix, body)
+	}
+	end := strings.IndexByte(body[start:], '<')
+	if end < 0 {
+		t.Fatalf("token terminator not found in response:\n%s", body)
+	}
+	return body[start : start+end]
 }
 
 func TestManageAdminCanDeleteVersion(t *testing.T) {
@@ -393,7 +1020,7 @@ func TestManageAdminCanDeleteVersion(t *testing.T) {
 	client.Jar = jar
 
 	postManageToken(t, client, server.URL, "teamname-token")
-	body := getBody(t, client, server.URL+"/manage")
+	body := getBody(t, client, server.URL+"/manage/modules")
 	if strings.Contains(body, "/manage/modules/teamname/apache/versions/1.2.3/delete") || strings.Contains(body, "delete module") {
 		t.Fatalf("publisher manage page exposes delete actions:\n%s", body)
 	}
@@ -486,6 +1113,34 @@ func TestDeleteReleaseRejectsLatestAndActiveVersions(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(body), "latest release teamname/apache 2.0.0 cannot be deleted") {
 		t.Fatalf("expected API latest delete to get 409 protected error, got %d body=%s", resp.StatusCode, string(body))
+	}
+}
+
+func TestReleaseAPIResponseHidesStorageDetails(t *testing.T) {
+	t.Parallel()
+
+	response := newReleaseAPIResponse(domain.Release{
+		ID:              "release-id",
+		ModuleID:        "module-id",
+		Owner:           "teamname",
+		Name:            "apache",
+		Version:         "1.2.3",
+		StoragePath:     "modules/teamname/apache/private.tar.gz",
+		UpstreamFileURI: "https://upstream.example/v3/files/private.tar.gz",
+		DownloadURL:     "https://bucket.example/private.tar.gz",
+	})
+	body, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	encoded := string(body)
+	for _, forbidden := range []string{"storage_path", "upstream_file_uri", "bucket.example", "upstream.example", "private.tar.gz"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("release API response exposes %q: %s", forbidden, encoded)
+		}
+	}
+	if response.DownloadURL != "/api/v1/modules/teamname/apache/versions/1.2.3/download" {
+		t.Fatalf("download URL = %q", response.DownloadURL)
 	}
 }
 
@@ -595,7 +1250,12 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 	}
 
 	archiveBody := []byte("local archive bytes")
-	moduleSvc := service.NewModuleService(st, fixedDownloadStorage{body: archiveBody, contentType: "application/gzip"}, "modules", nil)
+	md5Sum := md5.Sum(archiveBody)
+	expectedMD5 := hex.EncodeToString(md5Sum[:])
+	sha256Sum := sha256.Sum256(archiveBody)
+	expectedSHA256 := hex.EncodeToString(sha256Sum[:])
+	artifacts := &countingDownloadStorage{fixedDownloadStorage: fixedDownloadStorage{body: archiveBody, contentType: "application/gzip"}}
+	moduleSvc := service.NewModuleService(st, artifacts, "modules", nil)
 	authorizer := newAdminAuthorizer(t)
 
 	server := httptest.NewServer(newTestRouter(moduleSvc, nil, "http://example.test", authorizer, nil, "admin-token", true, defaultActiveReleaseTTL))
@@ -622,15 +1282,44 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 	if got := resp.Header.Get("Content-Length"); got != "19" {
 		t.Fatalf("download content length = %q, want 19", got)
 	}
+	if got := resp.Header.Get("ETag"); got != `"`+expectedSHA256+`"` {
+		t.Fatalf("download ETag = %q, want SHA-256 validator", got)
+	}
 	if !bytes.Equal(downloadBody, archiveBody) {
 		t.Fatalf("download body = %q, want %q", downloadBody, archiveBody)
+	}
+	stored, err := st.GetRelease(ctx, "teamname", "apache", "1.2.3")
+	if err != nil {
+		t.Fatalf("GetRelease() error = %v", err)
+	}
+	if stored.MD5 != expectedMD5 || stored.SHA256 != expectedSHA256 || stored.SizeBytes != int64(len(archiveBody)) {
+		t.Fatalf("stored checksums = md5:%q sha256:%q size:%d", stored.MD5, stored.SHA256, stored.SizeBytes)
+	}
+	if artifacts.downloads != 2 {
+		t.Fatalf("archive opens after first download = %d, want checksum plus response", artifacts.downloads)
+	}
+
+	headReq, err := http.NewRequest(http.MethodHead, server.URL+"/api/v1/modules/teamname/apache/versions/1.2.3/download", nil)
+	if err != nil {
+		t.Fatalf("NewRequest(HEAD) error = %v", err)
+	}
+	headResp, err := server.Client().Do(headReq)
+	if err != nil {
+		t.Fatalf("HEAD download error = %v", err)
+	}
+	_ = headResp.Body.Close()
+	if headResp.StatusCode != http.StatusOK || headResp.Header.Get("ETag") != `"`+expectedSHA256+`"` {
+		t.Fatalf("HEAD download status=%d ETag=%q", headResp.StatusCode, headResp.Header.Get("ETag"))
+	}
+	if artifacts.downloads != 2 {
+		t.Fatalf("archive opens after cached-checksum HEAD = %d, want 2", artifacts.downloads)
 	}
 
 	jar := newCookieJar(t)
 	client := &http.Client{Transport: server.Client().Transport}
 	client.Jar = jar
 	postManageToken(t, client, server.URL, "admin-token")
-	body := getBody(t, client, server.URL+"/manage")
+	body := getBody(t, client, server.URL+"/manage/modules")
 
 	if strings.Contains(body, "/manage/modules/teamname/apache/versions/1.2.3/delete") {
 		t.Fatalf("manage page exposes delete for active release:\n%s", body)
@@ -676,6 +1365,101 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 	}
 }
 
+func TestReleaseDownloadHTTPRangeAndConditionalSemantics(t *testing.T) {
+	t.Parallel()
+
+	st := newHTTPAPITestStore(t)
+	ctx := context.Background()
+	module, err := st.UpsertModule(ctx, "platform-core", "reverse-proxy")
+	if err != nil {
+		t.Fatalf("UpsertModule() error = %v", err)
+	}
+	body := []byte("0123456789")
+	_, err = st.CreateRelease(ctx, domain.Release{
+		ID: "range-release", ModuleID: module.ID, Owner: module.Owner, Name: module.Name,
+		Source: "local", Version: "1.2.3-rc.1", FileName: "archive.tar.gz",
+		ContentType: "application/gzip", SizeBytes: int64(len(body)), MD5: "md5", SHA256: "sha256-range",
+		StoragePath: "modules/archive.tar.gz", Metadata: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("CreateRelease() error = %v", err)
+	}
+	artifacts := &trackingRangeStorage{fixedDownloadStorage: fixedDownloadStorage{body: body, contentType: "application/gzip"}}
+	moduleSvc := service.NewModuleService(st, artifacts, "modules", nil)
+	server := httptest.NewServer(newTestRouter(moduleSvc, http.NotFoundHandler(), "http://example.test", nil, nil, "", true, defaultActiveReleaseTTL))
+	t.Cleanup(server.Close)
+	downloadURL := server.URL + "/api/v1/modules/platform-core/reverse-proxy/versions/1.2.3-rc.1/download"
+
+	request := func(method, byteRange, ifNoneMatch, ifRange string) (*http.Response, []byte) {
+		t.Helper()
+		req, err := http.NewRequest(method, downloadURL, nil)
+		if err != nil {
+			t.Fatalf("NewRequest() error = %v", err)
+		}
+		if byteRange != "" {
+			req.Header.Set("Range", byteRange)
+		}
+		if ifNoneMatch != "" {
+			req.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		if ifRange != "" {
+			req.Header.Set("If-Range", ifRange)
+		}
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Do() error = %v", err)
+		}
+		responseBody, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		return resp, responseBody
+	}
+
+	resp, got := request(http.MethodGet, "", "", "")
+	if resp.StatusCode != http.StatusOK || string(got) != string(body) || resp.Header.Get("ETag") != `"sha256-range"` {
+		t.Fatalf("full download = %d %q ETag=%q", resp.StatusCode, got, resp.Header.Get("ETag"))
+	}
+	if resp.Header.Get("Accept-Ranges") != "bytes" || resp.Header.Get("Content-Length") != "10" {
+		t.Fatalf("full download headers = %#v", resp.Header)
+	}
+
+	resp, got = request(http.MethodHead, "", "", "")
+	if resp.StatusCode != http.StatusOK || len(got) != 0 || resp.Header.Get("Content-Length") != "10" {
+		t.Fatalf("HEAD = %d %q headers=%#v", resp.StatusCode, got, resp.Header)
+	}
+
+	resp, got = request(http.MethodGet, "bytes=2-5", "", "")
+	if resp.StatusCode != http.StatusPartialContent || string(got) != "2345" || resp.Header.Get("Content-Range") != "bytes 2-5/10" {
+		t.Fatalf("range = %d %q headers=%#v", resp.StatusCode, got, resp.Header)
+	}
+	resp, got = request(http.MethodGet, "bytes=-3", "", "")
+	if resp.StatusCode != http.StatusPartialContent || string(got) != "789" || resp.Header.Get("Content-Range") != "bytes 7-9/10" {
+		t.Fatalf("suffix range = %d %q headers=%#v", resp.StatusCode, got, resp.Header)
+	}
+
+	for _, invalidRange := range []string{"bytes=1-2,4-5", "bytes=99-100", "items=0-1"} {
+		resp, _ = request(http.MethodGet, invalidRange, "", "")
+		if resp.StatusCode != http.StatusRequestedRangeNotSatisfiable || resp.Header.Get("Content-Range") != "bytes */10" {
+			t.Fatalf("invalid range %q = %d headers=%#v", invalidRange, resp.StatusCode, resp.Header)
+		}
+	}
+
+	resp, got = request(http.MethodGet, "", `"sha256-range"`, "")
+	if resp.StatusCode != http.StatusNotModified || len(got) != 0 {
+		t.Fatalf("conditional GET = %d %q", resp.StatusCode, got)
+	}
+	resp, got = request(http.MethodGet, "bytes=0-1", "", `"other"`)
+	if resp.StatusCode != http.StatusOK || string(got) != string(body) {
+		t.Fatalf("If-Range mismatch = %d %q", resp.StatusCode, got)
+	}
+	fullOpens, rangeOpens := artifacts.openCounts()
+	if fullOpens != 2 || rangeOpens != 2 {
+		t.Fatalf("object opens full=%d range=%d, want 2 and 2", fullOpens, rangeOpens)
+	}
+}
+
 func TestReleaseV3FileURIUsesForwardedHost(t *testing.T) {
 	t.Parallel()
 
@@ -691,6 +1475,48 @@ func TestReleaseV3FileURIUsesForwardedHost(t *testing.T) {
 
 	if got != "https://forge.example.com/v3/files/puppetlabs-concat-9.1.0.tar.gz" {
 		t.Fatalf("releaseV3FileURI() = %q", got)
+	}
+}
+
+func TestLocalV3ModuleWithoutReleasesHasNullCurrentRelease(t *testing.T) {
+	t.Parallel()
+
+	st := newHTTPAPITestStore(t)
+	if _, err := st.UpsertModule(context.Background(), "teamname", "empty"); err != nil {
+		t.Fatalf("UpsertModule() error = %v", err)
+	}
+
+	proxyCalls := 0
+	forgeProxy := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		proxyCalls++
+		http.NotFound(w, req)
+	})
+	moduleSvc := service.NewModuleService(st, testArtifactStorage{}, "modules", nil)
+	server := httptest.NewServer(newTestRouter(moduleSvc, forgeProxy, "http://example.test", nil, nil, "", true, defaultActiveReleaseTTL))
+	t.Cleanup(server.Close)
+
+	resp, err := server.Client().Get(server.URL + "/v3/modules/teamname-empty")
+	if err != nil {
+		t.Fatalf("GET /v3/modules error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v3/modules status = %d", resp.StatusCode)
+	}
+
+	var module map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&module); err != nil {
+		t.Fatalf("decode module JSON error = %v", err)
+	}
+	if module["current_release"] != nil {
+		t.Fatalf("current_release = %#v, want null", module["current_release"])
+	}
+	releases, ok := module["releases"].([]any)
+	if !ok || len(releases) != 0 {
+		t.Fatalf("releases = %#v, want empty array", module["releases"])
+	}
+	if proxyCalls != 0 {
+		t.Fatalf("Forge proxy calls = %d, want zero", proxyCalls)
 	}
 }
 
@@ -771,6 +1597,78 @@ func TestV3ReleaseChecksumsComeFromServedArchive(t *testing.T) {
 	}
 	if artifacts.downloads != 1 {
 		t.Fatalf("release archive downloads = %d, want one lazy checksum backfill", artifacts.downloads)
+	}
+}
+
+func TestIncompleteUpstreamV3ReleaseDoesNotReturnMalformedSuccess(t *testing.T) {
+	t.Parallel()
+
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalls.Add(1)
+		http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(upstream.Close)
+
+	artifacts := testArtifactStorage{}
+	forgeProxy, err := proxy.NewForgeProxy(
+		upstream.URL,
+		0,
+		1024,
+		artifacts,
+		"upstream-cache",
+		proxy.WithHTTPClient(upstream.Client()),
+		proxy.WithPrivateNetworks(),
+	)
+	if err != nil {
+		t.Fatalf("NewForgeProxy() error = %v", err)
+	}
+
+	st := newHTTPAPITestStore(t)
+	ctx := context.Background()
+	module, err := st.UpsertModule(ctx, "puppetlabs", "concat")
+	if err != nil {
+		t.Fatalf("UpsertModule() error = %v", err)
+	}
+	if _, err := st.CreateRelease(ctx, domain.Release{
+		ID:           "release-incomplete",
+		ModuleID:     module.ID,
+		Owner:        "puppetlabs",
+		Name:         "concat",
+		Source:       "upstream",
+		Version:      "9.1.0",
+		FileName:     "puppetlabs-concat-9.1.0.tar.gz",
+		ContentType:  "application/gzip",
+		UpstreamSlug: "puppetlabs-concat-9.1.0",
+		Metadata:     map[string]any{},
+	}); err != nil {
+		t.Fatalf("CreateRelease() error = %v", err)
+	}
+
+	moduleSvc := service.NewModuleService(st, artifacts, "modules", forgeProxy)
+	server := httptest.NewServer(newTestRouter(
+		moduleSvc,
+		forgeProxy.Handler(),
+		"http://example.test",
+		nil,
+		nil,
+		"",
+		true,
+		defaultActiveReleaseTTL,
+	))
+	t.Cleanup(server.Close)
+
+	resp, err := server.Client().Get(server.URL + "/v3/releases/puppetlabs-concat-9.1.0")
+	if err != nil {
+		t.Fatalf("GET /v3/releases error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("GET /v3/releases returned malformed success: %s", body)
+	}
+	if upstreamCalls.Load() < 2 {
+		t.Fatalf("upstream calls = %d, want hydration attempt and proxy fallback", upstreamCalls.Load())
 	}
 }
 
@@ -882,7 +1780,7 @@ func TestUpstreamV3FileDownloadMarksReleaseUsed(t *testing.T) {
 	client := &http.Client{Transport: server.Client().Transport}
 	client.Jar = jar
 	postManageToken(t, client, server.URL, "admin-token")
-	body := getBody(t, client, server.URL+"/manage")
+	body := getBody(t, client, server.URL+"/manage/modules")
 
 	if !strings.Contains(body, "in use") {
 		t.Fatalf("manage page does not mark upstream v3 download as active:\n%s", body)
@@ -904,7 +1802,7 @@ func TestUpstreamV3ReleaseUsesLocalFileURIAndMarksSelectedVersionActive(t *testi
 				"version":"9.1.0",
 				"file_uri":"https://forgeapi.puppetlabs.com/v3/files/puppetlabs-concat-9.1.0.tar.gz",
 				"file_name":"puppetlabs-concat-9.1.0.tar.gz",
-				"file_sha256":"upstream-sha256"
+				"file_sha256":"9f844ff2df372c25823534f525bb2b31e853c5a7c6b8b8641a67ef03e83a460d"
 			}`))
 		case "/v3/files/puppetlabs-concat-9.1.0.tar.gz":
 			w.Header().Set("Content-Type", "application/gzip")
@@ -915,7 +1813,8 @@ func TestUpstreamV3ReleaseUsesLocalFileURIAndMarksSelectedVersionActive(t *testi
 	}))
 	t.Cleanup(upstream.Close)
 
-	forgeProxy, err := proxy.NewForgeProxy(upstream.URL, 0, 1024, testArtifactStorage{}, "upstream-cache")
+	artifacts := fixedDownloadStorage{body: []byte("upstream archive"), contentType: "application/gzip"}
+	forgeProxy, err := proxy.NewForgeProxy(upstream.URL, 0, 1024, artifacts, "upstream-cache", proxy.WithHTTPClient(upstream.Client()), proxy.WithPrivateNetworks())
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
@@ -957,7 +1856,7 @@ func TestUpstreamV3ReleaseUsesLocalFileURIAndMarksSelectedVersionActive(t *testi
 		}
 	}
 
-	moduleSvc := service.NewModuleService(st, testArtifactStorage{}, "modules", forgeProxy)
+	moduleSvc := service.NewModuleService(st, artifacts, "modules", forgeProxy)
 	server := newAdminServer(t, moduleSvc, forgeProxy.Handler())
 	resp := getV3Release(t, server)
 	var releaseJSON map[string]any
@@ -973,6 +1872,15 @@ func TestUpstreamV3ReleaseUsesLocalFileURIAndMarksSelectedVersionActive(t *testi
 	if !strings.HasPrefix(fileURI, server.URL+"/v3/files/") {
 		t.Fatalf("file_uri = %q, want local server URL %q", fileURI, server.URL)
 	}
+	archiveBody := []byte("upstream archive")
+	md5Sum := md5.Sum(archiveBody)
+	sha256Sum := sha256.Sum256(archiveBody)
+	if releaseJSON["file_md5"] != hex.EncodeToString(md5Sum[:]) {
+		t.Fatalf("file_md5 = %q, want checksum of served archive", releaseJSON["file_md5"])
+	}
+	if releaseJSON["file_sha256"] != hex.EncodeToString(sha256Sum[:]) {
+		t.Fatalf("file_sha256 = %q, want checksum of served archive", releaseJSON["file_sha256"])
+	}
 
 	resp, err = server.Client().Get(fileURI)
 	if err != nil {
@@ -987,7 +1895,7 @@ func TestUpstreamV3ReleaseUsesLocalFileURIAndMarksSelectedVersionActive(t *testi
 	client := &http.Client{Transport: server.Client().Transport}
 	client.Jar = jar
 	postManageToken(t, client, server.URL, "admin-token")
-	body := getBody(t, client, server.URL+"/manage")
+	body := getBody(t, client, server.URL+"/manage/modules")
 
 	if !strings.Contains(body, "9.1.0") || !strings.Contains(body, "in use") {
 		t.Fatalf("manage page does not mark selected upstream release active:\n%s", body)
@@ -1012,16 +1920,20 @@ func TestV3ReleaseRequestMarksSelectedVersionActive(t *testing.T) {
 	}
 	for _, release := range []domain.Release{
 		{
-			ID:          "release-9.1.0",
-			ModuleID:    module.ID,
-			Owner:       "puppetlabs",
-			Name:        "concat",
-			Source:      "upstream",
-			Version:     "9.1.0",
-			FileName:    "puppetlabs-concat-9.1.0.tar.gz",
-			ContentType: "application/gzip",
-			SHA256:      "upstream-sha256",
-			Metadata:    map[string]any{},
+			ID:              "release-9.1.0",
+			ModuleID:        module.ID,
+			Owner:           "puppetlabs",
+			Name:            "concat",
+			Source:          "upstream",
+			Version:         "9.1.0",
+			FileName:        "puppetlabs-concat-9.1.0.tar.gz",
+			ContentType:     "application/gzip",
+			SizeBytes:       16,
+			MD5:             "c57d31f96ef80516f1e4807278b21da6",
+			SHA256:          "9f844ff2df372c25823534f525bb2b31e853c5a7c6b8b8641a67ef03e83a460d",
+			StoragePath:     "upstream-cache/v3/files/puppetlabs-concat-9.1.0.tar.gz",
+			UpstreamFileURI: "https://forgeapi.puppetlabs.com/v3/files/puppetlabs-concat-9.1.0.tar.gz",
+			Metadata:        map[string]any{},
 		},
 		{
 			ID:          "release-10.0.0",
@@ -1053,7 +1965,7 @@ func TestV3ReleaseRequestMarksSelectedVersionActive(t *testing.T) {
 	client := &http.Client{Transport: server.Client().Transport}
 	client.Jar = jar
 	postManageToken(t, client, server.URL, "admin-token")
-	body := getBody(t, client, server.URL+"/manage")
+	body := getBody(t, client, server.URL+"/manage/modules")
 
 	if !strings.Contains(body, "9.1.0") || !strings.Contains(body, "in use") {
 		t.Fatalf("manage page does not mark requested release active:\n%s", body)
@@ -1063,7 +1975,7 @@ func TestV3ReleaseRequestMarksSelectedVersionActive(t *testing.T) {
 	}
 }
 
-func TestV3ModuleRequestMarksLatestReleaseActive(t *testing.T) {
+func TestV3ModuleRequestDoesNotMarkLatestReleaseActive(t *testing.T) {
 	t.Parallel()
 
 	st := newHTTPAPITestStore(t)
@@ -1114,15 +2026,15 @@ func TestV3ModuleRequestMarksLatestReleaseActive(t *testing.T) {
 	if !strings.Contains(body, "9.1.0") {
 		t.Fatalf("manage page does not show latest release after module request:\n%s", body)
 	}
-	if !strings.Contains(body, "in use") {
-		t.Fatalf("manage page does not mark latest release active after module request:\n%s", body)
+	if strings.Contains(body, "in use") {
+		t.Fatalf("module metadata request incorrectly marks latest release active:\n%s", body)
 	}
 	if strings.Contains(body, "/manage/modules/stm/debconf/versions/9.1.0/delete") {
 		t.Fatalf("manage page exposes delete for latest release:\n%s", body)
 	}
 }
 
-func TestUpstreamV3ModuleRequestIndexesAndMarksCurrentReleaseActive(t *testing.T) {
+func TestUpstreamV3ModuleRequestIndexesWithoutMarkingCurrentReleaseActive(t *testing.T) {
 	t.Parallel()
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -1141,20 +2053,19 @@ func TestUpstreamV3ModuleRequestIndexesAndMarksCurrentReleaseActive(t *testing.T
 	}))
 	t.Cleanup(upstream.Close)
 
-	forgeProxy, err := proxy.NewForgeProxy(upstream.URL, 0, 1024, testArtifactStorage{}, "upstream-cache")
+	forgeProxy, err := proxy.NewForgeProxy(upstream.URL, 0, 1024, testArtifactStorage{}, "upstream-cache", proxy.WithHTTPClient(upstream.Client()), proxy.WithPrivateNetworks())
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
 	st := newHTTPAPITestStore(t)
 
 	moduleSvc := service.NewModuleService(st, testArtifactStorage{}, "modules", forgeProxy)
-	forgeProxy.SetModuleObserver(func(ctx context.Context, module proxy.UpstreamModule) {
-		if err := moduleSvc.IndexUpstreamModule(ctx, module); err != nil {
-			t.Errorf("IndexUpstreamModule() error = %v", err)
-			return
-		}
-		if err := moduleSvc.MarkUpstreamModuleCurrentReleaseUsed(ctx, module); err != nil {
-			t.Errorf("MarkUpstreamModuleCurrentReleaseUsed() error = %v", err)
+	forgeProxy.SetModuleObserver(func(ctx context.Context, module proxy.UpstreamModule, fresh bool) {
+		if fresh {
+			if err := moduleSvc.IndexUpstreamModule(ctx, module); err != nil {
+				t.Errorf("IndexUpstreamModule() error = %v", err)
+				return
+			}
 		}
 	})
 	server := newAdminServer(t, moduleSvc, forgeProxy.Handler())
@@ -1164,8 +2075,8 @@ func TestUpstreamV3ModuleRequestIndexesAndMarksCurrentReleaseActive(t *testing.T
 	if !strings.Contains(body, "9.1.0") {
 		t.Fatalf("manage page does not show indexed upstream current release:\n%s", body)
 	}
-	if !strings.Contains(body, "in use") {
-		t.Fatalf("manage page does not mark upstream current release active after module request:\n%s", body)
+	if strings.Contains(body, "in use") {
+		t.Fatalf("upstream module metadata request incorrectly marks current release active:\n%s", body)
 	}
 	if strings.Contains(body, "/manage/modules/stm/debconf/versions/9.1.0/delete") {
 		t.Fatalf("manage page exposes delete for latest upstream current release:\n%s", body)
@@ -1174,6 +2085,7 @@ func TestUpstreamV3ModuleRequestIndexesAndMarksCurrentReleaseActive(t *testing.T
 
 func TestV3ReleaseRequestRestoresDeletedUpstreamReleaseOnDemand(t *testing.T) {
 	t.Parallel()
+	archive := []byte("restored upstream archive")
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path != "/v3/releases/puppetlabs-stdlib-1.0.0" {
@@ -1193,12 +2105,13 @@ func TestV3ReleaseRequestRestoresDeletedUpstreamReleaseOnDemand(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	forgeProxy, err := proxy.NewForgeProxy(upstream.URL, 0, 1024, testArtifactStorage{}, "upstream-cache")
+	artifacts := fixedDownloadStorage{body: archive, contentType: "application/gzip"}
+	forgeProxy, err := proxy.NewForgeProxy(upstream.URL, 0, 1024, artifacts, "upstream-cache", proxy.WithHTTPClient(upstream.Client()), proxy.WithPrivateNetworks())
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
 	st := newHTTPAPITestStore(t)
-	moduleSvc := service.NewModuleService(st, testArtifactStorage{}, "modules", forgeProxy)
+	moduleSvc := service.NewModuleService(st, artifacts, "modules", forgeProxy)
 	upstreamModule := proxy.UpstreamModule{
 		Slug:  "puppetlabs-stdlib",
 		Owner: "puppetlabs",
@@ -1286,8 +2199,19 @@ func TestModulePageDoesNotExposeVersionDeleteAction(t *testing.T) {
 	if count := strings.Count(body, `class="copy-button"`); count != 5 {
 		t.Fatalf("expected five copy buttons, got %d", count)
 	}
-	if !strings.Contains(body, "navigator.clipboard") || !strings.Contains(body, "document.querySelectorAll('.copy-button')") {
+	if !strings.Contains(body, "navigator.clipboard") || !strings.Contains(body, "document.querySelectorAll('button.copy-button')") {
 		t.Fatalf("module page does not include copy button handler:\n%s", body)
+	}
+	for _, want := range []string{
+		`id="copy-version-link"`,
+		`title="Copy link to this version"`,
+		`url.searchParams.set('version', versionSelect.value)`,
+		`await copyText(url.toString())`,
+		`document.execCommand('copy')`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("module page does not include version permalink control %q:\n%s", want, body)
+		}
 	}
 	if strings.Contains(body, "pe_r10k::forge_settings") {
 		t.Fatalf("module page renders old r10k forge_settings snippet:\n%s", body)
@@ -1615,7 +2539,7 @@ func TestManageActionsEnforceRoleBoundary(t *testing.T) {
 	publishClient.Jar = publishJar
 	postManageToken(t, publishClient, server.URL, "publish-token")
 
-	body := getBody(t, publishClient, server.URL+"/manage")
+	body := getBody(t, publishClient, server.URL+"/manage/modules")
 	if strings.Contains(body, "/manage/modules/teamname/apache/delete") || strings.Contains(body, "/manage/modules/teamname/apache/versions/1.2.3/delete") {
 		t.Fatalf("publisher manage page exposes delete actions:\n%s", body)
 	}
@@ -1749,6 +2673,82 @@ func TestListModulesPaginationMetadata(t *testing.T) {
 	}
 }
 
+func TestListModulesRejectsUnsafePagination(t *testing.T) {
+	t.Parallel()
+
+	st := newHTTPAPITestStore(t)
+	authorizer := newAdminAuthorizer(t, auth.TeamConfig{
+		Team:       "teamname",
+		ReadTokens: []string{"read-token"},
+	})
+	server := httptest.NewServer(newTestRouter(service.NewModuleService(st, testArtifactStorage{}, "modules", nil), nil, "http://example.test", authorizer, nil, "admin-token", false, defaultActiveReleaseTTL))
+	t.Cleanup(server.Close)
+
+	for _, query := range []string{
+		"limit=101",
+		"limit=0",
+		"offset=-1",
+		"offset=100001",
+		"offset=999999999999999999999999",
+	} {
+		req, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/modules?"+query, nil)
+		if err != nil {
+			t.Fatalf("NewRequest(%q) error = %v", query, err)
+		}
+		req.Header.Set("Authorization", "Bearer read-token")
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("GET modules with %q error = %v", query, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("GET modules with %q status = %d, want 400", query, resp.StatusCode)
+		}
+	}
+}
+
+func TestRequestedManagePageRejectsUnsafeValues(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{"0", "-1", "2002", "999999999999999999999999"} {
+		req := httptest.NewRequest(http.MethodGet, "/manage?page="+raw, nil)
+		if _, err := requestedManagePageWithSize(req, manageModulePageSize); err == nil {
+			t.Errorf("requestedManagePageWithSize(%q) error = nil", raw)
+		}
+	}
+}
+
+func TestRequestedManageModulePageUsesListSpecificPageSizeCookie(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		action   string
+		target   string
+		pageSize string
+		want     int
+	}{
+		{name: "global module list", action: "/manage/modules", target: manageModuleListTarget, pageSize: "20", want: 20},
+		{name: "team module list", action: "/manage/teams/teamname/modules", target: manageTeamModuleListTarget, pageSize: "100", want: 100},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequest(http.MethodGet, tc.action, nil)
+			storageKey := pageSizeStorageKey(tc.action, "per_page", tc.target)
+			req.AddCookie(&http.Cookie{Name: pageSizeCookieName(storageKey), Value: tc.pageSize})
+			page, pageSize, err := requestedManageModulePage(req, tc.action, tc.target)
+			if err != nil {
+				t.Fatalf("requestedManageModulePage() error = %v", err)
+			}
+			if page != 1 || pageSize != tc.want {
+				t.Fatalf("requestedManageModulePage() = (%d, %d), want (1, %d)", page, pageSize, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadManageModuleRowsPaginatesFilteredStoreResults(t *testing.T) {
 	t.Parallel()
 
@@ -1786,7 +2786,7 @@ func TestLoadManageModuleRowsPaginatesFilteredStoreResults(t *testing.T) {
 		PublishOwners: map[string]struct{}{"teamname": {}},
 	}
 
-	first, total, err := router.loadManageModuleRows(ctx, principal, nil, "teamname/module-", 1)
+	first, total, err := router.loadManageModuleRows(ctx, principal, nil, "teamname/module-", 1, manageModulePageSize)
 	if err != nil {
 		t.Fatalf("loadManageModuleRows(first) error = %v", err)
 	}
@@ -1794,7 +2794,7 @@ func TestLoadManageModuleRowsPaginatesFilteredStoreResults(t *testing.T) {
 		t.Fatalf("first manage page rows = %d, total = %d", len(first), total)
 	}
 
-	second, total, err := router.loadManageModuleRows(ctx, principal, nil, "teamname/module-", 2)
+	second, total, err := router.loadManageModuleRows(ctx, principal, nil, "teamname/module-", 2, manageModulePageSize)
 	if err != nil {
 		t.Fatalf("loadManageModuleRows(second) error = %v", err)
 	}
@@ -1806,14 +2806,15 @@ func TestLoadManageModuleRowsPaginatesFilteredStoreResults(t *testing.T) {
 func TestManagePaginationPreservesSearchQuery(t *testing.T) {
 	t.Parallel()
 
-	pagination := managePagination("/manage", "teamname/web server", 2, 120)
+	query := url.Values{"q": {"teamname/web server"}}
+	pagination := managePaginationForRequest("/manage/modules", query, "", "", 2, manageModulePageSize, 120)
 	if !pagination.HasPrev || !pagination.HasNext || pagination.TotalPages != 3 {
 		t.Fatalf("unexpected pagination metadata: %#v", pagination)
 	}
-	if pagination.PrevURL != "/manage?q=teamname%2Fweb+server" {
+	if pagination.PrevURL != "/manage/modules?q=teamname%2Fweb+server" {
 		t.Fatalf("PrevURL = %q", pagination.PrevURL)
 	}
-	if pagination.NextURL != "/manage?page=3&q=teamname%2Fweb+server" {
+	if pagination.NextURL != "/manage/modules?page=3&q=teamname%2Fweb+server" {
 		t.Fatalf("NextURL = %q", pagination.NextURL)
 	}
 }
@@ -1842,6 +2843,35 @@ func TestManagePostRequiresCSRFToken(t *testing.T) {
 		t.Fatalf("module was changed after csrf rejection: %v", err)
 	}
 
+	resp, err = client.PostForm(server.URL+"/manage/modules/teamname/apache/delete", url.Values{"csrf_token": {"wrong-token"}})
+	if err != nil {
+		t.Fatalf("POST manage delete with invalid csrf error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected invalid csrf to get 403, got %d", resp.StatusCode)
+	}
+
+	form := manageFormValues(t, client, server.URL, nil)
+	crossOriginReq, err := http.NewRequest(http.MethodPost, server.URL+"/manage/modules/teamname/apache/delete", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("NewRequest(cross-origin) error = %v", err)
+	}
+	crossOriginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	crossOriginReq.Header.Set("Origin", "https://attacker.example.com")
+	crossOriginReq.Header.Set("Sec-Fetch-Site", "cross-site")
+	resp, err = client.Do(crossOriginReq)
+	if err != nil {
+		t.Fatalf("POST cross-origin manage delete error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected cross-origin request to get 403, got %d", resp.StatusCode)
+	}
+	if _, err := st.GetModule(ctx, "teamname", "apache"); err != nil {
+		t.Fatalf("module was changed after cross-origin rejection: %v", err)
+	}
+
 	resp, err = client.PostForm(server.URL+"/manage/modules/teamname/apache/delete", manageFormValues(t, client, server.URL, nil))
 	if err != nil {
 		t.Fatalf("POST manage delete with csrf error = %v", err)
@@ -1859,6 +2889,71 @@ func TestManagePostRequiresCSRFToken(t *testing.T) {
 	}
 	if _, err := st.GetModule(ctx, "teamname", "apache"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("GetModule() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestManageRequestSourceCompatibleWithCSRF(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		target     string
+		host       string
+		origin     string
+		fetchSite  string
+		publicBase string
+		want       bool
+	}{
+		{name: "direct HTTP", target: "http://forge.example/manage", origin: "http://forge.example", want: true},
+		{name: "direct HTTPS", target: "https://forge.example/manage", origin: "https://forge.example", want: true},
+		{name: "TLS terminated before service", target: "http://forge.example/manage", origin: "https://forge.example", want: true},
+		{name: "HTTPS downgrade rejected", target: "https://forge.example/manage", origin: "http://forge.example", want: false},
+		{name: "ingress alias accepted with csrf", target: "http://internal:8080/manage", origin: "https://forge.example", want: true},
+		{name: "browser confirmed same origin", target: "http://internal:8080/manage", origin: "http://forge.example", fetchSite: "same-origin", want: true},
+		{name: "browser reported cross site", target: "http://forge.example/manage", origin: "http://forge.example", fetchSite: "cross-site", want: false},
+		{name: "opaque browser origin relies on csrf token", target: "http://forge.example/manage", origin: "null", want: true},
+		{name: "opaque cross-site origin rejected", target: "http://forge.example/manage", origin: "null", fetchSite: "cross-site", want: false},
+		{name: "browser same origin survives proxy scheme mismatch", target: "https://internal/manage", origin: "http://forge.example", fetchSite: "same-origin", want: true},
+		{name: "public port alias accepted with csrf", target: "http://forge.example:8080/manage", origin: "https://forge.example", want: true},
+		{name: "non HTTP origin rejected", target: "http://forge.example/manage", origin: "file://forge.example", want: false},
+		{name: "non HTTP origin rejected despite fetch metadata", target: "http://internal/manage", origin: "file://forge.example", fetchSite: "same-origin", want: false},
+		{name: "preserved ingress host", target: "http://service.namespace.svc/manage", host: "forge.example", origin: "https://forge.example", want: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequest(http.MethodPost, tc.target, nil)
+			if tc.host != "" {
+				req.Host = tc.host
+			}
+			req.Header.Set("Origin", tc.origin)
+			if tc.fetchSite != "" {
+				req.Header.Set("Sec-Fetch-Site", tc.fetchSite)
+			}
+			if got := manageRequestSourceCompatibleWithCSRF(req, tc.publicBase); got != tc.want {
+				t.Fatalf("manageRequestSourceCompatibleWithCSRF() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCheckManageRequestSourceForCSRFReportsSafeReason(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "https://forge.example/manage/access/token", nil)
+	req.Header.Set("Origin", "http://forge.example/private/path?token=secret")
+
+	allowed, reason := checkManageRequestSourceForCSRF(req, "")
+	if allowed || reason != "source_scheme_downgrade" {
+		t.Fatalf("checkManageRequestSourceForCSRF() = (%t, %q), want (false, %q)", allowed, reason, "source_scheme_downgrade")
+	}
+	if got := csrfLogOrigin(req.Header.Get("Origin")); got != "http://forge.example" {
+		t.Fatalf("csrfLogOrigin() = %q, want origin without path or query", got)
+	}
+	if got := csrfLogOrigin("null"); got != "opaque" {
+		t.Fatalf("csrfLogOrigin(null) = %q, want opaque", got)
 	}
 }
 
@@ -1925,6 +3020,22 @@ func TestReadOnlyPrincipalsCannotWriteOrDeleteHTTPAPI(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("expected publish token publish to get 201, got %d body=%s", resp.StatusCode, string(bodyBytes))
+	}
+	conflictingArchive, err := testutil.BuildTarGz(map[string]string{
+		"teamname-apache-1.2.3/metadata.json": `{"name":"teamname-apache","version":"1.2.3"}`,
+		"teamname-apache-1.2.3/changed.txt":   "different release bytes",
+	})
+	if err != nil {
+		t.Fatalf("testutil.BuildTarGz(conflict) error = %v", err)
+	}
+	resp = postPublish(t, "publish-token", conflictingArchive)
+	bodyBytes, err = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("ReadAll(conflicting publish response) error = %v", err)
+	}
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected conflicting publish to get 409, got %d body=%s", resp.StatusCode, string(bodyBytes))
 	}
 	module, err := st.GetModule(context.Background(), "teamname", "apache")
 	if err != nil {
@@ -2192,7 +3303,7 @@ func TestPrivateModuleAccessKeepsHTMLCatalogPublicButProtectsInstallRoutes(t *te
 	}
 }
 
-func TestManageAdminCanReplaceAccessConfig(t *testing.T) {
+func TestManageAdminCanManageStructuredAccessConfig(t *testing.T) {
 	t.Parallel()
 
 	st := newHTTPAPITestStore(t)
@@ -2221,74 +3332,38 @@ func TestManageAdminCanReplaceAccessConfig(t *testing.T) {
 	client.Jar = jar
 
 	postManageToken(t, client, server.URL, "admin-token")
-	body := getBody(t, client, server.URL+"/manage/access")
-	if !strings.Contains(body, "platform-admin") {
+	body := getBody(t, client, server.URL+"/manage/admin/access")
+	if !strings.Contains(body, "forge-admins") {
 		t.Fatalf("expected current access config in page, got body:\n%s", body)
 	}
-
-	nextConfig := `[
-  {
-    "team": "platform-admin",
-    "oidc_admin_groups": ["forge-admins"]
-  },
-  {
-    "team": "teamname",
-    "publish_tokens": ["teamname-token"],
-    "publish_owners": ["teamname"],
-    "oidc_groups": ["teamname-devops"]
-  }
-]`
-	resp, err := client.PostForm(server.URL+"/manage/access", manageFormValues(t, client, server.URL, url.Values{"config": {nextConfig}}))
+	removedReplace, err := client.PostForm(server.URL+"/manage/access", manageFormValues(t, client, server.URL, url.Values{
+		"action": {"replace_json"},
+		"config": {`[{"team":"unexpected"}]`},
+	}))
 	if err != nil {
-		t.Fatalf("POST /manage/access error = %v", err)
+		t.Fatalf("POST removed JSON replacement action error = %v", err)
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected final save response 200 after redirect, got %d", resp.StatusCode)
-	}
-
-	configs, err := st.LoadTeamConfigs(ctx)
+	removedBody, err := io.ReadAll(removedReplace.Body)
+	_ = removedReplace.Body.Close()
 	if err != nil {
-		t.Fatalf("LoadTeamConfigs() error = %v", err)
+		t.Fatalf("read removed JSON replacement response: %v", err)
 	}
-	if len(configs) != 2 {
-		t.Fatalf("expected two configs, got %#v", configs)
+	if !strings.Contains(string(removedBody), "unknown access form action") {
+		t.Fatalf("removed JSON replacement action was not rejected:\n%s", removedBody)
 	}
-	foundTeamname := false
-	for _, cfg := range configs {
-		if cfg.Team == "teamname" {
-			foundTeamname = true
-			if len(cfg.OIDCGroups) != 1 || cfg.OIDCGroups[0] != "teamname-devops" {
-				t.Fatalf("unexpected teamname config: %#v", cfg)
-			}
-		}
+	unchanged, err := st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() after removed JSON replacement: %v", err)
 	}
-	if !foundTeamname {
-		t.Fatalf("teamname config was not saved: %#v", configs)
+	if len(unchanged) != 1 || unchanged[0].Team != "platform-admin" {
+		t.Fatalf("removed JSON replacement changed access config: %#v", unchanged)
 	}
 
-	resp, err = client.PostForm(server.URL+"/manage/access", manageFormValues(t, client, server.URL, url.Values{"config": {"[]"}}))
-	if err != nil {
-		t.Fatalf("POST empty /manage/access error = %v", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("ReadAll(empty config response) error = %v", err)
-	}
-	if !strings.Contains(string(bodyBytes), "access config must contain at least one team") {
-		t.Fatalf("expected empty config validation error, got body:\n%s", string(bodyBytes))
-	}
-
-	resp, err = client.PostForm(server.URL+"/manage/access", manageFormValues(t, client, server.URL, url.Values{
+	resp, err := client.PostForm(server.URL+"/manage/access", manageFormValues(t, client, server.URL, url.Values{
 		"action":               {"save_team"},
 		"team":                 {"alpha"},
-		"publish_tokens":       {"alpha-token\n"},
-		"extra_publish_spaces": {"shared"},
+		"publish_tokens":       {"ignored-manual-token\n"},
+		"extra_publish_spaces": {"ignored-space"},
 		"oidc_groups":          {"alpha-devops"},
 	}))
 	if err != nil {
@@ -2301,7 +3376,7 @@ func TestManageAdminCanReplaceAccessConfig(t *testing.T) {
 		t.Fatalf("expected final structured save response 200 after redirect, got %d", resp.StatusCode)
 	}
 
-	configs, err = st.LoadTeamConfigs(ctx)
+	configs, err := st.LoadTeamConfigs(ctx)
 	if err != nil {
 		t.Fatalf("LoadTeamConfigs() after structured save error = %v", err)
 	}
@@ -2309,11 +3384,11 @@ func TestManageAdminCanReplaceAccessConfig(t *testing.T) {
 	for _, cfg := range configs {
 		if cfg.Team == "alpha" {
 			foundAlpha = true
-			if len(cfg.PublishOwners) != 2 || cfg.PublishOwners[0] != "alpha" || cfg.PublishOwners[1] != "shared" {
+			if len(cfg.PublishOwners) != 1 || cfg.PublishOwners[0] != "alpha" {
 				t.Fatalf("unexpected alpha owners: %#v", cfg.PublishOwners)
 			}
-			if len(cfg.PublishTokens) != 1 || cfg.PublishTokens[0] != "alpha-token" {
-				t.Fatalf("unexpected alpha publish tokens: %#v", cfg.PublishTokens)
+			if len(cfg.PublishTokenRecords) != 0 {
+				t.Fatalf("structured team form created a token record: %#v", cfg.PublishTokenRecords)
 			}
 			if len(cfg.OIDCGroups) != 1 || cfg.OIDCGroups[0] != "alpha-devops" {
 				t.Fatalf("unexpected alpha oidc groups: %#v", cfg.OIDCGroups)
@@ -2349,21 +3424,6 @@ func TestManageAdminCanReplaceAccessConfig(t *testing.T) {
 	}
 }
 
-func TestExtraPublishSpacesFormIgnoresLegacyOwnersField(t *testing.T) {
-	t.Parallel()
-
-	req := formRequest(url.Values{"extra_publish_owners": {"legacy"}})
-	if got := extraPublishSpacesFromForm(req); len(got) != 0 {
-		t.Fatalf("extraPublishSpacesFromForm() used legacy extra_publish_owners: %#v", got)
-	}
-
-	req = formRequest(url.Values{"extra_publish_spaces": {"shared\nplatform"}})
-	got := extraPublishSpacesFromForm(req)
-	if len(got) != 2 || got[0] != "shared" || got[1] != "platform" {
-		t.Fatalf("extraPublishSpacesFromForm() = %#v", got)
-	}
-}
-
 func TestManageAccessRequiresAdmin(t *testing.T) {
 	t.Parallel()
 
@@ -2389,7 +3449,7 @@ func TestManageAccessRequiresAdmin(t *testing.T) {
 	client.Jar = jar
 
 	postManageToken(t, client, server.URL, "teamname-token")
-	resp, err := client.Get(server.URL + "/manage/access")
+	resp, err := client.Get(server.URL + "/manage/admin/access")
 	if err != nil {
 		t.Fatalf("GET /manage/access error = %v", err)
 	}
@@ -2399,6 +3459,7 @@ func TestManageAccessRequiresAdmin(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected publisher to get 403, got %d", resp.StatusCode)
 	}
+
 }
 
 func TestTeamAdminCanManageOnlyOwnTeamAccess(t *testing.T) {
@@ -2429,18 +3490,8 @@ func TestTeamAdminCanManageOnlyOwnTeamAccess(t *testing.T) {
 		t.Fatalf("ReplaceTeamConfigs() error = %v", err)
 	}
 
-	router := &Router{modules: service.NewModuleService(st, testArtifactStorage{}, "modules", nil)}
+	router := &Router{modules: service.NewModuleService(st, testArtifactStorage{}, "modules", nil), tokenHasher: httpAPITestTokenHasher()}
 	principal := auth.Principal{Team: "teamname", CanRead: true, CanPublish: true, CanManageTeam: true}
-
-	rec := httptest.NewRecorder()
-	router.renderManageAccess(rec, httptest.NewRequest(http.MethodGet, "/manage/access", nil), principal, "")
-	body := rec.Body.String()
-	if strings.Contains(body, "Global OIDC Admins") || strings.Contains(body, "Advanced JSON editor") || strings.Contains(body, "Delete Team") || strings.Contains(body, "alpha") || strings.Contains(body, "Extra publish spaces") {
-		t.Fatalf("team admin page exposes forbidden controls or teams:\n%s", body)
-	}
-	if !strings.Contains(body, "teamname") || !strings.Contains(body, "OIDC team admins (emails)") || !strings.Contains(body, "OIDC team admins (groups)") {
-		t.Fatalf("team admin page does not expose own team controls:\n%s", body)
-	}
 
 	req := formRequest(url.Values{
 		"action":                 {"save_team"},
@@ -2472,11 +3523,11 @@ func TestTeamAdminCanManageOnlyOwnTeamAccess(t *testing.T) {
 	if teamname == nil {
 		t.Fatalf("teamname config missing: %#v", saved)
 	}
-	if len(teamname.ReadTokens) != 1 || teamname.ReadTokens[0] != "new-read" {
-		t.Fatalf("unexpected teamname read tokens: %#v", teamname.ReadTokens)
+	if len(teamname.ReadTokenRecords) != 1 || !strings.HasPrefix(teamname.ReadTokenRecords[0].Prefix, "legacy_read_") {
+		t.Fatalf("teamname read token records were not preserved: %#v", teamname.ReadTokenRecords)
 	}
-	if len(teamname.PublishTokens) != 1 || teamname.PublishTokens[0] != "new-publish" {
-		t.Fatalf("unexpected teamname publish tokens: %#v", teamname.PublishTokens)
+	if len(teamname.PublishTokenRecords) != 1 || !strings.HasPrefix(teamname.PublishTokenRecords[0].Prefix, "legacy_publish_") {
+		t.Fatalf("teamname publish token records were not preserved: %#v", teamname.PublishTokenRecords)
 	}
 	if len(teamname.PublishOwners) != 2 || !slices.Contains(teamname.PublishOwners, "teamname") || !slices.Contains(teamname.PublishOwners, "shared") {
 		t.Fatalf("team admin changed publish owners: %#v", teamname.PublishOwners)
@@ -2491,15 +3542,15 @@ func TestTeamAdminCanManageOnlyOwnTeamAccess(t *testing.T) {
 		t.Fatalf("unexpected teamname team admin groups: %#v", teamname.OIDCTeamAdminGroups)
 	}
 	alpha := findTeamConfig(saved, "alpha")
-	if alpha == nil || len(alpha.ReadTokens) != 1 || alpha.ReadTokens[0] != "alpha-read" {
+	if alpha == nil || len(alpha.ReadTokenRecords) != 1 || !strings.HasPrefix(alpha.ReadTokenRecords[0].Prefix, "legacy_read_") {
 		t.Fatalf("alpha config was changed: %#v", saved)
 	}
 
 	if _, _, err := router.accessConfigsFromForm(formRequest(url.Values{
 		"action": {"replace_json"},
 		"config": {"[]"},
-	}), principal); err == nil || !strings.Contains(err.Error(), "global admin access required") {
-		t.Fatalf("expected replace_json to require global admin, got %v", err)
+	}), principal); err == nil || !strings.Contains(err.Error(), "unknown access form action") {
+		t.Fatalf("expected removed replace_json action to be rejected, got %v", err)
 	}
 	if _, _, err := router.accessConfigsFromForm(formRequest(url.Values{
 		"action":        {"save_team"},
@@ -2551,16 +3602,7 @@ func TestTeamAdminCanManageMultipleOwnTeams(t *testing.T) {
 		t.Fatal("expected platform-owners principal")
 	}
 
-	router := &Router{modules: service.NewModuleService(st, testArtifactStorage{}, "modules", nil)}
-	rec := httptest.NewRecorder()
-	router.renderManageAccess(rec, httptest.NewRequest(http.MethodGet, "/manage/access", nil), principal, "")
-	body := rec.Body.String()
-	if !strings.Contains(body, "teamname") || !strings.Contains(body, "alpha") {
-		t.Fatalf("team admin page misses managed teams:\n%s", body)
-	}
-	if strings.Contains(body, "oxygen") {
-		t.Fatalf("team admin page exposes unmanaged team:\n%s", body)
-	}
+	router := &Router{modules: service.NewModuleService(st, testArtifactStorage{}, "modules", nil), tokenHasher: httpAPITestTokenHasher()}
 
 	next, message, err := router.accessConfigsFromForm(formRequest(url.Values{
 		"action":                 {"save_team"},
@@ -2582,8 +3624,8 @@ func TestTeamAdminCanManageMultipleOwnTeams(t *testing.T) {
 	if alpha == nil {
 		t.Fatalf("alpha config missing: %#v", next)
 	}
-	if len(alpha.ReadTokens) != 1 || alpha.ReadTokens[0] != "alpha-read-new" {
-		t.Fatalf("unexpected alpha read tokens: %#v", alpha.ReadTokens)
+	if len(alpha.ReadTokenRecords) != 1 || !strings.HasPrefix(alpha.ReadTokenRecords[0].Prefix, "legacy_read_") {
+		t.Fatalf("alpha read token record was not preserved: %#v", alpha.ReadTokenRecords)
 	}
 	if len(alpha.PublishOwners) != 2 || alpha.PublishOwners[0] != "alpha" || alpha.PublishOwners[1] != "shared" {
 		t.Fatalf("team admin changed alpha publish owners: %#v", alpha.PublishOwners)
@@ -2608,7 +3650,7 @@ func TestManageAccessStructuredRenameTeam(t *testing.T) {
 		{
 			Team:          "teamname",
 			PublishTokens: []string{"teamname-token"},
-			PublishOwners: []string{"teamname"},
+			PublishOwners: []string{"teamname", "platform"},
 			OIDCGroups:    []string{"teamname-devops"},
 		},
 	}
@@ -2618,7 +3660,7 @@ func TestManageAccessStructuredRenameTeam(t *testing.T) {
 		"original_team":        {"teamname"},
 		"team":                 {"teamname-platform"},
 		"publish_tokens":       {"renamed-token"},
-		"extra_publish_spaces": {"platform"},
+		"extra_publish_spaces": {"ignored-space"},
 		"oidc_groups":          {"teamname-platform-devops"},
 	}))
 	if err != nil {
@@ -2688,14 +3730,14 @@ func TestManageAccessStructuredSavePreservesRuntimeAdminToken(t *testing.T) {
 		t.Fatalf("platform-admin config was not saved: %#v", saved)
 	}
 	postManageToken(t, client, serverURL, "admin-token")
-	body := getBody(t, client, serverURL+"/manage/access")
-	if !strings.Contains(body, "Team Access") && !strings.Contains(body, "Access Config") {
+	body := getBody(t, client, serverURL+"/manage/admin/access")
+	if !strings.Contains(body, "Global Access") {
 		t.Fatalf("runtime admin token stopped working after save, got body:\n%s", body)
 	}
 	if strings.Contains(body, "OIDC publish emails") || strings.Contains(body, "OIDC publish subjects") || strings.Contains(body, "OIDC publish domains") {
 		t.Fatalf("team OIDC email/subject/domain fields should not be rendered, got body:\n%s", body)
 	}
-	if !strings.Contains(body, "Global OIDC Admins") || !strings.Contains(body, "forge-owners") {
+	if !strings.Contains(body, "Global Access") || !strings.Contains(body, "forge-owners") {
 		t.Fatalf("global admin form was not rendered with saved groups, got body:\n%s", body)
 	}
 	if len(admin.OIDCAdminGroups) != 2 || admin.OIDCAdminGroups[1] != "forge-owners" {
@@ -2703,7 +3745,7 @@ func TestManageAccessStructuredSavePreservesRuntimeAdminToken(t *testing.T) {
 	}
 }
 
-func TestManageAccessRemembersOpenSections(t *testing.T) {
+func TestManageAccessContainsOnlyGlobalControls(t *testing.T) {
 	t.Parallel()
 
 	st := newHTTPAPITestStore(t)
@@ -2722,39 +3764,15 @@ func TestManageAccessRemembersOpenSections(t *testing.T) {
 
 	router := &Router{modules: service.NewModuleService(st, testArtifactStorage{}, "modules", nil)}
 	rec := httptest.NewRecorder()
-	router.renderManageAccess(rec, httptest.NewRequest(http.MethodGet, "/manage/access", nil), auth.Principal{CanAdmin: true}, "")
+	router.renderManageAccess(rec, httptest.NewRequest(http.MethodGet, "/manage/admin/access", nil), auth.Principal{CanAdmin: true}, "")
 	body := rec.Body.String()
-
-	for _, want := range []string{
-		`data-access-section="global-admins"`,
-		`data-access-section="team:teamname"`,
-		`data-access-section="advanced-json"`,
-		`puppet-forge:manage-access:open-sections`,
-		`window.localStorage.setItem(storageKey`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("manage access page missing persisted section state hook %q:\n%s", want, body)
+	if !strings.Contains(body, "Global Access") || !strings.Contains(body, `href="/manage/admin/spaces"`) {
+		t.Fatalf("global access page misses its navigation:\n%s", body)
+	}
+	for _, forbidden := range []string{`id="access-config-json"`, `team:teamname`, `OIDC team admins (emails)`, `>Expert</a>`} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("global access page exposes team or expert control %q:\n%s", forbidden, body)
 		}
-	}
-}
-
-func TestManageAccessJSONEditorRendersEmptyField(t *testing.T) {
-	t.Parallel()
-
-	st := newHTTPAPITestStore(t)
-	router := &Router{modules: service.NewModuleService(st, testArtifactStorage{}, "modules", nil)}
-	rec := httptest.NewRecorder()
-	router.renderManageAccess(rec, httptest.NewRequest(http.MethodGet, "/manage/access", nil), auth.Principal{CanAdmin: true}, "")
-	body := rec.Body.String()
-
-	if !strings.Contains(body, `<textarea id="access-config-json" name="config" spellcheck="false"></textarea>`) {
-		t.Fatalf("empty access config does not render an empty JSON editor:\n%s", body)
-	}
-	if strings.Contains(body, `>null</textarea>`) || strings.Contains(body, `>[]</textarea>`) {
-		t.Fatalf("empty access config renders a JSON placeholder value:\n%s", body)
-	}
-	if !strings.Contains(body, "Saving replaces the complete access configuration. At least one team is required.") {
-		t.Fatalf("advanced JSON editor warning is missing:\n%s", body)
 	}
 }
 
@@ -2816,27 +3834,77 @@ func TestManageTeamsPagesGroupAccessAndModules(t *testing.T) {
 	client, serverURL := newAccessManageClient(t, st, ctx, configs)
 
 	listBody := getBody(t, client, serverURL+"/manage/teams")
-	if !strings.Contains(listBody, `href="/manage/teams/teamname"`) || !strings.Contains(listBody, "2</strong><span>modules") {
+	if !strings.Contains(listBody, `href="/manage/teams/teamname/access"`) || !strings.Contains(listBody, "2</strong><span>modules") {
 		t.Fatalf("teams page misses team summary or module count:\n%s", listBody)
 	}
 	if strings.Contains(listBody, `href="/manage/teams/platform-admin"`) {
 		t.Fatalf("teams page exposes global admin pseudo-team:\n%s", listBody)
 	}
 
-	detailBody := getBody(t, client, serverURL+"/manage/teams/teamname")
+	redirectClient := *client
+	redirectClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	rootResponse, err := redirectClient.Get(serverURL + "/manage/teams/teamname")
+	if err != nil {
+		t.Fatalf("GET legacy team root: %v", err)
+	}
+	_ = rootResponse.Body.Close()
+	if rootResponse.StatusCode != http.StatusFound || rootResponse.Header.Get("Location") != "/manage/teams/teamname/access" {
+		t.Fatalf("legacy team root response = %d Location %q", rootResponse.StatusCode, rootResponse.Header.Get("Location"))
+	}
+
+	accessBody := getBody(t, client, serverURL+"/manage/teams/teamname/access")
 	for _, want := range []string{
-		`name="next" value="/manage/teams/teamname"`,
-		`name="read_tokens"`,
-		`teamname/apache`,
-		`shared/stdlib`,
-		`.header-links .link-button { min-height: 0; margin: 0;`,
+		`name="next" value="/manage/teams/teamname/access"`,
+		`<span aria-current="page">Access</span>`,
+		`id="team-access"`,
 	} {
-		if !strings.Contains(detailBody, want) {
-			t.Fatalf("team detail page misses %q:\n%s", want, detailBody)
+		if !strings.Contains(accessBody, want) {
+			t.Fatalf("team access page misses %q:\n%s", want, accessBody)
 		}
 	}
-	if strings.Contains(detailBody, "Upload or Update") {
-		t.Fatalf("global admin token without publish permission sees upload form:\n%s", detailBody)
+	if strings.Contains(accessBody, `id="team-tokens"`) || strings.Contains(accessBody, `id="team-modules"`) {
+		t.Fatalf("team access page exposes another section:\n%s", accessBody)
+	}
+
+	tokensBody := getBody(t, client, serverURL+"/manage/teams/teamname/tokens")
+	for _, want := range []string{
+		`action="/manage/access/token"`,
+		`name="name" required`,
+		`name="role" required`,
+		`<option value="read">Read</option>`,
+		`<option value="publish">Publish</option>`,
+		`name="next" value="/manage/teams/teamname/tokens"`,
+		`<span aria-current="page">Tokens</span>`,
+	} {
+		if !strings.Contains(tokensBody, want) {
+			t.Fatalf("team tokens page misses %q:\n%s", want, tokensBody)
+		}
+	}
+	if strings.Count(tokensBody, `class="token-create"`) != 1 {
+		t.Fatalf("team tokens page must contain one token creation form:\n%s", tokensBody)
+	}
+	if strings.Contains(tokensBody, `id="team-access"`) || strings.Contains(tokensBody, `id="team-modules"`) {
+		t.Fatalf("team tokens page exposes another section:\n%s", tokensBody)
+	}
+
+	modulesBody := getBody(t, client, serverURL+"/manage/teams/teamname/modules")
+	for _, want := range []string{
+		`teamname/apache`,
+		`shared/stdlib`,
+		`<span aria-current="page">Modules</span>`,
+		`aria-label="Management context navigation"`,
+	} {
+		if !strings.Contains(modulesBody, want) {
+			t.Fatalf("team modules page misses %q:\n%s", want, modulesBody)
+		}
+	}
+	if strings.Contains(modulesBody, "Upload or Update") {
+		t.Fatalf("global admin token without publish permission sees upload form:\n%s", modulesBody)
+	}
+	if strings.Contains(modulesBody, `id="team-access"`) || strings.Contains(modulesBody, `id="team-tokens"`) {
+		t.Fatalf("team modules page exposes another section:\n%s", modulesBody)
 	}
 }
 
@@ -2850,7 +3918,10 @@ func TestManageReturnPathAllowsOnlyTeamManagementPages(t *testing.T) {
 		want     string
 	}{
 		{name: "team list", next: "/manage/teams", fallback: "/manage", want: "/manage/teams"},
-		{name: "team detail", next: "/manage/teams/teamname?q=apache", fallback: "/manage", want: "/manage/teams/teamname?q=apache"},
+		{name: "team detail", next: "/manage/teams/teamname/modules?q=apache", fallback: "/manage", want: "/manage/teams/teamname/modules?q=apache"},
+		{name: "modules", next: "/manage/modules", fallback: "/manage", want: "/manage/modules"},
+		{name: "global access", next: "/manage/admin/access", fallback: "/manage", want: "/manage/admin/access"},
+		{name: "removed expert editor", next: "/manage/admin/expert", fallback: "/manage", want: "/manage"},
 		{name: "external URL", next: "https://example.com/manage/teams/teamname", fallback: "/manage", want: "/manage"},
 		{name: "scheme relative URL", next: "//example.com/manage/teams/teamname", fallback: "/manage", want: "/manage"},
 		{name: "unrelated manage page", next: "/manage/access", fallback: "/manage", want: "/manage"},
@@ -3016,9 +4087,12 @@ func TestManageAdminCanAddUpstreamModule(t *testing.T) {
 	client := &http.Client{Transport: server.Client().Transport, Jar: jar}
 	postManageToken(t, client, server.URL, "admin-token")
 
-	body := getBody(t, client, server.URL+"/manage")
+	body := getBody(t, client, server.URL+"/manage/modules")
 	if !strings.Contains(body, "/manage/upstream") || !strings.Contains(body, "Add Upstream Module") {
 		t.Fatalf("manage page does not expose upstream add form for admin:\n%s", body)
+	}
+	if !strings.Contains(body, `<details class="panel-disclosure" data-section-key="add-upstream-module">`) {
+		t.Fatalf("manage page upstream form is not collapsed by default:\n%s", body)
 	}
 
 	resp, err := client.PostForm(server.URL+"/manage/upstream", manageFormValues(t, client, server.URL, url.Values{"module": {"puppetlabs/apache"}}))
@@ -3081,18 +4155,18 @@ func TestManageModulesNavStaysInManage(t *testing.T) {
 
 	_, server, client := setupManageTestWithModule(t)
 
-	body := getBody(t, client, server.URL+"/manage")
-	if !strings.Contains(body, `<a href="/">Public modules</a>`) {
+	body := getBody(t, client, server.URL+"/manage/modules")
+	if !strings.Contains(body, `class="public-link" href="/">Public modules</a>`) {
 		t.Fatalf("manage page does not link to public modules:\n%s", body)
 	}
-	if !strings.Contains(body, `<a href="/manage">Manage</a>`) {
-		t.Fatalf("manage page modules nav does not point to /manage:\n%s", body)
+	if !strings.Contains(body, `<a href="/manage/modules" aria-current="page">Modules</a>`) {
+		t.Fatalf("manage page modules nav does not point to /manage/modules:\n%s", body)
 	}
-	if !strings.Contains(body, `<a href="/manage/access">Access</a>`) {
-		t.Fatalf("manage page does not link to access config:\n%s", body)
+	if !strings.Contains(body, `<a href="/manage/teams">Teams</a>`) {
+		t.Fatalf("manage page does not link to teams:\n%s", body)
 	}
-	if !strings.Contains(body, `<a href="/manage/access/add">Add team</a>`) {
-		t.Fatalf("admin manage page does not link to add team:\n%s", body)
+	if !strings.Contains(body, `<summary>Administration</summary>`) || !strings.Contains(body, `href="/manage/admin/access"`) {
+		t.Fatalf("manage page does not expose the separate administration group:\n%s", body)
 	}
 	if strings.Contains(body, `<a href="/">Modules</a>`) {
 		t.Fatalf("manage page modules nav points to public index:\n%s", body)
@@ -3105,30 +4179,202 @@ func TestManageModulesNavStaysInManage(t *testing.T) {
 	}
 }
 
+func TestManageOverviewIsReadOnly(t *testing.T) {
+	t.Parallel()
+
+	_, server, client := setupManageTestWithModule(t)
+	body := getBody(t, client, server.URL+"/manage")
+	for _, want := range []string{
+		`<a href="/manage" aria-current="page">Overview</a>`,
+		`<title>Overview</title>`,
+		`<h1>Overview</h1>`,
+		`href="/manage/modules">Manage modules</a>`,
+		`href="/modules/teamname/apache"`,
+		`href="/manage/teams"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("manage overview misses %q:\n%s", want, body)
+		}
+	}
+	for _, forbidden := range []string{
+		`aria-label="Breadcrumb"`,
+		`action="/manage/modules"`,
+		`/manage/modules/teamname/apache/delete`,
+		`Add Upstream Module`,
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("manage overview exposes mutation control %q:\n%s", forbidden, body)
+		}
+	}
+}
+
+func TestManageOverviewLinksCountersTeamsAndSpaces(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	createTeamnameApacheModuleAndRelease(t, st)
+	client, serverURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{
+		Team:          "teamname",
+		PublishOwners: []string{"shared"},
+	}})
+
+	body := getBody(t, client, serverURL+"/manage")
+	for _, want := range []string{
+		`grid-template-columns: repeat(2, minmax(0, 1fr));`,
+		`class="summary-item" href="/manage/modules"`,
+		`class="summary-item" href="/manage/admin/spaces"`,
+		`class="summary-item" href="/manage/teams"`,
+		`<span class="summary-value">2</span><span class="summary-label">Available spaces</span>`,
+		`<a class="resource-link" href="/manage/teams/teamname/access">teamname</a>`,
+		`<a class="count-link" href="/manage/teams/teamname/modules">1 module</a>`,
+		`<section class="panel spaces-panel" id="spaces" data-async-list`,
+		`<a class="resource-link" href="/manage/modules?q=shared%2F">shared</a>`,
+		`<a class="count-link" href="/manage/modules?q=teamname%2F">1 module</a>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("manage overview misses linked resource %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestManageOverviewPaginatesModulesWithTeamModulesFirst(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	createTeamnameApacheModuleAndRelease(t, st)
+	for i := range manageOverviewModulePageSize {
+		createModuleRelease(t, st, "puppetlabs", fmt.Sprintf("upstream-%02d", i), "1.0.0")
+	}
+	client, serverURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{Team: "teamname"}})
+
+	body := getBody(t, client, serverURL+"/manage")
+	if !strings.Contains(body, `href="/modules/teamname/apache"`) {
+		t.Fatalf("first overview page omits the prioritized team-owned module:\n%s", body)
+	}
+	if strings.Count(body, `class="item-link"`) != manageOverviewModulePageSize {
+		t.Fatalf("first overview page has an unexpected module count:\n%s", body)
+	}
+	if !strings.Contains(body, `21 modules · page 1 of 2`) || !strings.Contains(body, `href="/manage?modules_page=2#modules">Next</a>`) {
+		t.Fatalf("first overview page misses module pagination:\n%s", body)
+	}
+
+	secondPage := getBody(t, client, serverURL+"/manage?modules_page=2")
+	if strings.Contains(secondPage, `href="/modules/teamname/apache"`) || strings.Count(secondPage, `class="item-link"`) != 1 {
+		t.Fatalf("second overview page has unexpected modules:\n%s", secondPage)
+	}
+	if !strings.Contains(secondPage, `href="/manage#modules">Previous</a>`) {
+		t.Fatalf("second overview page misses its previous link:\n%s", secondPage)
+	}
+	for _, want := range []string{
+		`id="modules" data-async-list`,
+		`headers: { Accept: "text/html", "X-Puppet-Forge-Fragment": targetID }`,
+		`const replacement = nextPage.getElementById(targetID)`,
+		`event.stopImmediatePropagation()`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("overview misses asynchronous panel behavior %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestManageOverviewPaginatesTeamsAndSpacesIndependently(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	configs := make([]auth.TeamConfig, 0, manageOverviewTeamPageSize+1)
+	for i := range manageOverviewTeamPageSize + 1 {
+		configs = append(configs, auth.TeamConfig{Team: fmt.Sprintf("team-%02d", i)})
+	}
+	client, serverURL := newAccessManageClient(t, st, ctx, configs)
+
+	body := getBody(t, client, serverURL+"/manage?teams_page=2&spaces_page=2")
+	for _, want := range []string{
+		`11 teams · page 2 of 2`,
+		`11 spaces · page 2 of 2`,
+		`href="/manage?spaces_page=2#teams">Previous</a>`,
+		`href="/manage?teams_page=2#spaces">Previous</a>`,
+		`href="/manage/teams/team-10/access">team-10</a>`,
+		`href="/manage/modules?q=team-10%2F">team-10</a>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("independent overview pagination misses %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `href="/manage/teams/team-00/access">team-00</a>`) {
+		t.Fatalf("second team page still contains a first-page team:\n%s", body)
+	}
+}
+
+func TestManageOverviewRedirectsOutOfRangePanelPage(t *testing.T) {
+	t.Parallel()
+
+	_, server, client := setupManageTestWithModule(t)
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/manage?modules_page=2", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSeeOther)
+	}
+	if location := resp.Header.Get("Location"); location != "/manage#modules" {
+		t.Fatalf("Location = %q, want %q", location, "/manage#modules")
+	}
+}
+
+func TestManageOverviewRejectsMalformedPanelPage(t *testing.T) {
+	t.Parallel()
+
+	_, server, client := setupManageTestWithModule(t)
+	resp, err := client.Get(server.URL + "/manage?modules_page=invalid")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
 func TestManagePublishFormAcceptsOnlySpaceAndArchive(t *testing.T) {
 	t.Parallel()
 
 	var rec bytes.Buffer
+	principal := auth.Principal{CanAdmin: true, CanPublish: true, CanManageTeam: true, PublishOwners: map[string]struct{}{"teamname": {}}}
 	err := managePageTemplate.Execute(&rec, managePageData{
-		Principal: auth.Principal{CanAdmin: true, CanPublish: true, CanManageTeam: true, PublishOwners: map[string]struct{}{"teamname": {}}},
-		Owners:    []string{"teamname"},
-		CSRFToken: "csrf",
+		Navigation: newManageNavigation(principal, "csrf", "modules", ""),
+		Principal:  principal,
+		Owners:     []string{"teamname"},
+		CSRFToken:  "csrf",
 	})
 	if err != nil {
 		t.Fatalf("managePageTemplate.Execute() error = %v", err)
 	}
 	body := rec.String()
 	for _, want := range []string{
+		`<details class="panel-disclosure" data-section-key="upload-or-update">`,
 		`<label for="publish-space-select">Space</label>`,
 		`<select id="publish-space-select" name="space" required>`,
 		`<option value="teamname">teamname</option>`,
 		`id="module-archive-input" name="file" type="file" accept=".gz,.tgz,.tar.gz" required`,
 		`Module identity and metadata are read from metadata.json.`,
-		`<a href="/manage/access/add">Add team</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("manage publish form missing expected helper %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, `<details class="panel-disclosure" data-section-key="upload-or-update" open>`) {
+		t.Fatalf("manage page upload form is open by default:\n%s", body)
 	}
 	for _, forbidden := range []string{
 		`name="owner"`,
@@ -3172,14 +4418,18 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 		if !strings.Contains(body, `/manage/modules/teamname/apache/delete`) {
 			t.Fatalf("manage page hides module delete action for %#v:\n%s", principal, body)
 		}
-		if !strings.Contains(body, `class="danger-button" type="submit">Delete module</button>`) {
+		if !strings.Contains(body, `class="danger-button" type="submit" form="delete-module-teamname-apache">Delete module</button>`) {
 			t.Fatalf("manage page does not render module delete as a danger button for %#v:\n%s", principal, body)
 		}
+		if !strings.Contains(body, `<form id="delete-module-teamname-apache" method="post" action="/manage/modules/teamname/apache/delete" hidden>`) {
+			t.Fatalf("manage page does not associate module delete button with an external form for %#v:\n%s", principal, body)
+		}
 		for _, wantStyle := range []string{
-			`details[data-section-key]:hover`,
-			`details[data-section-key]:focus-within`,
-			`details[data-section-key]:has(.danger-button:hover)`,
-			`details[data-section-key]:has(.danger-button:focus-visible)`,
+			`.module-details:hover`,
+			`.module-details:focus-within`,
+			`.module-details:has(.danger-button:hover)`,
+			`.module-details:has(.danger-button:focus-visible)`,
+			`.module-details > .release-list`,
 		} {
 			if !strings.Contains(body, wantStyle) {
 				t.Fatalf("manage page does not render module block highlight style %q for %#v:\n%s", wantStyle, principal, body)
@@ -3211,9 +4461,77 @@ func TestReadPublishInputReportsMissingArchive(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	_, err := readPublishInput(httptest.NewRecorder(), req, 0)
+	_, _, err := readPublishInput(httptest.NewRecorder(), req, 0)
 	if err == nil || err.Error() != "artifact file is required" {
 		t.Fatalf("readPublishInput() error = %v, want artifact file is required", err)
+	}
+}
+
+func TestReadPublishInputStreamsLargeMultipartFileAndCleansItUp(t *testing.T) {
+	t.Parallel()
+
+	archive := bytes.Repeat([]byte("a"), (1<<20)+1)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("space", "teamname"); err != nil {
+		t.Fatalf("WriteField(space) error = %v", err)
+	}
+	part, err := writer.CreateFormFile("file", "module.tar.gz")
+	if err != nil {
+		t.Fatalf("CreateFormFile() error = %v", err)
+	}
+	if _, err := part.Write(archive); err != nil {
+		t.Fatalf("file Write() error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("multipart Close() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	input, cleanup, err := readPublishInput(httptest.NewRecorder(), req, 0)
+	if err != nil {
+		t.Fatalf("readPublishInput() error = %v", err)
+	}
+	if len(input.FileBytes) != 0 || input.File == nil {
+		t.Fatal("publish input buffered the multipart archive instead of returning its reader")
+	}
+	cleanup()
+	if _, err := input.File.Seek(0, io.SeekStart); err == nil {
+		t.Fatal("multipart file remained usable after cleanup")
+	}
+}
+
+func TestReadPublishInputAcceptsArchiveAtConfiguredLimit(t *testing.T) {
+	t.Parallel()
+
+	archive := bytes.Repeat([]byte("a"), 1024)
+	body, contentType := buildPublishMultipart(t, "teamname", "module", "1.0.0", archive, "")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", body)
+	req.ContentLength = -1
+	req.Header.Set("Content-Type", contentType)
+
+	input, cleanup, err := readPublishInput(httptest.NewRecorder(), req, int64(len(archive)))
+	if err != nil {
+		t.Fatalf("readPublishInput() error = %v", err)
+	}
+	defer cleanup()
+	if input.SizeBytes != int64(len(archive)) {
+		t.Fatalf("publish input size = %d, want %d", input.SizeBytes, len(archive))
+	}
+}
+
+func TestReadPublishInputRejectsArchiveOneByteOverConfiguredLimit(t *testing.T) {
+	t.Parallel()
+
+	archive := bytes.Repeat([]byte("a"), 1025)
+	body, contentType := buildPublishMultipart(t, "teamname", "module", "1.0.0", archive, "")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", body)
+	req.Header.Set("Content-Type", contentType)
+
+	_, _, err := readPublishInput(httptest.NewRecorder(), req, 1024)
+	if err == nil || !isRequestTooLarge(err) {
+		t.Fatalf("readPublishInput() error = %v, want request-too-large error", err)
 	}
 }
 
@@ -3223,14 +4541,18 @@ func TestManageAccessNavLinks(t *testing.T) {
 	st := newHTTPAPITestStore(t)
 	router := &Router{modules: service.NewModuleService(st, testArtifactStorage{}, "modules", nil)}
 	rec := httptest.NewRecorder()
-	router.renderManageAccess(rec, httptest.NewRequest(http.MethodGet, "/manage/access", nil), auth.Principal{CanAdmin: true}, "")
+	router.renderManageAccess(rec, httptest.NewRequest(http.MethodGet, "/manage/admin/access", nil), auth.Principal{CanAdmin: true}, "")
 	body := rec.Body.String()
 
 	for _, want := range []string{
-		`<a href="/">Public modules</a>`,
-		`<a href="/manage">Manage</a>`,
-		`<a href="/manage/access">Access</a>`,
-		`<a href="/manage/access/add">Add Team</a>`,
+		`class="public-link" href="/">Public modules</a>`,
+		`<a href="/manage">Overview</a>`,
+		`<a href="/manage/modules">Modules</a>`,
+		`<a href="/manage/teams">Teams</a>`,
+		`<details class="administration-menu active">`,
+		`<summary>Administration</summary>`,
+		`<a href="/manage/admin/spaces">Publish spaces</a>`,
+		`<a href="/manage/admin/access" aria-current="page">Global access</a>`,
 		`<form method="post" action="/manage/logout">`,
 	} {
 		if !strings.Contains(body, want) {
@@ -3239,20 +4561,232 @@ func TestManageAccessNavLinks(t *testing.T) {
 	}
 }
 
+func TestGlobalAdminManagesPublishSpaceAssignments(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	configs := []auth.TeamConfig{
+		{
+			Team:          "teamname",
+			PublishTokens: []string{"team-publish-token"},
+			PublishOwners: []string{"teamname"},
+		},
+		{
+			Team:       "alpha",
+			ReadTokens: []string{"alpha-read-token"},
+		},
+	}
+	adminClient, serverURL := newAccessManageClient(t, st, ctx, configs)
+
+	body := getBody(t, adminClient, serverURL+"/manage/admin/spaces")
+	for _, want := range []string{
+		`<a href="/manage/admin/spaces" aria-current="page">Publish spaces</a>`,
+		`<option value="teamname">teamname</option>`,
+		`<td><a href="/manage/teams/teamname/access">teamname</a></td>`,
+		`<span class="badge primary">Primary</span>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("publish spaces page misses %q:\n%s", want, body)
+		}
+	}
+
+	resp, err := adminClient.PostForm(serverURL+"/manage/admin/spaces", manageFormValues(t, adminClient, serverURL, url.Values{
+		"action": {"assign"},
+		"team":   {"teamname"},
+		"space":  {"shared"},
+	}))
+	if err != nil {
+		t.Fatalf("assign publish space error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("assign publish space final status = %d", resp.StatusCode)
+	}
+
+	saved, err := st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs(assign) error = %v", err)
+	}
+	team := findTeamConfig(saved, "teamname")
+	if team == nil || !slices.Contains(team.PublishOwners, "shared") {
+		t.Fatalf("shared publish space was not assigned: %#v", saved)
+	}
+	body = getBody(t, adminClient, serverURL+"/manage/admin/spaces")
+	if !strings.Contains(body, `<input type="hidden" name="space" value="shared"><button class="remove-button" type="submit">Unassign</button>`) {
+		t.Fatalf("assigned publish space has no unassign action:\n%s", body)
+	}
+
+	resp, err = adminClient.PostForm(serverURL+"/manage/admin/spaces", manageFormValues(t, adminClient, serverURL, url.Values{
+		"action": {"unassign"},
+		"team":   {"teamname"},
+		"space":  {"shared"},
+	}))
+	if err != nil {
+		t.Fatalf("unassign publish space error = %v", err)
+	}
+	_ = resp.Body.Close()
+	saved, err = st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs(unassign) error = %v", err)
+	}
+	team = findTeamConfig(saved, "teamname")
+	if team == nil || slices.Contains(team.PublishOwners, "shared") {
+		t.Fatalf("shared publish space was not unassigned: %#v", saved)
+	}
+
+	publishClient := &http.Client{Transport: adminClient.Transport, Jar: newCookieJar(t)}
+	postManageToken(t, publishClient, serverURL, "team-publish-token")
+	resp, err = publishClient.Get(serverURL + "/manage/admin/spaces")
+	if err != nil {
+		t.Fatalf("publisher GET publish spaces error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("publisher GET publish spaces status = %d, want 403", resp.StatusCode)
+	}
+
+	router := &Router{modules: service.NewModuleService(st, testArtifactStorage{}, "modules", nil)}
+	_, _, err = router.publishSpaceConfigsFromForm(formRequest(url.Values{
+		"action": {"assign"},
+		"team":   {"teamname"},
+		"space":  {"alpha"},
+	}))
+	if err == nil || !strings.Contains(err.Error(), "primary space of another team") {
+		t.Fatalf("assigning another team's primary space error = %v", err)
+	}
+}
+
+func TestSaveTeamCannotChangePublishSpaces(t *testing.T) {
+	t.Parallel()
+
+	st := newHTTPAPITestStore(t)
+	ctx := context.Background()
+	configs := []auth.TeamConfig{{
+		Team:          "teamname",
+		PublishTokens: []string{"team-publish-token"},
+		PublishOwners: []string{"teamname", "shared"},
+	}}
+	adminClient, serverURL := newAccessManageClient(t, st, ctx, configs)
+
+	resp, err := adminClient.PostForm(serverURL+"/manage/access", manageFormValues(t, adminClient, serverURL, url.Values{
+		"action":               {"save_team"},
+		"original_team":        {"teamname"},
+		"team":                 {"teamname"},
+		"extra_publish_spaces": {"injected"},
+	}))
+	if err != nil {
+		t.Fatalf("save team error = %v", err)
+	}
+	_ = resp.Body.Close()
+
+	saved, err := st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() error = %v", err)
+	}
+	team := findTeamConfig(saved, "teamname")
+	if team == nil || !slices.Contains(team.PublishOwners, "shared") || slices.Contains(team.PublishOwners, "injected") {
+		t.Fatalf("save_team changed publish spaces: %#v", saved)
+	}
+
+	body := getBody(t, adminClient, serverURL+"/manage/teams/teamname/access")
+	if strings.Contains(body, `name="extra_publish_spaces"`) {
+		t.Fatalf("team access page exposes editable extra publish spaces:\n%s", body)
+	}
+	if !strings.Contains(body, `href="/manage/admin/spaces">Manage publish spaces</a>`) {
+		t.Fatalf("global admin team page misses publish-space management link:\n%s", body)
+	}
+}
+
+func TestSaveTeamRejectsDuplicateCreateAndRename(t *testing.T) {
+	t.Parallel()
+
+	st := newHTTPAPITestStore(t)
+	ctx := context.Background()
+	configs := []auth.TeamConfig{
+		{Team: "teamname", PublishTokens: []string{"team-publish-token"}, PublishOwners: []string{"teamname", "shared"}},
+		{Team: "alpha", ReadTokens: []string{"alpha-read-token"}, PublishOwners: []string{"alpha"}},
+	}
+	if err := st.ReplaceTeamConfigs(ctx, configs); err != nil {
+		t.Fatalf("ReplaceTeamConfigs() error = %v", err)
+	}
+	router := &Router{modules: service.NewModuleService(st, testArtifactStorage{}, "modules", nil)}
+	principal := auth.Principal{CanAdmin: true}
+
+	for _, values := range []url.Values{
+		{"action": {"save_team"}, "team": {"teamname"}},
+		{"action": {"save_team"}, "original_team": {"teamname"}, "team": {"alpha"}},
+	} {
+		if _, _, err := router.accessConfigsFromForm(formRequest(values), principal); err == nil || !strings.Contains(err.Error(), "already exists") {
+			t.Fatalf("duplicate team update error = %v", err)
+		}
+	}
+
+	saved, err := st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() error = %v", err)
+	}
+	team := findTeamConfig(saved, "teamname")
+	if team == nil || !slices.Contains(team.PublishOwners, "shared") {
+		t.Fatalf("duplicate update changed existing team: %#v", saved)
+	}
+}
+
+func TestLegacyManagePageRoutesRedirectToCanonicalPages(t *testing.T) {
+	t.Parallel()
+
+	st := newHTTPAPITestStore(t)
+	server, client := setupManageTest(t, st, defaultActiveReleaseTTL)
+	noRedirect := *client
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	for oldPath, canonicalPath := range map[string]string{
+		"/manage/access":     "/manage/admin/access",
+		"/manage/access/add": "/manage/teams/new",
+	} {
+		resp, err := noRedirect.Get(server.URL + oldPath)
+		if err != nil {
+			t.Fatalf("GET %s error = %v", oldPath, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != canonicalPath {
+			t.Fatalf("GET %s status=%d location=%q, want 302 to %s", oldPath, resp.StatusCode, resp.Header.Get("Location"), canonicalPath)
+		}
+	}
+	for _, removedPath := range []string{"/manage/access/expert", "/manage/admin/expert"} {
+		resp, err := noRedirect.Get(server.URL + removedPath)
+		if err != nil {
+			t.Fatalf("GET removed path %s error = %v", removedPath, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET removed path %s status=%d, want 404", removedPath, resp.StatusCode)
+		}
+	}
+}
+
 func TestManageAccessAddTeamNavLinks(t *testing.T) {
 	t.Parallel()
 
 	rec := httptest.NewRecorder()
-	err := manageAccessAddTeamTemplate.Execute(rec, manageAccessAddTeamData{CSRFToken: "csrf-token"})
+	principal := auth.Principal{CanAdmin: true}
+	err := manageAccessAddTeamTemplate.Execute(rec, manageAccessAddTeamData{
+		Navigation: newManageNavigation(principal, "csrf-token", "add-team", ""),
+		CSRFToken:  "csrf-token",
+	})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	body := rec.Body.String()
 
 	for _, want := range []string{
-		`<a href="/">Public modules</a>`,
-		`<a href="/manage">Manage</a>`,
-		`<a href="/manage/access">Access</a>`,
+		`class="public-link" href="/">Public modules</a>`,
+		`<a href="/manage">Overview</a>`,
+		`<a href="/manage/modules">Modules</a>`,
+		`<a href="/manage/teams" aria-current="page">Teams</a>`,
+		`<a href="/manage/teams/new" aria-current="page">Add team</a>`,
+		`<form method="post" action="/manage/teams/new">`,
+		`<input id="new-team" name="team" placeholder="platform" required>`,
 		`<form method="post" action="/manage/logout">`,
 	} {
 		if !strings.Contains(body, want) {
@@ -3261,12 +4795,63 @@ func TestManageAccessAddTeamNavLinks(t *testing.T) {
 	}
 }
 
+func TestManageAccessAddTeamKeepsValidationAndSuccessInTeamContext(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	server, client := setupManageTest(t, st, defaultActiveReleaseTTL)
+	noRedirect := *client
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	resp, err := noRedirect.PostForm(server.URL+"/manage/teams/new", manageFormValues(t, client, server.URL, url.Values{
+		"action": {"save_team"},
+	}))
+	if err != nil {
+		t.Fatalf("POST empty add-team form error = %v", err)
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read empty add-team response: %v", readErr)
+	}
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "<h1>Add Team</h1>") || !strings.Contains(string(body), "team is required") {
+		t.Fatalf("empty add-team response status=%d body=%s", resp.StatusCode, string(body))
+	}
+	configs, err := st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() after rejected create error = %v", err)
+	}
+	if len(configs) != 0 {
+		t.Fatalf("rejected add-team form persisted configs: %#v", configs)
+	}
+
+	resp, err = noRedirect.PostForm(server.URL+"/manage/teams/new", manageFormValues(t, client, server.URL, url.Values{
+		"action": {"save_team"},
+		"team":   {"teamname"},
+	}))
+	if err != nil {
+		t.Fatalf("POST valid add-team form error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/manage/teams/teamname/access?message=team+access+saved" {
+		t.Fatalf("valid add-team response status=%d location=%q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	configs, err = st.LoadTeamConfigs(ctx)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs() after create error = %v", err)
+	}
+	if len(configs) != 1 || configs[0].Team != "teamname" {
+		t.Fatalf("valid add-team form persisted configs = %#v", configs)
+	}
+}
+
 func TestManageModulesRemembersOpenSections(t *testing.T) {
 	t.Parallel()
 
 	_, server, client := setupManageTestWithModule(t)
 
-	body := getBody(t, client, server.URL+"/manage")
+	body := getBody(t, client, server.URL+"/manage/modules")
 	for _, want := range []string{
 		`data-section-key="teamname/apache"`,
 		`puppet-forge:manage:open-sections`,
@@ -3416,7 +5001,7 @@ func TestReadPublishInputRejectsManualMetadataFields(t *testing.T) {
 		}
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", &body)
 		req.Header.Set("Content-Type", writer.FormDataContentType())
-		_, err := readPublishInput(httptest.NewRecorder(), req, 0)
+		_, _, err := readPublishInput(httptest.NewRecorder(), req, 0)
 		if err == nil || !strings.Contains(err.Error(), `manual field "`+field+`" is not allowed`) {
 			t.Fatalf("field %s error = %v", field, err)
 		}
@@ -3568,12 +5153,20 @@ func newHTTPAPIAccessMatrixServer(t *testing.T, authorizer *auth.Authorizer) (*s
 
 func newHTTPAPITestStore(t *testing.T) *store.SQLiteStore {
 	t.Helper()
-	st, err := store.NewSQLiteStore("sqlite://:memory:")
+	st, err := store.NewSQLiteStore("sqlite://:memory:", httpAPITestTokenHasher())
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}
 	t.Cleanup(st.Close)
 	return st
+}
+
+func httpAPITestTokenHasher() *auth.TokenHasher {
+	tokenHasher, err := auth.NewTokenHasher(strings.Repeat("test-pepper-", 3))
+	if err != nil {
+		panic(err)
+	}
+	return tokenHasher
 }
 
 func newCookieJar(t *testing.T) *cookiejar.Jar {
@@ -3587,7 +5180,7 @@ func newCookieJar(t *testing.T) *cookiejar.Jar {
 
 func newAdminAuthorizer(t *testing.T, configs ...auth.TeamConfig) *auth.Authorizer {
 	t.Helper()
-	authorizer, err := auth.NewAuthorizer(auth.AccessConfigsWithRuntimeAdmin(configs, "admin-token"))
+	authorizer, err := auth.NewAuthorizerWithTokenHasher(auth.AccessConfigsWithRuntimeAdmin(configs, "admin-token"), httpAPITestTokenHasher())
 	if err != nil {
 		t.Fatalf("NewAuthorizer() error = %v", err)
 	}
@@ -3693,7 +5286,7 @@ func newUpstreamPuppetlabsApache(t *testing.T) upstreamPuppetlabsApache {
 	}))
 	t.Cleanup(upstream.Close)
 
-	forgeProxy, err := proxy.NewForgeProxy(upstream.URL, 0, 1024, testArtifactStorage{}, "upstream-cache")
+	forgeProxy, err := proxy.NewForgeProxy(upstream.URL, 0, 1024, testArtifactStorage{}, "upstream-cache", proxy.WithHTTPClient(upstream.Client()), proxy.WithPrivateNetworks())
 	if err != nil {
 		t.Fatalf("NewForgeProxy() error = %v", err)
 	}
@@ -3736,30 +5329,11 @@ func getV3ModulesAndManagePage(t *testing.T, server *httptest.Server) string {
 	client := &http.Client{Transport: server.Client().Transport}
 	client.Jar = jar
 	postManageToken(t, client, server.URL, "admin-token")
-	return getBody(t, client, server.URL+"/manage")
+	return getBody(t, client, server.URL+"/manage/modules")
 }
 
-func TestManageModulesReturns500WhenRandomGenerationFails(t *testing.T) {
+func TestEnsureManageCSRFTokenReturnsErrorWhenRandomGenerationFails(t *testing.T) {
 	// Not parallel due to global testableRandomBase64URL mock
-	st := newHTTPAPITestStore(t)
-	server, client := setupManageTestWithTeamnameApacheModule(t, st, true)
-	jar := client.Jar
-
-	// Clear CSRF token cookie to force regeneration
-	target, err := url.Parse(server.URL + "/manage")
-	if err != nil {
-		t.Fatalf("parse URL error = %v", err)
-	}
-	jar.SetCookies(target, []*http.Cookie{
-		{
-			Name:   manageCSRFCookie,
-			Value:  "",
-			MaxAge: -1,
-			Path:   "/manage",
-		},
-	})
-
-	// Mock random generation to fail
 	oldRandom := testableRandomBase64URL
 	testableRandomBase64URL = func(size int) (string, error) {
 		return "", errors.New("simulated random generation failure")
@@ -3768,16 +5342,22 @@ func TestManageModulesReturns500WhenRandomGenerationFails(t *testing.T) {
 		testableRandomBase64URL = oldRandom
 	})
 
-	resp, err := client.Get(server.URL + "/manage")
-	if err != nil {
-		t.Fatalf("GET /manage error = %v", err)
+	router := &Router{manageSessions: newManageSessionStore(nil, "test-secret")}
+	_, err := router.ensureManageCSRFToken(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/manage", nil))
+	if err == nil || !strings.Contains(err.Error(), "simulated random generation failure") {
+		t.Fatalf("ensureManageCSRFToken() error = %v", err)
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
+}
 
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("expected 500 when random generation fails, got %d", resp.StatusCode)
+func TestNewRouterRejectsMissingManageSessionSecret(t *testing.T) {
+	t.Parallel()
+
+	handler, err := NewRouter(RouterConfig{})
+	if handler != nil {
+		t.Fatal("NewRouter() returned a handler without a manage session secret")
+	}
+	if err == nil || !strings.Contains(err.Error(), "manage session secret must contain at least 32 bytes") {
+		t.Fatalf("NewRouter() error = %v", err)
 	}
 }
 
