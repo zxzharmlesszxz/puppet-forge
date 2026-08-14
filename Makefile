@@ -215,6 +215,9 @@ prometheus-rules-check: ## Validate standalone and Helm-rendered Prometheus rule
 	$(DOCKER) run --rm --entrypoint promtool \
 		-v "$(CURDIR)/examples/prometheus/alerts:/rules:ro" \
 		$(PROMTOOL_IMAGE) check rules /rules/puppet-forge.yml
+	$(DOCKER) run --rm --entrypoint promtool \
+		-v "$(CURDIR)/examples/prometheus/alerts:/rules:ro" \
+		$(PROMTOOL_IMAGE) test rules /rules/puppet-forge.test.yml
 	@set -eu; \
 	rendered="$$(mktemp)"; \
 	trap 'rm -f "$$rendered"' EXIT; \

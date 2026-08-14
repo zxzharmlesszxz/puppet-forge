@@ -92,13 +92,13 @@ groups:
           description: "5xx ratio has been above 5% for at least 10 minutes on route {{ $labels.route }}."
 
       - alert: PuppetForgeHTTPPanics
-        expr: job_route:puppet_forge_http_panics:rate5m > 0
-        for: 5m
+        expr: sum by (job, route) (increase(puppet_forge_http_panics_total[10m])) > 0
+        for: 1m
         labels:
           severity: warning
         annotations:
           summary: "Puppet Forge recovered HTTP panics on {{ $labels.job }} {{ $labels.route }}"
-          description: "HTTP handlers have recovered from panics for at least 5 minutes on route {{ $labels.route }}."
+          description: "At least one HTTP handler panic was recovered within the last 10 minutes on route {{ $labels.route }}."
 
       - alert: PuppetForgeHighP95Latency
         expr: |
@@ -284,6 +284,18 @@ groups:
         annotations:
           summary: "Puppet Forge has no successful upstream refresh on {{ $labels.job }}"
           description: "No fully successful upstream refresh cycle has been recorded for more than 24 hours."
+
+      - alert: PuppetForgeUpstreamRefreshWorkerStalled
+        expr: |
+          max by (job) (puppet_forge_upstream_refresh_last_timestamp_seconds) == 0
+          or
+          time() - max by (job) (puppet_forge_upstream_refresh_last_timestamp_seconds) > 86400
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge upstream refresh worker is stalled on {{ $labels.job }}"
+          description: "No upstream refresh cycle has completed for more than 24 hours, including the case where the worker never ran."
 
       - alert: PuppetForgeLowUpstreamCacheHitRatio
         expr: |

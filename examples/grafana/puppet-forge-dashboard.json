@@ -2294,6 +2294,50 @@
                     "refId": "C",
                     "hidden": false
                   }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${DS_PROMETHEUS}"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "round(sum(increase(puppet_forge_upstream_artifact_cleanup_scanned_total{job=~\"$job\"}[$__range]))) or vector(0)",
+                        "legendFormat": "objects scanned",
+                        "range": false,
+                        "instant": true
+                      }
+                    },
+                    "refId": "D",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${DS_PROMETHEUS}"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "(sum(increase(puppet_forge_upstream_artifact_cleanup_duration_seconds_sum{job=~\"$job\"}[$__range])) or vector(0)) / clamp_min((sum(increase(puppet_forge_upstream_artifact_cleanup_duration_seconds_count{job=~\"$job\"}[$__range])) or vector(0)), 1)",
+                        "legendFormat": "average duration (seconds)",
+                        "range": false,
+                        "instant": true
+                      }
+                    },
+                    "refId": "E",
+                    "hidden": false
+                  }
                 }
               ],
               "transformations": [],
@@ -2451,7 +2495,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "max(last_over_time(puppet_forge_upstream_refresh_last_duration_seconds{job=~\"$job\"}[$__range])) or vector(0)",
+                        "expr": "max(puppet_forge_upstream_refresh_last_duration_seconds{job=~\"$job\"} and on (instance, job) topk by (job) (1, puppet_forge_upstream_refresh_last_timestamp_seconds{job=~\"$job\"})) or vector(0)",
                         "legendFormat": "last",
                         "range": false,
                         "instant": true
@@ -2542,7 +2586,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "max by (result) (last_over_time(puppet_forge_upstream_refresh_modules{job=~\"$job\"}[$__range]))",
+                        "expr": "max by (result) (puppet_forge_upstream_refresh_modules{job=~\"$job\"} and on (instance, job) topk by (job) (1, puppet_forge_upstream_refresh_last_timestamp_seconds{job=~\"$job\"}))",
                         "legendFormat": "{{result}}",
                         "range": false,
                         "instant": true

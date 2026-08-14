@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"net/http"
 	"os"
@@ -49,6 +50,7 @@ const artifactDeletionCleanupBatch = 100
 const artifactDeletionCleanupTimeout = 90 * time.Second
 const upstreamArtifactCacheCleanupLeaseName = "upstream-artifact-cache-cleanup"
 const upstreamArtifactCacheCleanupInterval = 24 * time.Hour
+const retentionCleanupRetryInterval = 30 * time.Second
 const defaultCloseTimeout = 10 * time.Second
 const defaultLeaseReleaseTimeout = 5 * time.Second
 
@@ -223,8 +225,9 @@ func (a *App) startUpstreamArtifactCacheCleanup(ctx context.Context, moduleSvc *
 		return
 	}
 	a.startRetentionCleanup(ctx, upstreamArtifactCacheCleanupLeaseName, upstreamArtifactCacheCleanupInterval, "upstream artifact cache", func(ctx context.Context) error {
+		startedAt := time.Now()
 		result, err := moduleSvc.PruneUpstreamArtifactCache(ctx, time.Now().UTC().Add(-ttl))
-		metrics.ObserveUpstreamArtifactCleanup(err, result.Deleted, result.Failed)
+		metrics.ObserveUpstreamArtifactCleanup(err, result.Scanned, result.Deleted, result.Failed, time.Since(startedAt))
 		if err != nil {
 			return err
 		}
@@ -485,19 +488,32 @@ func (a *App) startRetentionCleanup(ctx context.Context, leaseName string, inter
 				return
 			case <-timer.C:
 				cleanupCtx, cancel := context.WithTimeout(ctx, retentionCleanupTimeout)
+				succeeded := false
 				leader, err := a.store.AcquireLease(cleanupCtx, leaseName, holder, 2*retentionCleanupTimeout)
 				if err != nil {
 					slog.Default().Error("acquire "+description+" cleanup lease failed", "err", err)
 				} else if leader {
 					if err := cleanup(cleanupCtx); err != nil {
 						slog.Default().Error(description+" cleanup failed", "err", err)
+					} else {
+						succeeded = true
 					}
 				}
 				cancel()
-				timer.Reset(interval)
+				timer.Reset(retentionCleanupDelay(interval, succeeded, holder+":"+leaseName))
 			}
 		}
 	})
+}
+
+func retentionCleanupDelay(interval time.Duration, succeeded bool, jitterKey string) time.Duration {
+	if succeeded {
+		return interval
+	}
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(jitterKey))
+	jitter := time.Duration(int(hash.Sum32()%11)-5) * time.Second
+	return min(interval, retentionCleanupRetryInterval+jitter)
 }
 
 func (a *App) startArtifactDeletionCleanup(ctx context.Context, moduleSvc *service.ModuleService) {

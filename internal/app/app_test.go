@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,33 @@ type blockingLeaseStore struct {
 	store.Store
 	deadline chan time.Time
 }
+
+type exclusiveLeaseStore struct {
+	store.Store
+	mu       sync.Mutex
+	held     bool
+	attempts chan bool
+}
+
+func (s *exclusiveLeaseStore) AcquireLease(context.Context, string, string, time.Duration) (bool, error) {
+	s.mu.Lock()
+	leader := !s.held
+	if leader {
+		s.held = true
+	}
+	s.mu.Unlock()
+	s.attempts <- leader
+	return leader, nil
+}
+
+func (s *exclusiveLeaseStore) ReleaseLease(context.Context, string, string) error {
+	s.mu.Lock()
+	s.held = false
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *exclusiveLeaseStore) Close() {}
 
 func (s *blockingLeaseStore) ReleaseLease(ctx context.Context, _, _ string) error {
 	deadline, _ := ctx.Deadline()
@@ -56,10 +84,6 @@ func (s *artifactDeletionTestStorage) Delete(ctx context.Context, objectPath str
 
 func (s *artifactDeletionTestStorage) Exists(context.Context, string) (bool, error) {
 	return false, nil
-}
-
-func (s *artifactDeletionTestStorage) Download(context.Context, string) (artifactstorage.Object, error) {
-	return artifactstorage.Object{}, nil
 }
 
 func (s *artifactDeletionTestStorage) Open(context.Context, string) (artifactstorage.ObjectReader, error) {
@@ -98,6 +122,69 @@ func TestRetentionCleanupRunsAsynchronouslyAfterStartup(t *testing.T) {
 	}
 	cancel()
 	app.wg.Wait()
+}
+
+func TestRetentionCleanupDelayRetriesFailuresPromptly(t *testing.T) {
+	t.Parallel()
+
+	got := retentionCleanupDelay(24*time.Hour, false, "replica:cleanup")
+	if got < 25*time.Second || got > 35*time.Second {
+		t.Fatalf("retentionCleanupDelay(failure) = %s, want 25s..35s", got)
+	}
+	if repeated := retentionCleanupDelay(24*time.Hour, false, "replica:cleanup"); repeated != got {
+		t.Fatalf("retentionCleanupDelay(failure) = %s then %s, want stable jitter", got, repeated)
+	}
+	if got := retentionCleanupDelay(24*time.Hour, true, "replica:cleanup"); got != 24*time.Hour {
+		t.Fatalf("retentionCleanupDelay(success) = %s, want 24h", got)
+	}
+}
+
+func TestRetentionCleanupRunsOnOnlyOneReplicaPerLease(t *testing.T) {
+	t.Parallel()
+
+	leaseStore := &exclusiveLeaseStore{attempts: make(chan bool, 2)}
+	ctx, cancel := context.WithCancel(context.Background())
+	first := &App{store: leaseStore}
+	second := &App{store: leaseStore}
+	cleanupStarted := make(chan struct{}, 2)
+	releaseCleanup := make(chan struct{})
+	cleanup := func(context.Context) error {
+		cleanupStarted <- struct{}{}
+		<-releaseCleanup
+		return nil
+	}
+	first.startRetentionCleanup(ctx, "shared-cleanup", time.Hour, "shared cleanup", cleanup)
+	second.startRetentionCleanup(ctx, "shared-cleanup", time.Hour, "shared cleanup", cleanup)
+
+	leaders := 0
+	for range 2 {
+		select {
+		case leader := <-leaseStore.attempts:
+			if leader {
+				leaders++
+			}
+		case <-time.After(time.Second):
+			t.Fatal("both replicas did not attempt the shared cleanup lease")
+		}
+	}
+	if leaders != 1 {
+		t.Fatalf("lease leaders = %d, want 1", leaders)
+	}
+	select {
+	case <-cleanupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("lease leader did not start cleanup")
+	}
+	select {
+	case <-cleanupStarted:
+		t.Fatal("cleanup ran on more than one replica")
+	default:
+	}
+
+	close(releaseCleanup)
+	cancel()
+	first.wg.Wait()
+	second.wg.Wait()
 }
 
 func TestPurgeReleaseUsageRemovesExpiredRows(t *testing.T) {
