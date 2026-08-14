@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -49,11 +50,23 @@ func (r *Router) indexPage(w http.ResponseWriter, req *http.Request) {
 		navigation.Breadcrumbs[0].URL = "/"
 		navigation.Breadcrumbs = append(navigation.Breadcrumbs, publicBreadcrumb{Label: owner, Current: true})
 	}
+	filterParams := []queryParameter(nil)
+	filterClearURL := "/"
+	filterPlaceholder := "Filter by owner or module name"
+	if owner != "" {
+		filterParams = []queryParameter{{Name: "owner", Value: owner}}
+		filterPlaceholder = "Filter " + owner + " modules"
+		filterClearURL = "/?owner=" + url.QueryEscape(owner)
+	}
 	executeHTMLTemplate(w, indexPageTemplate, indexPageData{
 		Navigation: navigation,
 		Modules:    modules,
 		Owner:      owner,
 		Query:      query,
+		Filter: newListFilter(
+			"module-filter-form", "module-filter", "/", "module-list", "Filter modules", "q",
+			filterPlaceholder, query, filterClearURL, filterParams...,
+		),
 		Pagination: pagination,
 	})
 }

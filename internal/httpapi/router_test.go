@@ -55,10 +55,6 @@ func (s testArtifactStorage) Exists(context.Context, string) (bool, error) {
 	return false, nil
 }
 
-func (s testArtifactStorage) Download(context.Context, string) (storage.Object, error) {
-	return storage.Object{}, store.ErrNotFound
-}
-
 func (s testArtifactStorage) Open(context.Context, string) (storage.ObjectReader, error) {
 	return storage.ObjectReader{}, store.ErrNotFound
 }
@@ -108,11 +104,6 @@ func (s *trackingRangeStorage) openCounts() (int, int) {
 	return s.fullOpens, s.rangeOpens
 }
 
-func (s *countingDownloadStorage) Download(ctx context.Context, objectPath string) (storage.Object, error) {
-	s.downloads++
-	return s.fixedDownloadStorage.Download(ctx, objectPath)
-}
-
 func (s *countingDownloadStorage) Open(ctx context.Context, objectPath string) (storage.ObjectReader, error) {
 	s.downloads++
 	return s.fixedDownloadStorage.Open(ctx, objectPath)
@@ -136,10 +127,6 @@ func (s fixedDownloadStorage) Delete(context.Context, string) error {
 
 func (s fixedDownloadStorage) Exists(context.Context, string) (bool, error) {
 	return true, nil
-}
-
-func (s fixedDownloadStorage) Download(context.Context, string) (storage.Object, error) {
-	return storage.Object{Body: s.body, ContentType: s.contentType}, nil
 }
 
 func (s fixedDownloadStorage) Open(context.Context, string) (storage.ObjectReader, error) {
@@ -631,7 +618,10 @@ func TestManagePrincipalRefreshesAccessConfigFromStore(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/manage", nil)
 	req.AddCookie(&http.Cookie{Name: manageTokenCookie, Value: sessionID})
 
-	principal, ok := router.managePrincipal(req)
+	principal, ok, err := router.managePrincipal(req)
+	if err != nil {
+		t.Fatalf("managePrincipal() error = %v", err)
+	}
 	if !ok {
 		t.Fatal("managePrincipal() denied refreshed publish token")
 	}
@@ -709,7 +699,10 @@ func TestIndexFilterRefreshesPaginatedResultsWithoutReload(t *testing.T) {
 	t.Parallel()
 
 	var page bytes.Buffer
-	if err := indexPageTemplate.Execute(&page, indexPageData{}); err != nil {
+	if err := indexPageTemplate.Execute(&page, indexPageData{Filter: listFilterData{
+		ID: "module-filter-form", InputID: "module-filter", Action: "/", Target: "module-list",
+		Label: "Filter modules", Name: "q", Placeholder: "Filter by owner or module name",
+	}}); err != nil {
 		t.Fatalf("indexPageTemplate.Execute() error = %v", err)
 	}
 	if !strings.Contains(page.String(), ".list {\n      padding: 10px 0;\n      overflow: hidden;") {
@@ -729,6 +722,11 @@ func TestIndexFilterRefreshesPaginatedResultsWithoutReload(t *testing.T) {
 		if !strings.Contains(page.String(), want) {
 			t.Fatalf("index page misses paginated live filtering %q:\n%s", want, page.String())
 		}
+	}
+	listStart := strings.Index(page.String(), `id="module-list" data-async-list`)
+	filterStart := strings.Index(page.String(), `id="module-filter-form"`)
+	if listStart < 0 || filterStart < listStart {
+		t.Fatalf("public filter must be rendered inside its async-list target:\n%s", page.String())
 	}
 }
 

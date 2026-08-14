@@ -572,6 +572,16 @@ func TestOpenSQLiteAndRejectsUnsupportedScheme(t *testing.T) {
 	if _, err := Open(ctx, "file:///tmp/forge.db", nil); err == nil {
 		t.Fatal("expected unsupported scheme error")
 	}
+
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = Open(canceledCtx, "postgresql://forge:forge@127.0.0.1:1/forge?sslmode=disable", nil)
+	if err == nil {
+		t.Fatal("Open(postgresql) error = nil, want canceled connection error")
+	}
+	if strings.Contains(err.Error(), "unsupported database scheme") {
+		t.Fatalf("Open(postgresql) error = %v, want PostgreSQL alias to be recognized", err)
+	}
 }
 
 func TestSQLiteLeaseLifecycle(t *testing.T) {

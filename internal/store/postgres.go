@@ -33,6 +33,14 @@ type postgresExecutor interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
+type postgresQueryer interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+type postgresAccessConfigLoader struct {
+	queryer postgresQueryer
+}
+
 type ModuleStore interface {
 	Ping(ctx context.Context) error
 	LockModule(ctx context.Context, owner, name string) (ModuleUnlock, error)
@@ -685,13 +693,26 @@ func (s *PostgresStore) ReleaseLease(ctx context.Context, name, holder string) e
 }
 
 func (s *PostgresStore) LoadTeamConfigs(ctx context.Context) ([]auth.TeamConfig, error) {
-	rows, err := s.pool.Query(ctx, `select team from access_teams order by team`)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, fmt.Errorf("begin access snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx, `select team from access_teams order by team`)
 	if err != nil {
 		return nil, fmt.Errorf("list access teams: %w", err)
 	}
 	defer rows.Close()
 
-	return loadTeamConfigs(ctx, rows, s)
+	configs, err := loadTeamConfigs(ctx, rows, postgresAccessConfigLoader{queryer: tx})
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit access snapshot: %w", err)
+	}
+	return configs, nil
 }
 
 func (s *PostgresStore) ReplaceTeamConfigs(ctx context.Context, configs []auth.TeamConfig) error {
@@ -962,8 +983,8 @@ func insertPostgresAccessTokenRecord(ctx context.Context, tx pgx.Tx, team, token
 	return nil
 }
 
-func (s *PostgresStore) loadAccessTokens(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
-	rows, err := s.pool.Query(ctx, `select team, token_type, token_id, token_prefix, token_hash, description, created_at, expires_at, revoked_at, last_used_at from access_tokens order by team, token_type, token_prefix`)
+func (l postgresAccessConfigLoader) loadAccessTokens(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
+	rows, err := l.queryer.Query(ctx, `select team, token_type, token_id, token_prefix, token_hash, description, created_at, expires_at, revoked_at, last_used_at from access_tokens order by team, token_type, token_prefix`)
 	if err != nil {
 		return fmt.Errorf("list access tokens: %w", err)
 	}
@@ -1005,8 +1026,8 @@ func nullablePostgresTime(value sql.NullTime) *time.Time {
 	return &parsed
 }
 
-func (s *PostgresStore) loadAccessOwners(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
-	rows, err := s.pool.Query(ctx, `select team, owner from access_publish_owners order by team, owner`)
+func (l postgresAccessConfigLoader) loadAccessOwners(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
+	rows, err := l.queryer.Query(ctx, `select team, owner from access_publish_owners order by team, owner`)
 	if err != nil {
 		return fmt.Errorf("list access owners: %w", err)
 	}
@@ -1023,8 +1044,8 @@ func (s *PostgresStore) loadAccessOwners(ctx context.Context, configs []auth.Tea
 	return rows.Err()
 }
 
-func (s *PostgresStore) loadAccessOIDC(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
-	rows, err := s.pool.Query(ctx, `select team, mapping_type, value from access_oidc_mappings order by team, mapping_type, value`)
+func (l postgresAccessConfigLoader) loadAccessOIDC(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
+	rows, err := l.queryer.Query(ctx, `select team, mapping_type, value from access_oidc_mappings order by team, mapping_type, value`)
 	if err != nil {
 		return fmt.Errorf("list access oidc mappings: %w", err)
 	}

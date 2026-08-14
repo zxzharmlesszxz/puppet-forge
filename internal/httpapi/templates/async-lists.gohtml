@@ -137,7 +137,7 @@
       });
       document.addEventListener("click", (event) => {
         if (!(event.target instanceof Element)) return;
-        const link = event.target.closest("[data-async-list] .pagination-links a, [data-async-list] .list-pagination-links a, [data-async-list] .filter-clear, [data-async-list] .list-filter-clear");
+        const link = event.target.closest("[data-async-list] .pagination-links a, [data-async-list] .list-pagination-links a, [data-async-list] .list-filter-clear");
         if (!(link instanceof HTMLAnchorElement)) return;
         const list = link.closest("[data-async-list]");
         if (!list?.id) return;

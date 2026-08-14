@@ -1,4 +1,5 @@
 {{define "manage-navigation-styles"}}
+    {{template "list-filter-styles" .}}
     .manage-navigation {
       margin-bottom: 24px;
       border-bottom: 1px solid var(--line);
@@ -204,38 +205,6 @@
       background: rgba(31, 36, 40, 0.08);
       outline: none;
       opacity: 1;
-    }
-    .list-filter {
-      position: relative;
-      margin: 16px 20px;
-    }
-    .list-filter input[type="search"] {
-      width: 100%;
-      height: 42px;
-      padding: 0 42px 0 12px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
-      color: var(--ink);
-      font: inherit;
-    }
-    .list-filter input[type="search"]:focus {
-      border-color: #81aeb0;
-      outline: 3px solid #dceced;
-    }
-    .list-filter-clear {
-      position: absolute;
-      top: 5px;
-      right: 10px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 32px;
-      height: 32px;
-      color: var(--muted);
-      text-decoration: none;
-      font-size: 22px;
-      line-height: 1;
     }
     .list-pagination {
       display: flex;

@@ -718,13 +718,16 @@ func TestManageTeamActiveTokenFilterRemainsUsableWithoutMatches(t *testing.T) {
 
 	var page bytes.Buffer
 	err := manageTeamTemplate.Execute(&page, manageTeamData{
-		Navigation:          newManageNavigation(auth.Principal{CanAdmin: true}, "csrf", "team-tokens", "teamname"),
-		Principal:           auth.Principal{CanAdmin: true},
-		Team:                accessTeamFormRow{Team: "teamname"},
-		ActiveTokenQuery:    "missing token",
-		ActiveTokenClearURL: "/manage/teams/teamname/tokens?token_query=revoked#active-tokens",
-		ActiveTokenParams:   []queryParameter{{Name: "token_query", Value: "revoked"}},
-		ShowTokens:          true,
+		Navigation:       newManageNavigation(auth.Principal{CanAdmin: true}, "csrf", "team-tokens", "teamname"),
+		Principal:        auth.Principal{CanAdmin: true},
+		Team:             accessTeamFormRow{Team: "teamname"},
+		ActiveTokenQuery: "missing token",
+		ActiveTokenFilter: listFilterData{
+			ID: "active-token-filter", InputID: "active-token-query", Action: "/manage/teams/teamname/tokens#active-tokens", Target: "active-tokens",
+			Label: "active tokens", Name: "active_token_query", Placeholder: "Filter tokens", Value: "missing token",
+			ClearURL: "/manage/teams/teamname/tokens?token_query=revoked#active-tokens", Params: []queryParameter{{Name: "token_query", Value: "revoked"}},
+		},
+		ShowTokens: true,
 	})
 	if err != nil {
 		t.Fatalf("render filtered active tokens: %v", err)
@@ -762,8 +765,8 @@ func TestPopulateManageTeamTokensFiltersActiveTokensBeforePagination(t *testing.
 	if len(data.Team.Tokens) != 1 || data.Team.Tokens[0].ID != "publish" || data.TokenPagination.Total != 1 {
 		t.Fatalf("active token filter result = %#v, pagination = %#v", data.Team.Tokens, data.TokenPagination)
 	}
-	if data.ActiveTokenQuery != "release" || data.ActiveTokenClearURL != "/manage/teams/teamname/tokens?token_query=expired#active-tokens" {
-		t.Fatalf("active token filter state = query %q, clear URL %q", data.ActiveTokenQuery, data.ActiveTokenClearURL)
+	if data.ActiveTokenQuery != "release" || data.ActiveTokenFilter.ClearURL != "/manage/teams/teamname/tokens?token_query=expired#active-tokens" {
+		t.Fatalf("active token filter state = query %q, clear URL %q", data.ActiveTokenQuery, data.ActiveTokenFilter.ClearURL)
 	}
 }
 
@@ -777,9 +780,12 @@ func TestManageTeamTokenHistoryFilterRemainsUsableWithoutMatches(t *testing.T) {
 		Team:                  accessTeamFormRow{Team: "teamname"},
 		TokenHistoryAvailable: true,
 		TokenHistoryQuery:     "missing token",
-		TokenHistoryClearURL:  "/manage/teams/teamname/tokens?q=apache#token-history",
-		TokenHistoryParams:    []queryParameter{{Name: "q", Value: "apache"}},
-		ShowTokens:            true,
+		TokenHistoryFilter: listFilterData{
+			ID: "token-history-filter", InputID: "token-history-query", Action: "/manage/teams/teamname/tokens#token-history", Target: "token-history",
+			Label: "revoked and expired tokens", Name: "token_query", Placeholder: "Filter tokens", Value: "missing token",
+			ClearURL: "/manage/teams/teamname/tokens?q=apache#token-history", Params: []queryParameter{{Name: "q", Value: "apache"}},
+		},
+		ShowTokens: true,
 	})
 	if err != nil {
 		t.Fatalf("render filtered token history: %v", err)

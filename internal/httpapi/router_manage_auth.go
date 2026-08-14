@@ -66,7 +66,10 @@ func (r *Router) manageLoginPage(w http.ResponseWriter, req *http.Request) {
 		token := strings.TrimSpace(req.FormValue("token"))
 		var principal auth.Principal
 		var ok bool
-		r.refreshManageAuthorizer(req.Context())
+		if err := r.refreshManageAuthorizer(req.Context()); err != nil {
+			r.renderManageLogin(w, req, "access configuration is temporarily unavailable")
+			return
+		}
 		authorizer := r.authorizerSnapshot()
 		if authorizer != nil {
 			principal, ok = authorizer.AuthenticateToken(token)
@@ -121,7 +124,7 @@ func (r *Router) manageLogoutPage(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	principal, _ := r.managePrincipal(req)
+	principal, _, _ := r.managePrincipal(req)
 	hasOIDCSession := false
 	if r.webAuth != nil {
 		_, hasOIDCSession = r.webAuth.Session(req)
@@ -157,11 +160,13 @@ func clearManageTokenCookie(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func (r *Router) managePrincipal(req *http.Request) (auth.Principal, bool) {
-	r.refreshManageAuthorizer(req.Context())
+func (r *Router) managePrincipal(req *http.Request) (auth.Principal, bool, error) {
+	if err := r.refreshManageAuthorizer(req.Context()); err != nil {
+		return auth.Principal{}, false, err
+	}
 	authorizer := r.authorizerSnapshot()
 	if authorizer == nil || !authorizer.Enabled() {
-		return auth.Principal{}, false
+		return auth.Principal{}, false, nil
 	}
 
 	cookie, err := req.Cookie(manageTokenCookie)
@@ -174,7 +179,7 @@ func (r *Router) managePrincipal(req *http.Request) (auth.Principal, bool) {
 						"request_id", observability.RequestID(req.Context()),
 						"reason", "credential_id_mismatch",
 					)
-					return auth.Principal{}, false
+					return auth.Principal{}, false, nil
 				}
 				slog.Debug("manage principal authenticated",
 					"request_id", observability.RequestID(req.Context()),
@@ -187,7 +192,7 @@ func (r *Router) managePrincipal(req *http.Request) (auth.Principal, bool) {
 					"managed_teams", len(principal.ManagedTeams),
 				)
 				r.recordAccessTokenUsed(req.Context(), principal)
-				return principal, true
+				return principal, true, nil
 			}
 			slog.Debug("manage token session rejected",
 				"request_id", observability.RequestID(req.Context()),
@@ -215,7 +220,7 @@ func (r *Router) managePrincipal(req *http.Request) (auth.Principal, bool) {
 					"managed_teams", len(principal.ManagedTeams),
 					"oidc_groups", len(session.Groups),
 				)
-				return principal, true
+				return principal, true, nil
 			}
 			slog.Default().Warn("oidc session is not mapped to team",
 				"request_id", observability.RequestID(req.Context()),
@@ -226,11 +231,15 @@ func (r *Router) managePrincipal(req *http.Request) (auth.Principal, bool) {
 	}
 
 	slog.Debug("manage principal unavailable", "request_id", observability.RequestID(req.Context()))
-	return auth.Principal{}, false
+	return auth.Principal{}, false, nil
 }
 
 func (r *Router) requireManage(w http.ResponseWriter, req *http.Request) (auth.Principal, bool) {
-	principal, ok := r.managePrincipal(req)
+	principal, ok, err := r.managePrincipal(req)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("access configuration is temporarily unavailable"))
+		return auth.Principal{}, false
+	}
 	if !ok {
 		if r.webAuth != nil {
 			if _, hasSession := r.webAuth.Session(req); !hasSession {
