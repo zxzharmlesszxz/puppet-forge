@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -25,9 +26,13 @@ func (r *Router) requireReadAccess(w http.ResponseWriter, req *http.Request) boo
 		slog.Debug("read access allowed", "request_id", observability.RequestID(req.Context()), "reason", "public_module_access")
 		return true
 	}
-	authorizer := r.currentAuthorizer(req.Context())
+	authorizer, err := r.currentAuthorizer(req.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return false
+	}
 	if authorizer == nil {
-		writeError(w, http.StatusInternalServerError, errors.New("authorizer is not configured"))
+		writeError(w, http.StatusServiceUnavailable, errors.New("authorizer is not configured"))
 		return false
 	}
 	principal, ok := authorizer.RequireRead(w, req)
@@ -85,11 +90,19 @@ func (r *Router) recordAccessTokenUsed(ctx context.Context, principal auth.Princ
 	}
 }
 
-func (r *Router) currentAuthorizer(ctx context.Context) *auth.Authorizer {
-	if err := r.refreshAuthorizer(ctx, false); err != nil {
-		slog.Default().Warn("access config refresh failed", "err", err)
+func (r *Router) currentAuthorizer(ctx context.Context) (*auth.Authorizer, error) {
+	refreshErr := r.refreshAuthorizer(ctx, false)
+	if refreshErr != nil {
+		slog.Default().Warn("access config refresh failed", "err", refreshErr)
 	}
-	return r.authorizerSnapshot()
+	authorizer, refreshedAt := r.authorizerSnapshotState()
+	if r.refreshAccessConfig && (refreshedAt.IsZero() || time.Since(refreshedAt) > accessConfigMaxStaleTTL) {
+		if refreshErr == nil {
+			refreshErr = errors.New("access configuration snapshot is stale")
+		}
+		return nil, fmt.Errorf("access configuration is unavailable: %w", refreshErr)
+	}
+	return authorizer, nil
 }
 
 func (r *Router) authorizerSnapshot() *auth.Authorizer {
@@ -111,10 +124,12 @@ func (r *Router) setAuthorizer(authorizer *auth.Authorizer, refreshedAt time.Tim
 	r.authorizerRefreshed = refreshedAt
 }
 
-func (r *Router) refreshManageAuthorizer(ctx context.Context) {
+func (r *Router) refreshManageAuthorizer(ctx context.Context) error {
 	if err := r.refreshAuthorizer(ctx, true); err != nil {
 		slog.Default().Warn("manage access config refresh failed", "err", err)
+		return fmt.Errorf("refresh manage access configuration: %w", err)
 	}
+	return nil
 }
 
 func (r *Router) refreshAuthorizer(ctx context.Context, force bool) error {

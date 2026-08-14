@@ -117,11 +117,7 @@
     {{if .Error}}<div class="notice error" role="alert">{{.Error}}</div>{{end}}
 
     <section class="panel" id="teams-list" data-async-list aria-label="Manageable teams">
-      <form class="list-filter" method="get" data-async-filter="teams-list">
-        <label class="visually-hidden" for="teams-query">Filter teams</label>
-        <input id="teams-query" name="q" type="search" placeholder="Filter by team or publish space" value="{{.Query}}" autocomplete="off">
-        {{if .Query}}<a class="list-filter-clear" href="{{.ClearURL}}" aria-label="Clear team filter">&times;</a>{{end}}
-      </form>
+      {{template "list-filter" .Filter}}
       {{if .Teams}}
       {{range .Teams}}
       <a class="team-row" href="/manage/teams/{{.Team}}/access">

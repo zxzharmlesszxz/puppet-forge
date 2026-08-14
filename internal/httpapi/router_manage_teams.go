@@ -72,7 +72,10 @@ func (r *Router) manageTeamsPage(w http.ResponseWriter, req *http.Request) {
 		Principal:  principal,
 		Teams:      rows,
 		Query:      query,
-		ClearURL:   "/manage/teams",
+		Filter: newListFilter(
+			"teams-filter", "teams-query", "/manage/teams", "teams-list",
+			"Filter teams", "q", "Filter by team or publish space", query, "/manage/teams",
+		),
 		Pagination: pagination,
 		Message:    req.URL.Query().Get("message"),
 		Error:      req.URL.Query().Get("error"),
@@ -235,10 +238,20 @@ func populateManageTeamTokens(req *http.Request, basePath string, data *manageTe
 	data.TokenHistory = pageItems(tokenHistory, tokenHistoryPage, tokenHistoryPageSize)
 	data.TokenPagination = tokenPagination(basePath, req.URL.Query(), "token_page", "token_per_page", "active-tokens", tokenPage, tokenPageSize, tokenTotal)
 	data.TokenHistoryPagination = tokenPagination(basePath, req.URL.Query(), "history_page", "history_per_page", "token-history", tokenHistoryPage, tokenHistoryPageSize, tokenHistoryTotal)
-	data.ActiveTokenParams = tokenFilterParams(req.URL.Query(), "q", "page", "history_page", "token_query")
-	data.ActiveTokenClearURL = tokenFilterURL(basePath, data.ActiveTokenParams, "active-tokens")
-	data.TokenHistoryParams = tokenFilterParams(req.URL.Query(), "q", "page", "token_page", "active_token_query")
-	data.TokenHistoryClearURL = tokenFilterURL(basePath, data.TokenHistoryParams, "token-history")
+	activeTokenParams := tokenFilterParams(req.URL.Query(), "q", "page", "history_page", "token_query")
+	activeTokenClearURL := tokenFilterURL(basePath, activeTokenParams, "active-tokens")
+	tokenHistoryParams := tokenFilterParams(req.URL.Query(), "q", "page", "token_page", "active_token_query")
+	tokenHistoryClearURL := tokenFilterURL(basePath, tokenHistoryParams, "token-history")
+	data.ActiveTokenFilter = newListFilter(
+		"active-token-filter", "active-token-query", basePath+"#active-tokens", "active-tokens",
+		"Filter active tokens", "active_token_query", "Filter by role, status, prefix, or name",
+		data.ActiveTokenQuery, activeTokenClearURL, activeTokenParams...,
+	)
+	data.TokenHistoryFilter = newListFilter(
+		"token-history-filter", "token-history-query", basePath+"#token-history", "token-history",
+		"Filter revoked and expired tokens", "token_query", "Filter by role, status, prefix, or name",
+		data.TokenHistoryQuery, tokenHistoryClearURL, tokenHistoryParams...,
+	)
 	return nil
 }
 
@@ -255,6 +268,10 @@ func (r *Router) populateManageTeamModules(req *http.Request, principal auth.Pri
 	}
 	data.Modules = modules
 	data.Pagination = managePaginationForRequest(basePath, req.URL.Query(), manageTeamModuleListTarget, manageTeamModuleListTarget, page, pageSize, total)
+	data.ModuleFilter = newListFilter(
+		"team-module-filter", "team-catalog-query", basePath, manageTeamModuleListTarget,
+		"Filter modules", "q", "Filter by owner/name", data.Query, basePath,
+	)
 	return nil
 }
 

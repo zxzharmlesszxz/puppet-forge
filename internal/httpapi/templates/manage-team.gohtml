@@ -42,9 +42,6 @@
     .notice { margin-bottom: 16px; padding: 11px 13px; border-radius: 6px; background: #eef5ef; color: var(--ok); }
     .notice.error { background: #f9eceb; color: var(--danger); }
     .badge, .usage-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 8px; border: 1px solid #cbd8d9; border-radius: 999px; background: #f7fbfb; color: #355f62; font-size: 12px; font-weight: 700; }
-    .catalog-filter { position: relative; margin-bottom: 12px; }
-    .catalog-filter input { padding-right: 42px; }
-    .filter-clear { position: absolute; right: 14px; top: 7px; color: var(--muted); text-decoration: none; font-size: 22px; }
     .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     .section-disclosure { margin-top: 12px; border: 1px solid var(--line); border-radius: 7px; background: #fbfcfb; overflow: hidden; }
     .section-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 54px; padding: 12px 14px; cursor: pointer; list-style: none; font-weight: 750; transition: background-color .15s ease; }
@@ -152,12 +149,7 @@
       <details id="active-tokens" class="section-disclosure" data-section-key="active-tokens" data-async-list{{if or .ActiveTokenQuery (gt .TokenPagination.Page 1)}} open{{end}}>
         <summary class="section-summary"><span class="section-title">Active tokens <span class="badge">{{.TokenPagination.Total}}</span></span></summary>
         <div class="section-content">
-          <form class="catalog-filter" method="get" action="/manage/teams/{{.Team.Team}}/tokens#active-tokens" data-async-filter="active-tokens">
-            {{range .ActiveTokenParams}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
-            <label class="visually-hidden" for="active-token-query">Filter active tokens</label>
-            <input id="active-token-query" name="active_token_query" type="search" placeholder="Filter by role, status, prefix, or name…" value="{{.ActiveTokenQuery}}">
-            {{if .ActiveTokenQuery}}<a class="filter-clear" href="{{.ActiveTokenClearURL}}" aria-label="Clear active token filter">×</a>{{end}}
-          </form>
+          {{template "list-filter" .ActiveTokenFilter}}
           <div class="token-list">
           {{range .Team.Tokens}}
           <div class="token-row">
@@ -179,12 +171,7 @@
       <details id="token-history" class="section-disclosure" data-section-key="token-history" data-async-list{{if or .TokenHistoryQuery (gt .TokenHistoryPagination.Page 1)}} open{{end}}>
         <summary class="section-summary"><span class="section-title">Revoked and expired tokens <span class="badge">{{.TokenHistoryPagination.Total}}</span></span></summary>
         <div class="section-content">
-          <form class="catalog-filter" method="get" action="/manage/teams/{{.Team.Team}}/tokens#token-history" data-async-filter="token-history">
-            {{range .TokenHistoryParams}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
-            <label class="visually-hidden" for="token-history-query">Filter revoked and expired tokens</label>
-            <input id="token-history-query" name="token_query" type="search" placeholder="Filter by role, status, prefix, or name…" value="{{.TokenHistoryQuery}}">
-            {{if .TokenHistoryQuery}}<a class="filter-clear" href="{{.TokenHistoryClearURL}}" aria-label="Clear revoked and expired token filter">×</a>{{end}}
-          </form>
+          {{template "list-filter" .TokenHistoryFilter}}
           {{if .TokenHistory}}
           <div class="token-list">
           {{range .TokenHistory}}
@@ -243,11 +230,7 @@
       <details id="module-list" class="section-disclosure" data-section-key="module-list" data-async-list{{if .Query}} open{{end}}>
         <summary class="section-summary"><span class="section-title">Modules <span class="badge">{{.Pagination.Total}}</span></span></summary>
         <div class="section-content">
-          <form class="catalog-filter" method="get" action="/manage/teams/{{.Team.Team}}/modules" data-async-filter="module-list">
-        <label class="visually-hidden" for="team-catalog-query">Filter modules</label>
-        <input id="team-catalog-query" name="q" type="search" placeholder="Filter by owner/name…" value="{{.Query}}" autocomplete="off">
-        {{if .Query}}<a class="filter-clear" href="/manage/teams/{{.Team.Team}}/modules">×</a>{{end}}
-          </form>
+          {{template "list-filter" .ModuleFilter}}
           {{if .Modules}}
           {{range .Modules}}
           {{$row := .}}

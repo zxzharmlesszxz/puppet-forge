@@ -275,31 +275,6 @@
       color: white;
       outline: none;
     }
-    .catalog-filter {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 16px;
-    }
-    .catalog-filter input {
-      flex: 1;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 10px 12px;
-      font: inherit;
-      background: white;
-    }
-    .filter-clear {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 40px;
-      border-radius: 6px;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      color: var(--muted);
-      font-size: 20px;
-      text-decoration: none;
-    }
     .danger {
       color: var(--danger);
     }
@@ -402,11 +377,7 @@
 
     <section class="panel" id="manage-module-list" data-async-list>
       <h2>Owned Modules</h2>
-      <form class="catalog-filter" method="get" action="/manage/modules" data-async-filter="manage-module-list">
-        <label class="visually-hidden" for="catalog-query">Filter modules</label>
-        <input id="catalog-query" name="q" type="search" placeholder="Filter by owner/name…" value="{{.Query}}" autocomplete="off">
-        {{if .Query}}<a class="filter-clear" href="/manage/modules">×</a>{{end}}
-      </form>
+      {{template "list-filter" .Filter}}
       {{if .Modules}}
       {{range .Modules}}
       {{$row := .}}

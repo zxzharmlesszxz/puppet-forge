@@ -170,8 +170,9 @@ func TestManageListTemplatesExposeAsyncFiltersAndPagination(t *testing.T) {
 	if err := manageTeamsTemplate.Execute(&teamsPage, manageTeamsData{
 		Teams:      []manageTeamSummary{{Team: "platform"}},
 		Query:      "platform",
-		ClearURL:   "/manage/teams",
 		Pagination: pagination,
+		Filter: listFilterData{ID: "teams-filter", InputID: "teams-query", Action: "/manage/teams", Target: "teams-list",
+			Label: "teams", Name: "q", Placeholder: "Filter teams", Value: "platform", ClearURL: "/manage/teams"},
 	}); err != nil {
 		t.Fatalf("render teams page: %v", err)
 	}
@@ -193,8 +194,9 @@ func TestManageListTemplatesExposeAsyncFiltersAndPagination(t *testing.T) {
 			{Space: "puppetlabs", ModulesURL: "/manage/modules?q=puppetlabs%2F", ModuleCount: 4, Upstream: true},
 		},
 		Query:      "primary",
-		ClearURL:   "/manage/admin/spaces",
 		Pagination: paginationData{Page: 1, Total: 21, TotalPages: 2, HasNext: true, NextURL: "/manage/admin/spaces?page=2&q=primary#publish-space-list"},
+		Filter: listFilterData{ID: "publish-space-filter", InputID: "publish-space-query", Action: "/manage/admin/spaces", Target: "publish-space-list",
+			Label: "publish spaces", Name: "q", Placeholder: "Filter spaces", Value: "primary", ClearURL: "/manage/admin/spaces"},
 	}); err != nil {
 		t.Fatalf("render publish spaces page: %v", err)
 	}

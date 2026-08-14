@@ -26,6 +26,7 @@ const (
 	defaultModuleUploadMax      = 128 << 20
 	manageSessionTTL            = 8 * time.Hour
 	accessConfigRefreshTTL      = 2 * time.Second
+	accessConfigMaxStaleTTL     = 30 * time.Second
 	defaultTokenUsageMaxEntries = 10_000
 	tokenUsageRecordInterval    = time.Minute
 )
@@ -124,6 +125,9 @@ func NewRouter(config RouterConfig, opts ...RouterOption) (http.Handler, error) 
 		securityHSTSEnabled:   config.SecurityHSTSEnabled,
 		moduleUploadMax:       defaultModuleUploadMax,
 		formActionSources:     formActionSources(oidcLogoutOrigin(config.WebAuth)),
+	}
+	if config.Authorizer != nil {
+		r.authorizerRefreshed = time.Now()
 	}
 	for _, opt := range opts {
 		opt(r)

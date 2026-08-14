@@ -31,7 +31,39 @@ type indexPageData struct {
 	Modules    []domain.Module
 	Owner      string
 	Query      string
+	Filter     listFilterData
 	Pagination paginationData
+}
+
+type listFilterData struct {
+	ID          string
+	InputID     string
+	Action      string
+	Target      string
+	Label       string
+	Name        string
+	Placeholder string
+	Value       string
+	ClearURL    string
+	Params      []queryParameter
+}
+
+func newListFilter(id, inputID, action, target, label, name, placeholder, value, clearURL string, params ...queryParameter) listFilterData {
+	filter := listFilterData{
+		ID:          id,
+		InputID:     inputID,
+		Action:      action,
+		Target:      target,
+		Label:       label,
+		Name:        name,
+		Placeholder: placeholder,
+		Value:       value,
+		Params:      params,
+	}
+	if value != "" {
+		filter.ClearURL = clearURL
+	}
+	return filter
 }
 
 type publicNavigationData struct {
@@ -81,6 +113,7 @@ type managePageData struct {
 	Error      string
 	CSRFToken  string
 	Query      string
+	Filter     listFilterData
 	Pagination paginationData
 }
 
@@ -131,7 +164,7 @@ type managePublishSpacesData struct {
 	Assignments []managePublishSpaceAssignment
 	Teams       []string
 	Query       string
-	ClearURL    string
+	Filter      listFilterData
 	Pagination  paginationData
 	Message     string
 	Error       string
@@ -164,7 +197,7 @@ type manageTeamsData struct {
 	Principal  auth.Principal
 	Teams      []manageTeamSummary
 	Query      string
-	ClearURL   string
+	Filter     listFilterData
 	Pagination paginationData
 	Message    string
 	Error      string
@@ -182,12 +215,10 @@ type manageTeamData struct {
 	TokenPagination        paginationData
 	TokenHistoryPagination paginationData
 	ActiveTokenQuery       string
-	ActiveTokenClearURL    string
-	ActiveTokenParams      []queryParameter
+	ActiveTokenFilter      listFilterData
 	TokenHistoryAvailable  bool
 	TokenHistoryQuery      string
-	TokenHistoryClearURL   string
-	TokenHistoryParams     []queryParameter
+	TokenHistoryFilter     listFilterData
 	ShowAccess             bool
 	ShowTokens             bool
 	ShowModules            bool
@@ -195,6 +226,7 @@ type manageTeamData struct {
 	Error                  string
 	CSRFToken              string
 	Query                  string
+	ModuleFilter           listFilterData
 	Pagination             paginationData
 }
 
@@ -407,11 +439,11 @@ func mustParseTemplate(filename string) *template.Template {
 }
 
 func mustParsePublicTemplate(filename string) *template.Template {
-	return template.Must(template.New(filename).ParseFS(templateFS, "templates/public-navigation.gohtml", "templates/clipboard.gohtml", "templates/page-size-persistence.gohtml", "templates/async-lists.gohtml", "templates/"+filename))
+	return template.Must(template.New(filename).ParseFS(templateFS, "templates/public-navigation.gohtml", "templates/list-filter.gohtml", "templates/clipboard.gohtml", "templates/page-size-persistence.gohtml", "templates/async-lists.gohtml", "templates/"+filename))
 }
 
 func mustParseCSRFTemplate(filename string) *template.Template {
-	return template.Must(template.New(filename).Funcs(csrfFuncs).ParseFS(templateFS, "templates/manage-navigation.gohtml", "templates/clipboard.gohtml", "templates/page-size-persistence.gohtml", "templates/async-lists.gohtml", "templates/"+filename))
+	return template.Must(template.New(filename).Funcs(csrfFuncs).ParseFS(templateFS, "templates/manage-navigation.gohtml", "templates/list-filter.gohtml", "templates/clipboard.gohtml", "templates/page-size-persistence.gohtml", "templates/async-lists.gohtml", "templates/"+filename))
 }
 
 var manageLoginTemplate = mustParseTemplate("manage-login.gohtml")

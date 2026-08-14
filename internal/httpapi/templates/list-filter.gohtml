@@ -1,0 +1,48 @@
+{{define "list-filter-styles"}}
+    .list-filter { position: relative; margin: 16px 20px; }
+    .list-filter input[type="search"] {
+      width: 100%;
+      height: 42px;
+      padding: 0 42px 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      outline: none;
+    }
+    .list-filter input[type="search"]:focus {
+      border-color: #81aeb0;
+      box-shadow: 0 0 0 3px #dceced;
+    }
+    .list-filter-clear {
+      position: absolute;
+      top: 5px;
+      right: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 5px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 22px;
+      line-height: 1;
+    }
+    .list-filter-clear:hover,
+    .list-filter-clear:focus-visible {
+      background: rgba(47, 111, 115, 0.09);
+      color: var(--accent);
+      outline: none;
+    }
+{{end}}
+
+{{define "list-filter"}}
+      <form id="{{.ID}}" class="list-filter" method="get" action="{{.Action}}" data-async-filter="{{.Target}}">
+        {{range .Params}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+        <label class="visually-hidden" for="{{.InputID}}">{{.Label}}</label>
+        <input id="{{.InputID}}" name="{{.Name}}" type="search" placeholder="{{.Placeholder}}" value="{{.Value}}" autocomplete="off">
+        {{if .ClearURL}}<a class="list-filter-clear" href="{{.ClearURL}}" aria-label="Clear filter">&times;</a>{{end}}
+      </form>
+{{end}}

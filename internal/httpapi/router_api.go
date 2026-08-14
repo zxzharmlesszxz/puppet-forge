@@ -42,9 +42,13 @@ func (r *Router) publishSpaces(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 		return
 	}
-	authorizer := r.currentAuthorizer(req.Context())
+	authorizer, err := r.currentAuthorizer(req.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
 	if authorizer == nil {
-		writeError(w, http.StatusInternalServerError, errors.New("authorizer is not configured"))
+		writeError(w, http.StatusServiceUnavailable, errors.New("authorizer is not configured"))
 		return
 	}
 	principal, ok := authorizer.RequirePublishAny(w, req)
@@ -264,9 +268,13 @@ func (r *Router) getModule(w http.ResponseWriter, req *http.Request, owner, name
 }
 
 func (r *Router) requireDeleteAccess(w http.ResponseWriter, req *http.Request, owner string) bool {
-	authorizer := r.currentAuthorizer(req.Context())
+	authorizer, err := r.currentAuthorizer(req.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return false
+	}
 	if authorizer == nil {
-		writeError(w, http.StatusInternalServerError, errors.New("authorizer is not configured"))
+		writeError(w, http.StatusServiceUnavailable, errors.New("authorizer is not configured"))
 		return false
 	}
 	principal, ok := authorizer.RequireDelete(w, req, owner)
@@ -383,9 +391,13 @@ func (r *Router) publishModule(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusTooManyRequests, errors.New("too many publish attempts"))
 		return
 	}
-	authorizer := r.currentAuthorizer(req.Context())
+	authorizer, err := r.currentAuthorizer(req.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
 	if authorizer == nil {
-		writeError(w, http.StatusInternalServerError, errors.New("authorizer is not configured"))
+		writeError(w, http.StatusServiceUnavailable, errors.New("authorizer is not configured"))
 		return
 	}
 	principal, ok := authorizer.RequirePublishAny(w, req)

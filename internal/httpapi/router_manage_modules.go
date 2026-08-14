@@ -62,6 +62,10 @@ func (r *Router) manageModulesPage(w http.ResponseWriter, req *http.Request) {
 		Error:      req.URL.Query().Get("error"),
 		CSRFToken:  csrfToken,
 		Query:      query,
+		Filter: newListFilter(
+			"manage-module-filter", "catalog-query", "/manage/modules", manageModuleListTarget,
+			"Filter modules", "q", "Filter by owner/name", query, "/manage/modules",
+		),
 		Pagination: managePaginationForRequest("/manage/modules", req.URL.Query(), manageModuleListTarget, manageModuleListTarget, page, pageSize, total),
 	})
 }

@@ -29,6 +29,7 @@
       padding: 48px 20px 72px;
     }
     {{template "public-navigation-styles" .Navigation}}
+    {{template "list-filter-styles" .Navigation}}
     .hero, .list {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -57,25 +58,6 @@
       font-size: 18px;
       line-height: 1.6;
       max-width: 720px;
-    }
-    .toolbar {
-      margin-top: 24px;
-      display: grid;
-      gap: 12px;
-    }
-    .search {
-      width: 100%;
-      padding: 14px 16px;
-      border-radius: 14px;
-      border: 1px solid var(--line);
-      background: rgba(255,255,255,0.75);
-      color: var(--ink);
-      font-size: 16px;
-      outline: none;
-    }
-    .search:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 4px rgba(177, 74, 43, 0.12);
     }
     .visually-hidden {
       position: absolute;
@@ -174,13 +156,9 @@
       <div class="eyebrow">Local Forge</div>
       <h1>{{if .Owner}}{{.Owner}} Modules{{else}}Published Modules{{end}}</h1>
       <p class="subtitle">{{if .Owner}}Modules published in the {{.Owner}} space.{{else}}Index of all modules currently stored in this service.{{end}} Open any module to view its latest release and extracted README.</p>
-      <form id="module-filter-form" class="toolbar" method="get" action="/" data-async-filter="module-list">
-        {{if .Owner}}<input type="hidden" name="owner" value="{{.Owner}}">{{end}}
-        <label class="visually-hidden" for="module-filter">Filter modules</label>
-        <input id="module-filter" class="search" name="q" type="search" placeholder="{{if .Owner}}Filter {{.Owner}} modules{{else}}Filter by owner or module name{{end}}" value="{{.Query}}" autocomplete="off">
-      </form>
     </section>
     <section class="list" id="module-list" data-async-list>
+      {{template "list-filter" .Filter}}
       {{if .Modules}}
         {{range .Modules}}
         <!--suppress HtmlUnknownTarget -->

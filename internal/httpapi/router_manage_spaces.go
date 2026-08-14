@@ -90,11 +90,14 @@ func (r *Router) renderManagePublishSpaces(w http.ResponseWriter, req *http.Requ
 		Assignments: assignments,
 		Teams:       teams,
 		Query:       query,
-		ClearURL:    "/manage/admin/spaces",
-		Pagination:  pagination,
-		Message:     req.URL.Query().Get("message"),
-		Error:       firstNonEmpty(errorMessage, req.URL.Query().Get("error")),
-		CSRFToken:   csrfToken,
+		Filter: newListFilter(
+			"publish-space-filter", "publish-space-query", "/manage/admin/spaces", "publish-space-list",
+			"Filter publish spaces", "q", "Filter by team, space, or type", query, "/manage/admin/spaces",
+		),
+		Pagination: pagination,
+		Message:    req.URL.Query().Get("message"),
+		Error:      firstNonEmpty(errorMessage, req.URL.Query().Get("error")),
+		CSRFToken:  csrfToken,
 	})
 }
 

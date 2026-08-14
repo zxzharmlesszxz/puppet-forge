@@ -22,6 +22,14 @@ import (
 
 const currentSchemaVersion = 3
 
+type sqliteQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+type sqliteAccessConfigLoader struct {
+	queryer sqliteQueryer
+}
+
 const sqliteSchema = `
 pragma foreign_keys = on;
 
@@ -659,7 +667,13 @@ func (s *SQLiteStore) ReleaseLease(ctx context.Context, name, holder string) err
 }
 
 func (s *SQLiteStore) LoadTeamConfigs(ctx context.Context) ([]auth.TeamConfig, error) {
-	rows, err := s.db.QueryContext(ctx, `select team from access_teams order by team`)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("begin access snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, `select team from access_teams order by team`)
 	if err != nil {
 		return nil, fmt.Errorf("list access teams: %w", err)
 	}
@@ -667,7 +681,14 @@ func (s *SQLiteStore) LoadTeamConfigs(ctx context.Context) ([]auth.TeamConfig, e
 		_ = rows.Close()
 	}()
 
-	return loadTeamConfigs(ctx, rows, s)
+	configs, err := loadTeamConfigs(ctx, rows, sqliteAccessConfigLoader{queryer: tx})
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit access snapshot: %w", err)
+	}
+	return configs, nil
 }
 
 func (s *SQLiteStore) ReplaceTeamConfigs(ctx context.Context, configs []auth.TeamConfig) error {
@@ -939,8 +960,8 @@ func (s *SQLiteStore) RevokeOIDCSession(ctx context.Context, sessionHash string,
 	return nil
 }
 
-func (s *SQLiteStore) loadAccessTokens(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
-	rows, err := s.db.QueryContext(ctx, `select team, token_type, token_id, token_prefix, token_hash, description, created_at, expires_at, revoked_at, last_used_at from access_tokens order by team, token_type, token_prefix`)
+func (l sqliteAccessConfigLoader) loadAccessTokens(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
+	rows, err := l.queryer.QueryContext(ctx, `select team, token_type, token_id, token_prefix, token_hash, description, created_at, expires_at, revoked_at, last_used_at from access_tokens order by team, token_type, token_prefix`)
 	if err != nil {
 		return fmt.Errorf("list access tokens: %w", err)
 	}
@@ -1055,8 +1076,8 @@ func sqliteTime(value time.Time) string {
 	return value.UTC().Format(sqliteTimestampLayout)
 }
 
-func (s *SQLiteStore) loadAccessOwners(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
-	rows, err := s.db.QueryContext(ctx, `select team, owner from access_publish_owners order by team, owner`)
+func (l sqliteAccessConfigLoader) loadAccessOwners(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
+	rows, err := l.queryer.QueryContext(ctx, `select team, owner from access_publish_owners order by team, owner`)
 	if err != nil {
 		return fmt.Errorf("list access owners: %w", err)
 	}
@@ -1075,8 +1096,8 @@ func (s *SQLiteStore) loadAccessOwners(ctx context.Context, configs []auth.TeamC
 	return rows.Err()
 }
 
-func (s *SQLiteStore) loadAccessOIDC(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
-	rows, err := s.db.QueryContext(ctx, `select team, mapping_type, value from access_oidc_mappings order by team, mapping_type, value`)
+func (l sqliteAccessConfigLoader) loadAccessOIDC(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
+	rows, err := l.queryer.QueryContext(ctx, `select team, mapping_type, value from access_oidc_mappings order by team, mapping_type, value`)
 	if err != nil {
 		return fmt.Errorf("list access oidc mappings: %w", err)
 	}

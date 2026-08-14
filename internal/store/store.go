@@ -159,7 +159,7 @@ func OpenWithOptions(ctx context.Context, dsn string, tokenHasher *auth.TokenHas
 	}
 
 	switch parsed.Scheme {
-	case "postgres":
+	case "postgres", "postgresql":
 		return newPostgresStore(ctx, dsn, tokenHasher, options.PostgresPool)
 	case "sqlite":
 		return NewSQLiteStore(dsn, tokenHasher)
