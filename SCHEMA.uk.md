@@ -585,7 +585,7 @@ Prometheus має scrape кожен metrics endpoint.
 | `LEASE-2`   | один upstream fetch на object                          | concurrent replicas complete                                                       | proxy coalescing test       |
 | `LEASE-3`   | history cleanup singleton і repeatable                 | один purge на цикл; active tokens не видаляються                                   | cleanup store/service tests |
 | `LEASE-4`   | artifact cleanup singleton, retryable і republish-safe | pending gauge зменшується; error counter припиняє рости; referenced paths canceled | outbox parity/service tests |
-| `READY-1`   | SQL або object storage down робить pod unready         | `/readyz` `503`                                                                    | readiness tests             |
+| `READY-1`   | недоступна SQL або create/read/delete capability object storage робить pod unready | `/readyz` `503`; успішна storage probe кешується 5 хвилин                 | readiness tests             |
 | `RECON-1`   | repair deletes only orphans                            | JSON report                                                                        | reconcile tests             |
 | `OBS-1`     | scrape всіх replicas                                   | target per pod                                                                     | deployed target check       |
 
@@ -637,7 +637,7 @@ max by (source) (puppet_forge_module_releases)
 | refresh leader exit    | lease takeover                                               | debug lease logs              |
 | artifact leader exit   | partial object не commit; retry після expiry                 | lease logs + checksum         |
 | різний session secret  | failure лише на частині pods                                 | compare Secret/checksum       |
-| stale authorizer cache | нормальна розбіжність до 2s                                  | retry + refresh logs          |
+| stale authorizer cache | refresh після 2s; при SQL failure stale state дозволений не довше 30s, далі `503` | refresh logs + SQL health |
 | scrape лише однієї pod | undercount cluster traffic                                   | Prometheus targets            |
 | HPA scale              | correctness shared; local rate/cache змінюються              | HPA + targets + hit ratio     |
 

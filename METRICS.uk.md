@@ -214,6 +214,12 @@ HTTP-запит уже може мати статус `200` або `206`, кол
 - Тип: gauge
 - Значення: тривалість останнього циклу upstream refresh у секундах
 
+### `puppet_forge_upstream_refresh_last_timestamp_seconds`
+
+- Тип: gauge
+- Значення: Unix timestamp останнього завершеного циклу upstream refresh незалежно від його результату
+- Використання з кількома репліками: duration і module-result gauges треба брати з репліки з найбільшим timestamp; alert має спрацьовувати, якщо timestamp лишається нульовим або стає старшим за налаштоване вікно здоров'я refresh
+
 ### `puppet_forge_upstream_refresh_last_success_timestamp_seconds`
 
 - Тип: gauge

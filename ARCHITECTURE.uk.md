@@ -240,12 +240,16 @@ Token creation вимагає назву та роль `read`/`publish`. Акт�
 початково по 20 записів, із запам'ятовуваним вибором 10, 20, 50 або 100;
 `ACCESS_TOKEN_HISTORY_TTL` визначає retention revoked/expired records. Cleanup
 асинхронно запускається під спільною SQL-lease одразу після старту й щодня, тому
-readiness не очікує завершення retention. Primary team space створюється автоматично й
+readiness не очікує завершення retention. Невдалий cleanup повторюється через
+стабільну для кожної репліки затримку 25–35 секунд, а після успіху worker чекає
+повний налаштований interval. Primary team space створюється автоматично й
 не може бути unassigned. Extra spaces змінює лише global administration.
-Bearer authorization отримує capabilities із bounded authorizer snapshot, а
+Bearer authorization отримує capabilities з атомарно прочитаного SQL snapshot, а
 потім на кожному protected request перевіряє immutable token ID безпосередньо в
-SQL. Тому revoke та expiration закривають доступ на всіх replicas одразу після
-database commit без повного перечитування всіх teams.
+SQL. При помилці refresh застаріла access configuration використовується не довше
+30 секунд, після чого protected requests отримують `503`; примусовий manage refresh
+відмовляє одразу. Тому revoke та expiration закривають доступ на всіх replicas
+одразу після database commit без повного перечитування всіх teams.
 
 Latest releases та releases, активні в межах `ACTIVE_RELEASE_TTL`, не можна
 видалити. Module delete відхиляється, якщо є protected releases. Retention
@@ -282,7 +286,7 @@ strict cluster-wide quota.
 - невалідний publish archive повертає `400`;
 - відсутня або недостатня auth повертає `401` чи `403`;
 - `/healthz` показує liveness процесу;
-- `/readyz` перевіряє SQL метаданих і доступ до object storage через module service.
+- `/readyz` перевіряє SQL метаданих і виконує кешовану capability-перевірку object storage: create-if-absent, читання та видалення унікального об'єкта під `.readiness-probes/`. Успішний результат повторно використовується п'ять хвилин, щоб обмежити навантаження від probes.
 
 ## Спостережуваність
 
