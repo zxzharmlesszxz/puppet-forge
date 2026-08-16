@@ -421,9 +421,10 @@ func TestBuildGCSArtifactStorageDoesNotContactBucketByDefault(t *testing.T) {
 	t.Parallel()
 
 	artifacts, client, err := buildArtifactStorage(context.Background(), config.Config{
-		ArtifactBackend:  "gcs",
-		ArtifactEndpoint: "http://127.0.0.1:1",
-		ArtifactBucket:   "existing-bucket",
+		ArtifactBackend:      "gcs",
+		ArtifactEndpoint:     "http://127.0.0.1:1",
+		ArtifactBucket:       "existing-bucket",
+		ArtifactGCSAnonymous: true,
 	})
 	if err != nil {
 		t.Fatalf("buildArtifactStorage() error = %v", err)
