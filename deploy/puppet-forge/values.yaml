@@ -88,6 +88,8 @@ networkPolicy:
 
 podSecurityContext:
   runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
   seccompProfile:
     type: RuntimeDefault
 
@@ -138,6 +140,8 @@ config:
   ARTIFACT_PREFIX: modules
   ARTIFACT_REGION: us-east-1
   ARTIFACT_PATH_STYLE: "true"
+  # For dynamic ingress hostnames, keep both base URLs empty and trust forwarded
+  # host/proto only from the direct ingress or reverse-proxy CIDRs below.
   PUBLIC_BASE_URL: ""
   ALLOWED_PUBLIC_HOSTS: ""
   TRUSTED_PROXY_CIDRS: ""
@@ -149,6 +153,7 @@ config:
   SECURITY_HSTS_ENABLED: "false"
   WEB_AUTH_MODE: none
   OIDC_ISSUER_URL: ""
+  # Leave empty to derive /auth/callback from the validated external request.
   OIDC_REDIRECT_URL: ""
   OIDC_LOGOUT_URL: ""
   OIDC_SCOPES: "openid profile email"

@@ -105,14 +105,39 @@ func TestLoadReadsAdminToken(t *testing.T) {
 	t.Setenv("DATABASE_DSN", "sqlite:///tmp/puppet-forge.db")
 	t.Setenv("ARTIFACT_BUCKET", "forge-artifacts")
 	t.Setenv("ARTIFACT_PROJECT", "local-dev")
-	t.Setenv("ADMIN_TOKEN", "bootstrap-token")
+	t.Setenv("ADMIN_TOKEN", "bootstrap-token-with-at-least-32-bytes")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.AdminToken != "bootstrap-token" {
+	if cfg.AdminToken != "bootstrap-token-with-at-least-32-bytes" {
 		t.Fatalf("unexpected ADMIN_TOKEN: %q", cfg.AdminToken)
+	}
+}
+
+func TestLoadRejectsShortAdminToken(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("DATABASE_DSN", "sqlite:///tmp/puppet-forge.db")
+	t.Setenv("ARTIFACT_BUCKET", "forge-artifacts")
+	t.Setenv("ARTIFACT_PROJECT", "local-dev")
+	t.Setenv("ADMIN_TOKEN", "too-short")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "ADMIN_TOKEN must contain at least 32 bytes") {
+		t.Fatalf("Load() error = %v, want admin token validation", err)
+	}
+}
+
+func TestLoadArgsRejectsShortAdminToken(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("DATABASE_DSN", "sqlite:///tmp/puppet-forge.db")
+	t.Setenv("ARTIFACT_BUCKET", "forge-artifacts")
+	t.Setenv("ARTIFACT_PROJECT", "local-dev")
+
+	_, err := LoadArgs([]string{"--admin-token", "too-short"})
+	if err == nil || !strings.Contains(err.Error(), "ADMIN_TOKEN must contain at least 32 bytes") {
+		t.Fatalf("LoadArgs() error = %v, want admin token validation", err)
 	}
 }
 
@@ -371,6 +396,30 @@ func TestLoadReadsTrustedProxyCIDRsAndOIDCScopes(t *testing.T) {
 	}
 	if cfg.OIDCScopes != "openid profile email groups" {
 		t.Fatalf("unexpected OIDC_SCOPES: %q", cfg.OIDCScopes)
+	}
+}
+
+func TestLoadAcceptsTrustedProxyCIDRsAllMarker(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("DATABASE_DSN", "sqlite:///tmp/puppet-forge.db")
+	t.Setenv("ARTIFACT_BUCKET", "forge-artifacts")
+	t.Setenv("ARTIFACT_PROJECT", "local-dev")
+	t.Setenv("TRUSTED_PROXY_CIDRS", "*")
+	t.Setenv("TRUST_FORWARDED_HEADERS", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.TrustedProxyCIDRs != "*" {
+		t.Fatalf("unexpected TRUSTED_PROXY_CIDRS: %q", cfg.TrustedProxyCIDRs)
+	}
+	prefixes, err := ParseTrustedProxyCIDRs(cfg.TrustedProxyCIDRs)
+	if err != nil {
+		t.Fatalf("ParseTrustedProxyCIDRs() error = %v", err)
+	}
+	if len(prefixes) != 2 {
+		t.Fatalf("unexpected trusted prefixes count: %d", len(prefixes))
 	}
 }
 
@@ -710,6 +759,30 @@ func TestLoadRejectsInvalidSizeLimits(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsNegativeUpstreamDurations(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("DATABASE_DSN", "sqlite:///tmp/puppet-forge.db")
+	t.Setenv("ARTIFACT_BUCKET", "forge-artifacts")
+	t.Setenv("ARTIFACT_PROJECT", "local-dev")
+
+	for _, tc := range []struct {
+		name string
+		flag string
+		want string
+	}{
+		{name: "JSON cache", flag: "--upstream-proxy-json-cache-ttl", want: "UPSTREAM_PROXY_JSON_CACHE_TTL"},
+		{name: "JSON stale", flag: "--upstream-proxy-json-stale-ttl", want: "UPSTREAM_PROXY_JSON_STALE_TTL"},
+		{name: "sync interval", flag: "--upstream-sync-interval", want: "UPSTREAM_SYNC_INTERVAL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadArgs([]string{tc.flag, "-1s"})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("LoadArgs() error = %v, want %s validation", err, tc.want)
 			}
 		})
 	}

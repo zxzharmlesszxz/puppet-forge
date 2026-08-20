@@ -28,7 +28,7 @@ services:
       DATABASE_MIN_CONNS: 0
       DATABASE_MAX_CONN_LIFETIME: 1h
       DATABASE_MAX_CONN_IDLE_TIME: 30m
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-forge-admin-token-local}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-forge-admin-token-local-change-me-32-bytes}
       ACCESS_TOKEN_PEPPER: ${ACCESS_TOKEN_PEPPER:-local-access-token-pepper-change-me}
       MANAGE_SESSION_SECRET: ${MANAGE_SESSION_SECRET:-local-manage-session-secret-change-me}
       ACCESS_TOKEN_HISTORY_TTL: ${ACCESS_TOKEN_HISTORY_TTL:-2160h}
@@ -182,7 +182,7 @@ configs:
 
       forge:
         baseurl: 'http://app:8080'
-        authorization_token: 'Bearer ${ADMIN_TOKEN:-forge-admin-token-local}'
+        authorization_token: 'Bearer ${ADMIN_TOKEN:-forge-admin-token-local-change-me-32-bytes}'
 
 volumes:
   postgres-data:

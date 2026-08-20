@@ -1,10 +1,13 @@
 replicaCount: 1
 
+database:
+  backend: sqlite
+
 secret:
   create: true
   stringData:
     DATABASE_DSN: sqlite:///data/puppet-forge.db
-    ADMIN_TOKEN: forge-admin-token-local
+    ADMIN_TOKEN: forge-admin-token-local-change-me-32-bytes
     ACCESS_TOKEN_PEPPER: local-access-token-pepper-change-me
     MANAGE_SESSION_SECRET: local-manage-session-secret-change-me
 

@@ -26,12 +26,13 @@ LABEL org.opencontainers.image.title="puppet-forge" \
       org.opencontainers.image.revision="${VCS_REF}"
 
 RUN apk add --no-cache ca-certificates \
-    && adduser -D -H -u 10001 forge
+    && addgroup -S -g 10001 forge \
+    && adduser -S -D -H -u 10001 -G forge forge
 
 COPY --from=build /src/dist/puppet-forge /usr/local/bin/puppet-forge
 
 EXPOSE 8080 9090
 
-USER forge
+USER 10001:10001
 
 ENTRYPOINT ["/usr/local/bin/puppet-forge"]

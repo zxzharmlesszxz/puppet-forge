@@ -4,7 +4,7 @@ set -eu
 base_url="${1:-${SMOKE_BASE_URL:-http://forge.127.0.0.1.nip.io:8080}}"
 metrics_url="${SMOKE_METRICS_URL:-http://127.0.0.1:9090}"
 public_module_access="${SMOKE_PUBLIC_MODULE_ACCESS:-${PUBLIC_MODULE_ACCESS:-false}}"
-admin_token="${SMOKE_ADMIN_TOKEN:-${ADMIN_TOKEN:-forge-admin-token-local}}"
+admin_token="${SMOKE_ADMIN_TOKEN:-${ADMIN_TOKEN:-forge-admin-token-local-change-me-32-bytes}}"
 retries="${SMOKE_RETRIES:-30}"
 retry_delay="${SMOKE_RETRY_DELAY:-2}"
 curl_bin="${CURL:-curl}"

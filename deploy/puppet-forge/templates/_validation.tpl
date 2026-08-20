@@ -16,6 +16,9 @@
 {{- if and .Values.secret.create (lt (len (default "" .Values.secret.stringData.MANAGE_SESSION_SECRET)) 32) -}}
 {{- fail "secret.stringData.MANAGE_SESSION_SECRET must contain at least 32 bytes when secret.create=true" -}}
 {{- end -}}
+{{- if and .Values.secret.create (not (empty .Values.secret.stringData.ADMIN_TOKEN)) (lt (len .Values.secret.stringData.ADMIN_TOKEN) 32) -}}
+{{- fail "secret.stringData.ADMIN_TOKEN must contain at least 32 bytes when set and secret.create=true" -}}
+{{- end -}}
 {{- if and .Values.secret.create (eq (default "" .Values.secret.stringData.MANAGE_SESSION_SECRET) (default "" .Values.secret.stringData.ACCESS_TOKEN_PEPPER)) -}}
 {{- fail "secret.stringData.MANAGE_SESSION_SECRET must differ from secret.stringData.ACCESS_TOKEN_PEPPER" -}}
 {{- end -}}

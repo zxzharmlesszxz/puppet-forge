@@ -142,6 +142,16 @@ docker-smoke: docker-build ## Build and smoke-test the Docker image user, versio
 		echo "Docker image runs as UID $$uid, want 10001"; \
 		exit 1; \
 	fi; \
+	gid="$$($(DOCKER) run --rm --entrypoint id $(DOCKER_IMAGE) -g)"; \
+	if [ "$$gid" != "10001" ]; then \
+		echo "Docker image runs as GID $$gid, want 10001"; \
+		exit 1; \
+	fi; \
+	configured_user="$$($(DOCKER) image inspect --format '{{ .Config.User }}' $(DOCKER_IMAGE))"; \
+	if [ "$$configured_user" != "10001:10001" ]; then \
+		echo "Docker image declares user $$configured_user, want 10001:10001"; \
+		exit 1; \
+	fi; \
 	actual_version="$$($(DOCKER) run --rm $(DOCKER_IMAGE) --version)"; \
 	if [ "$$actual_version" != "$(VERSION)" ]; then \
 		echo "Docker image version $$actual_version, want $(VERSION)"; \

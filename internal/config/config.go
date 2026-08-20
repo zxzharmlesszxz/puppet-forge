@@ -302,6 +302,9 @@ func validate(cfg Config) error {
 	if len(strings.TrimSpace(cfg.AccessTokenPepper)) < 32 {
 		return errors.New("ACCESS_TOKEN_PEPPER must contain at least 32 bytes")
 	}
+	if token := strings.TrimSpace(cfg.AdminToken); token != "" && len(token) < 32 {
+		return errors.New("ADMIN_TOKEN must contain at least 32 bytes when set")
+	}
 	if cfg.AccessTokenHistoryTTL < 0 {
 		return errors.New("ACCESS_TOKEN_HISTORY_TTL must not be negative")
 	}
@@ -366,6 +369,9 @@ func validate(cfg Config) error {
 	if cfg.UpstreamArtifactOrphanTTL < 0 {
 		return errors.New("UPSTREAM_ARTIFACT_ORPHAN_TTL must not be negative")
 	}
+	if cfg.UpstreamProxyJSONCacheTTL < 0 || cfg.UpstreamProxyJSONStaleTTL < 0 || cfg.UpstreamSyncInterval < 0 {
+		return errors.New("UPSTREAM_PROXY_JSON_CACHE_TTL, UPSTREAM_PROXY_JSON_STALE_TTL and UPSTREAM_SYNC_INTERVAL must not be negative")
+	}
 	if cfg.UpstreamSyncConcurrency <= 0 {
 		return errors.New("UPSTREAM_SYNC_CONCURRENCY must be greater than 0")
 	}
@@ -425,13 +431,25 @@ func ParseTrustedProxyCIDRs(raw string) ([]netip.Prefix, error) {
 	values := strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '\t' || r == '\n'
 	})
+	allProxy := false
 	prefixes := make([]netip.Prefix, 0, len(values))
 	for _, value := range values {
+		switch strings.ToLower(value) {
+		case "", "*", "all":
+			allProxy = true
+			continue
+		}
 		prefix, err := netip.ParsePrefix(value)
 		if err != nil {
 			return nil, fmt.Errorf("invalid TRUSTED_PROXY_CIDRS entry %q: %w", value, err)
 		}
 		prefixes = append(prefixes, prefix.Masked())
+	}
+	if allProxy {
+		prefixes = []netip.Prefix{
+			netip.MustParsePrefix("0.0.0.0/0"),
+			netip.MustParsePrefix("::/0"),
+		}
 	}
 	return prefixes, nil
 }

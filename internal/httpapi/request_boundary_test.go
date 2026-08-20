@@ -55,6 +55,45 @@ func TestExternalRequestBoundaryAcceptsValidatedHeadersFromTrustedProxy(t *testi
 	}
 }
 
+func TestExternalRequestBoundarySupportsDynamicIngressHostsFromTrustedNetworks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		remoteAddr string
+	}{
+		{name: "IPv4", remoteAddr: "192.0.2.10:1234"},
+		{name: "IPv6", remoteAddr: "[2001:db8::10]:1234"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			router := &Router{
+				trustForwardedHeaders: true,
+				trustedProxyCIDRs: []netip.Prefix{
+					netip.MustParsePrefix("0.0.0.0/0"),
+					netip.MustParsePrefix("::/0"),
+				},
+			}
+			handler := router.externalRequestBoundary(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				_, _ = w.Write([]byte(httputil.ExternalBaseURL(req, "")))
+			}))
+			req := httptest.NewRequest(http.MethodGet, "http://internal:8080/auth/login", nil)
+			req.RemoteAddr = test.remoteAddr
+			req.Header.Set("X-Forwarded-Host", "dynamic.forge.example.com")
+			req.Header.Set("X-Forwarded-Proto", "https")
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK || rec.Body.String() != "https://dynamic.forge.example.com" {
+				t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestExternalRequestBoundaryRejectsMalformedOrConflictingForwardedHeaders(t *testing.T) {
 	t.Parallel()
 
