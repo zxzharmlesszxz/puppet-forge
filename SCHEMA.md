@@ -786,18 +786,18 @@ missing or corrupt release data.
 
 ## Failure Scenarios
 
-| Failure                                    | Expected behavior                                                                                      | Operator check                                                     |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| one application pod exits                  | traffic continues through remaining ready pods                                                         | Kubernetes endpoints and per-instance `up`                         |
-| PostgreSQL unavailable                     | `/readyz` fails; state-changing operations fail; pods should leave ready endpoints                     | readiness events and SQL errors                                    |
-| object storage unavailable                 | `/readyz` fails; publish/download/delete fail without deleting SQL first                               | readiness events, storage logs, operation counters, reconciliation |
-| upstream Forge unavailable                 | local modules and cached artifacts continue; bounded stale JSON may be served; new cold artifacts fail | upstream cache/sync metrics and proxy logs                         |
-| refresh leader exits                       | lease expires or is released; another replica takes over                                               | refresh lease debug logs and last-success age                      |
-| artifact leader exits mid-download         | no partial object is committed; waiter retries after lease expiry                                      | artifact lease logs and object checksum                            |
-| one replica has a different session secret | sessions fail only when traffic reaches that replica                                                   | compare secret source/checksum; alternate direct pod requests      |
-| one replica has stale access cache         | refresh occurs after 2s; SQL failure permits at most 30s stale state before protected requests return 503 | inspect access refresh logs and SQL health                          |
-| Prometheus scrapes only one pod            | cluster traffic and errors are undercounted                                                            | targets page and per-instance `up`                                 |
-| HPA changes replica count                  | shared correctness remains; local rate capacity and cache warmth change                                | HPA events, target count, cache hit ratio                          |
+| Failure                                    | Expected behavior                                                                                         | Operator check                                                     |
+|--------------------------------------------|-----------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
+| one application pod exits                  | traffic continues through remaining ready pods                                                            | Kubernetes endpoints and per-instance `up`                         |
+| PostgreSQL unavailable                     | `/readyz` fails; state-changing operations fail; pods should leave ready endpoints                        | readiness events and SQL errors                                    |
+| object storage unavailable                 | `/readyz` fails; publish/download/delete fail without deleting SQL first                                  | readiness events, storage logs, operation counters, reconciliation |
+| upstream Forge unavailable                 | local modules and cached artifacts continue; bounded stale JSON may be served; new cold artifacts fail    | upstream cache/sync metrics and proxy logs                         |
+| refresh leader exits                       | lease expires or is released; another replica takes over                                                  | refresh lease debug logs and last-success age                      |
+| artifact leader exits mid-download         | no partial object is committed; waiter retries after lease expiry                                         | artifact lease logs and object checksum                            |
+| one replica has a different session secret | sessions fail only when traffic reaches that replica                                                      | compare secret source/checksum; alternate direct pod requests      |
+| one replica has stale access cache         | refresh occurs after 2s; SQL failure permits at most 30s stale state before protected requests return 503 | inspect access refresh logs and SQL health                         |
+| Prometheus scrapes only one pod            | cluster traffic and errors are undercounted                                                               | targets page and per-instance `up`                                 |
+| HPA changes replica count                  | shared correctness remains; local rate capacity and cache warmth change                                   | HPA events, target count, cache hit ratio                          |
 
 ## Kubernetes Production Checklist
 

@@ -119,7 +119,7 @@ puppet-forge \
 ## Environment Variables
 
 | Variable                        | Default                           | Required                       | Description                                                                                                                                                                                                                                                                                          |
-| ------------------------------- | --------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|---------------------------------|-----------------------------------|--------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `APP_ENV`                       | `dev`                             | no                             | Runtime environment name for logs and diagnostics.                                                                                                                                                                                                                                                   |
 | `LOG_LEVEL`                     | `info`                            | no                             | Minimum structured log level: `debug`, `info`, `warn`, or `error`. At `debug`, the service emits request-start, authorization/session/CSRF, OIDC flow, upstream request/cache, and refresh-lease diagnostics without logging credentials or session secrets. Command-line equivalent: `--log-level`. |
 | `HTTP_ADDR`                     | `:8080`                           | no                             | HTTP listen address inside the process or container.                                                                                                                                                                                                                                                 |
@@ -131,12 +131,12 @@ puppet-forge \
 | `HTTP_MAX_HEADER_BYTES`         | `1048576`                         | no                             | Maximum request-header size in bytes; accepted range is 4096 through 16777216.                                                                                                                                                                                                                       |
 | `SHUTDOWN_TIMEOUT`              | `10s`                             | no                             | Graceful shutdown timeout.                                                                                                                                                                                                                                                                           |
 | `DATABASE_BACKEND`              | inferred from `DATABASE_DSN`      | no                             | Metadata backend: `postgres` or `sqlite`. Set it explicitly in Helm so topology validation does not depend on reading Secret contents.                                                                                                                                                               |
-| `DATABASE_DSN`                  | empty                             | yes                            | Metadata store DSN. `postgres://...` and `postgresql://...` enable PostgreSQL; `sqlite:///path/file.db` enables SQLite.                                                                                                                                                                                |
+| `DATABASE_DSN`                  | empty                             | yes                            | Metadata store DSN. `postgres://...` and `postgresql://...` enable PostgreSQL; `sqlite:///path/file.db` enables SQLite.                                                                                                                                                                              |
 | `DATABASE_MAX_CONNS`            | `10`                              | no                             | Maximum PostgreSQL pool connections per replica. Size this together with the HPA maximum so all replicas remain within the database connection budget.                                                                                                                                               |
 | `DATABASE_MIN_CONNS`            | `0`                               | no                             | Minimum PostgreSQL pool connections kept by each replica.                                                                                                                                                                                                                                            |
 | `DATABASE_MAX_CONN_LIFETIME`    | `1h`                              | no                             | Maximum lifetime of a PostgreSQL pooled connection; zero disables lifetime expiry.                                                                                                                                                                                                                   |
 | `DATABASE_MAX_CONN_IDLE_TIME`   | `30m`                             | no                             | Maximum idle time of a PostgreSQL pooled connection; zero disables idle expiry.                                                                                                                                                                                                                      |
-| `ADMIN_TOKEN`                   | empty                             | when DB access config is empty | Runtime bootstrap/break-glass admin token. It is not stored in the database and is used to bootstrap access through `/manage/teams` and `/manage/admin/access`.                                                                                                                                      |
+| `ADMIN_TOKEN`                   | empty                             | when DB access config is empty | Runtime bootstrap/break-glass admin token of at least 32 bytes when set. It is not stored in the database and is used to bootstrap access through `/manage/teams` and `/manage/admin/access`. Generate an independent random value; do not reuse either server-side secret.                          |
 | `ACCESS_TOKEN_PEPPER`           | empty                             | yes                            | Shared secret of at least 32 bytes used for HMAC-SHA256 hashing of persisted tokens with `read` or `publish` roles. Keep it stable across all replicas and include it in backup/restore procedures; losing it invalidates stored tokens.                                                             |
 | `ACCESS_TOKEN_HISTORY_TTL`      | `2160h`                           | no                             | Retention period for metadata of expired and revoked access tokens. Cleanup runs asynchronously under a cross-replica SQL lease immediately after startup and daily; `0` keeps inactive token history indefinitely. Active tokens are never removed by this cleanup.                                 |
 | `DELETED_RELEASE_TTL`           | `2160h`                           | no                             | Retention period for deleted upstream-release tombstones. Cleanup runs asynchronously under a cross-replica SQL lease immediately after startup and daily; after expiry, refresh may restore the release. `0` retains tombstones indefinitely.                                                       |
@@ -154,7 +154,7 @@ puppet-forge \
 | `ARTIFACT_PATH_STYLE`           | `true`                            | no                             | Enables path-style S3 URLs. Useful for MinIO, GCS interoperability, and local endpoints.                                                                                                                                                                                                             |
 | `PUBLIC_BASE_URL`               | empty                             | no                             | Optional fallback for building absolute URLs. If empty, the service derives URLs from the validated request host and, when explicitly trusted, forwarded host/proto.                                                                                                                                 |
 | `ALLOWED_PUBLIC_HOSTS`          | empty                             | no                             | Optional comma- or space-separated allowlist of accepted public hosts, with optional ports. Disallowed hosts receive `421`; an entry without a port accepts that hostname on any port.                                                                                                               |
-| `TRUSTED_PROXY_CIDRS`           | empty                             | no                             | Comma- or space-separated direct ingress/reverse-proxy CIDRs. These CIDRs may supply forwarded client identity and, only with `TRUST_FORWARDED_HEADERS=true`, forwarded host/proto.                                                                                                                  |
+| `TRUSTED_PROXY_CIDRS`           | empty                             | no                             | Comma- or space-separated direct ingress/reverse-proxy CIDRs. Use `*` for "trust all direct peers" (diagnostic only), or `0.0.0.0/0,::/0` as equivalent explicit form. These CIDRs may supply forwarded client identity and, only with `TRUST_FORWARDED_HEADERS=true`, forwarded host/proto.         |
 | `TRUST_FORWARDED_HEADERS`       | `false`                           | no                             | Accept validated `Forwarded`/`X-Forwarded-*` values only when the direct peer belongs to `TRUSTED_PROXY_CIDRS`. Otherwise every forwarded variant is removed before routing.                                                                                                                         |
 | `PUBLIC_MODULE_ACCESS`          | `false`                           | no                             | If `true`, read APIs, downloads, and `/v3/*` are open without a token. If `false`, install/API routes require a token with read, publish, or admin privileges. HTML catalog pages stay informationally public. Publishing, deletion, and management routes are always protected.                     |
 | `ACTIVE_RELEASE_TTL`            | `720h`                            | no                             | How long a release is considered active/in use after an r10k or `puppet module install` request. Active/latest versions cannot be deleted through API or `/manage/modules`.                                                                                                                          |
@@ -234,7 +234,7 @@ Important rules:
 
 ## Web Auth and OIDC
 
-- `WEB_AUTH_MODE=oidc` enables session login for the web UI through OIDC/Authenik.
+- `WEB_AUTH_MODE=oidc` enables session login for the web UI through OIDC/Authentik.
 - API access remains token-based.
 - Required settings are `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `OIDC_COOKIE_SECRET`.
 - Authorization state is single-use and expires after five minutes. The flow uses nonce binding, PKCE S256, strict issuer/audience/signature/expiry verification, and the `OIDC_SIGNING_ALGORITHMS` allowlist.
@@ -242,7 +242,7 @@ Important rules:
 - `OIDC_SCOPES` defaults to `openid profile email`; add `groups` when the provider only includes group claims for that scope.
 - `OIDC_REDIRECT_URL` may be set explicitly, but for Kubernetes/multi-ingress deployments it is usually better to leave it empty so the service derives the callback URL from the current request host/proto and appends `/auth/callback`.
 - `PUBLIC_BASE_URL` is optional and is only a fallback. The request `Host` is used by default, so multiple ingress hostnames work without a canonical URL.
-- Forwarded host/proto are ignored unless `TRUST_FORWARDED_HEADERS=true` and the direct peer matches `TRUSTED_PROXY_CIDRS`. Configure both behind an ingress when HTTPS termination requires the protocol to be forwarded; use `ALLOWED_PUBLIC_HOSTS` to restrict accepted ingress names.
+- Forwarded host/proto are ignored unless `TRUST_FORWARDED_HEADERS=true` and the direct peer matches `TRUSTED_PROXY_CIDRS`. Configure both behind an ingress when HTTPS termination requires the protocol to be forwarded. Use `ALLOWED_PUBLIC_HOSTS` for a fixed host set; leave it empty only when ingress routing and the identity-provider redirect policy restrict a controlled dynamic DNS zone.
 - Kubernetes ingress should forward the real host and scheme through `X-Forwarded-Host`/`X-Forwarded-Proto` or RFC `Forwarded`.
 - Team web UI access maps OIDC users to teams through `oidc_groups`.
 - Delegated team-admin access maps OIDC users through `oidc_team_admin_emails` or `oidc_team_admin_groups`.
@@ -258,7 +258,7 @@ export OIDC_CLIENT_SECRET="replace-me"
 export OIDC_COOKIE_SECRET="32-byte-random-secret"
 # Optional: use this when discovery does not expose end_session_endpoint.
 export OIDC_LOGOUT_URL="https://auth.example.com/application/o/puppet-forge/end-session/"
-export ADMIN_TOKEN="replace-me-bootstrap-token"
+export ADMIN_TOKEN="replace-with-at-least-32-random-bytes"
 export ACCESS_TOKEN_PEPPER="replace-with-at-least-32-random-bytes"
 export MANAGE_SESSION_SECRET="replace-with-a-different-32-byte-secret"
 docker compose up
@@ -276,12 +276,24 @@ Add the exact redirect URI in the Authentik provider:
 http://forge.127.0.0.1.nip.io:8080/auth/callback
 ```
 
-For multiple ingress hostnames with an empty `OIDC_REDIRECT_URL`, register a callback for each hostname:
+For dynamic ingress hostnames, leave both URL overrides empty and trust only the direct ingress or reverse-proxy networks:
 
-```text
-https://forge.example.com/auth/callback
-https://forge.dev.example.com/auth/callback
+```yaml
+config:
+  PUBLIC_BASE_URL: ""
+  OIDC_REDIRECT_URL: ""
+  TRUST_FORWARDED_HEADERS: "true"
+  TRUSTED_PROXY_CIDRS: "10.0.0.0/8,2001:db8:1234::/48"
+  ALLOWED_PUBLIC_HOSTS: ""
 ```
+
+The service then derives `https://<current-ingress-host>/auth/callback` from the validated request. In Authentik, add one Redirect URI with matching mode **Regex**, anchored to the controlled DNS zone instead of enumerating every ingress:
+
+```regex
+^https://(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+example\.com/auth/callback$
+```
+
+Do not use `.*` or another unrestricted redirect expression. Authentik documents strict and regex redirect matching in its [OAuth2 provider configuration](https://docs.goauthentik.io/add-secure-apps/providers/oauth2/). `TRUSTED_PROXY_CIDRS="0.0.0.0/0,::/0"` can diagnose an unknown proxy network temporarily, but it lets every direct client supply forwarded identity and origin headers; replace it with the actual direct-proxy CIDRs and restrict direct pod access before production use.
 
 Logout from `/manage` revokes the SQL-backed token/OIDC session and clears local cookies. If OIDC discovery exposes `end_session_endpoint`, or if `OIDC_LOGOUT_URL` is set, the service also redirects the browser to provider logout so the provider does not silently log the user back in with an old session.
 
@@ -633,7 +645,7 @@ helm upgrade --install puppet-forge ./deploy/puppet-forge \
 
 When `autoscaling.enabled=true`, the Deployment does not render `spec.replicas`; the `HorizontalPodAutoscaler` owns it. Do not enable autoscaling with a `sqlite://` `DATABASE_DSN`; use PostgreSQL and identical `ACCESS_TOKEN_PEPPER` and `MANAGE_SESSION_SECRET` values on every replica.
 
-The chart runs the container as non-root with a read-only root filesystem, RuntimeDefault seccomp, no Linux capabilities, and an `emptyDir` mounted at `/tmp`. Service-account token mounting is disabled by default. A PDB and topology spreading are enabled; `networkPolicy.enabled` remains off until ingress and egress peers are explicitly supplied through `networkPolicy.ingress` and `networkPolicy.egress`.
+The image and chart explicitly run the container as numeric UID/GID `10001:10001`, with a read-only root filesystem, RuntimeDefault seccomp, no Linux capabilities, and an `emptyDir` mounted at `/tmp`. The numeric identity lets kubelet enforce `runAsNonRoot` without resolving the image's user database. Service-account token mounting is disabled by default. A PDB and topology spreading are enabled; `networkPolicy.enabled` remains off until ingress and egress peers are explicitly supplied through `networkPolicy.ingress` and `networkPolicy.egress`.
 
 The chart supports Prometheus Operator resources, disabled by default:
 
@@ -651,7 +663,9 @@ Workflow [`Release`](.github/workflows/release.yml) runs only for tags matching 
 - Helm chart `puppet-forge-1.2.3.tgz` with `appVersion: v1.2.3`;
 - Helm repository index on GitHub Pages through `helm/chart-releaser-action`.
 
-The workflow first creates a draft GitHub Release, then publishes and signs the immutable Docker version, then publishes the Helm chart. After every versioned component succeeds, it updates source chart metadata, promotes `:latest`, and finally makes the GitHub Release public. The follow-up metadata commit uses `[skip ci]` so the normal branch CI workflow is not started just for release metadata.
+The workflow first creates a draft GitHub Release, publishes and signs the immutable Docker version, and then publishes the Helm chart. After every versioned component succeeds, it promotes `:latest` and makes the GitHub Release public. The final source-chart metadata commit is bookkeeping only: it runs after publication and uses `[skip ci]`, so a push failure cannot leave a public release without its versioned binaries, image, or chart.
+
+All publication steps are safe to retry for the same tag: the GitHub Release is edited in place, the versioned image remains content-addressed, and chart-releaser skips an existing chart package. If only the final metadata push fails, rerun the failed workflow job or update `deploy/puppet-forge/Chart.yaml` on the default branch to the released chart version and `appVersion`; do not recreate the tag or rebuild different artifacts under the same version.
 
 For the Helm repository, create or allow the `gh-pages` branch and configure GitHub Pages to serve it. After a release:
 
