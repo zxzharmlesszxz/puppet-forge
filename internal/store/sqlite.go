@@ -96,6 +96,7 @@ create index if not exists idx_rate_limits_reset_at on rate_limits (reset_at);
 
 create index if not exists idx_modules_updated_at on modules (updated_at desc);
 create index if not exists idx_releases_module_id on releases (module_id);
+create index if not exists idx_releases_storage_path on releases (storage_path);
 
 create table if not exists access_teams (
     team text primary key
@@ -1887,6 +1888,44 @@ func (s *SQLiteStore) ListReleasesForModules(ctx context.Context, modules []doma
 	}
 	sortModuleReleaseSummaries(releases)
 	return releases, nil
+}
+
+func (s *SQLiteStore) CountReleasesForModules(ctx context.Context, modules []domain.Module) ([]ModuleReleaseCount, error) {
+	if len(modules) == 0 {
+		return nil, nil
+	}
+	var selected strings.Builder
+	args := make([]any, 0, len(modules)*2)
+	for i, module := range modules {
+		if i > 0 {
+			selected.WriteString(" union all ")
+		}
+		selected.WriteString("select ? as owner, ? as name")
+		args = append(args, module.Owner, module.Name)
+	}
+	// #nosec G202 -- selected contains only fixed SELECT clauses and placeholders; identities remain bound parameters.
+	rows, err := s.db.QueryContext(ctx, `
+		with selected(owner, name) as (`+selected.String()+`)
+		select selected.owner, selected.name, count(r.id)
+		from selected
+		left join modules m on m.owner = selected.owner and m.name = selected.name
+		left join releases r on r.module_id = m.id
+		group by selected.owner, selected.name
+		order by selected.owner, selected.name
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("count releases for modules: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var counts []ModuleReleaseCount
+	for rows.Next() {
+		var count ModuleReleaseCount
+		if err := rows.Scan(&count.Owner, &count.Name, &count.Count); err != nil {
+			return nil, fmt.Errorf("scan module release count: %w", err)
+		}
+		counts = append(counts, count)
+	}
+	return counts, rows.Err()
 }
 
 func (s *SQLiteStore) ListAllReleases(ctx context.Context) ([]ReleaseSummary, error) {

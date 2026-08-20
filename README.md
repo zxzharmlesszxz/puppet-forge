@@ -353,7 +353,7 @@ Minimum module requirements:
 - absolute paths, parent traversal, links, devices, and other special tar entries are rejected;
 - both individual entry size and total expanded archive size are bounded;
 - `metadata.json.name` uses the `<owner>-<name>` format, for example `teamname-apache`;
-- `owner` and the short module `name` use lowercase letters, digits, and underscores; hyphens are reserved as the unambiguous separator between those two parts;
+- `owner` uses ASCII letters in either case and digits; the short module `name` uses lowercase ASCII letters, digits, and underscores; hyphens are reserved as the unambiguous separator between those two parts;
 - `metadata.json.version` is present;
 - the namespace in `metadata.json.name` matches the selected `space`;
 - putting `README.md` in the module is recommended because it is rendered on the HTML module page.

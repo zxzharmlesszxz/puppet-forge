@@ -125,6 +125,13 @@ type AccessConfigUnlock func() error
 
 type ModuleReleaseBatchStore interface {
 	ListReleasesForModules(ctx context.Context, modules []domain.Module) ([]ModuleReleaseSummary, error)
+	CountReleasesForModules(ctx context.Context, modules []domain.Module) ([]ModuleReleaseCount, error)
+}
+
+type ModuleReleaseCount struct {
+	Owner string
+	Name  string
+	Count int
 }
 
 type ArtifactReleaseStore interface {

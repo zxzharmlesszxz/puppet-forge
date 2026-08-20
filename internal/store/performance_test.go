@@ -24,7 +24,7 @@ func BenchmarkSQLiteCatalogPageWithTenThousandReleases(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if _, err := st.ListReleasesForModules(ctx, modules); err != nil {
+		if _, err := st.CountReleasesForModules(ctx, modules); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -76,5 +76,9 @@ func TestSQLiteCatalogPerformanceFixtureShape(t *testing.T) {
 	releases, err := st.ListReleasesForModules(context.Background(), []domain.Module{modules[0]})
 	if err != nil || len(releases) != 10 {
 		t.Fatalf("fixture releases = %d err:%v", len(releases), err)
+	}
+	counts, err := st.CountReleasesForModules(context.Background(), []domain.Module{modules[0], modules[1]})
+	if err != nil || len(counts) != 2 || counts[0].Count != 10 || counts[1].Count != 10 {
+		t.Fatalf("fixture release counts = %#v err:%v", counts, err)
 	}
 }

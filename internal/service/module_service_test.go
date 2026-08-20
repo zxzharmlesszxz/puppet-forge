@@ -1818,6 +1818,7 @@ func TestIndexUpstreamModuleRejectsAmbiguousIdentity(t *testing.T) {
 	}{
 		{name: "hyphenated owner", module: proxy.UpstreamModule{Owner: "team-name", Name: "apache"}, want: "invalid upstream module owner"},
 		{name: "hyphenated name", module: proxy.UpstreamModule{Owner: "teamname", Name: "apache-module"}, want: "invalid upstream module name"},
+		{name: "uppercase name", module: proxy.UpstreamModule{Owner: "TeamName", Name: "Apache"}, want: "invalid upstream module name"},
 		{name: "missing owner", module: proxy.UpstreamModule{Name: "apache"}, want: "invalid upstream module owner"},
 		{name: "missing name", module: proxy.UpstreamModule{Owner: "teamname"}, want: "invalid upstream module name"},
 	}
@@ -1836,7 +1837,7 @@ func TestPublishRejectsInvalidOwner(t *testing.T) {
 	t.Parallel()
 
 	archive, err := testutil.BuildTarGz(map[string]string{
-		"ACME-apache-1.2.3/metadata.json": `{"name":"ACME-apache","version":"1.2.3"}`,
+		"AC_ME-apache-1.2.3/metadata.json": `{"name":"AC_ME-apache","version":"1.2.3"}`,
 	})
 	if err != nil {
 		t.Fatalf("testutil.BuildTarGz() error = %v", err)
@@ -1845,7 +1846,7 @@ func TestPublishRejectsInvalidOwner(t *testing.T) {
 	service := NewModuleService(&testModuleStore{}, &testArtifactStorage{}, "modules", nil)
 
 	_, err = service.Publish(context.Background(), domain.PublishModuleInput{
-		Owner:     "ACME",
+		Owner:     "AC_ME",
 		Name:      "apache",
 		Version:   "1.2.3",
 		FileName:  "module.tar.gz",
@@ -1853,6 +1854,30 @@ func TestPublishRejectsInvalidOwner(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestPublishAcceptsUppercaseModuleOwner(t *testing.T) {
+	t.Parallel()
+
+	archive, err := testutil.BuildTarGz(map[string]string{
+		"ACME-apache_2-1.2.3/metadata.json": `{"name":"ACME-apache_2","version":"1.2.3"}`,
+	})
+	if err != nil {
+		t.Fatalf("testutil.BuildTarGz() error = %v", err)
+	}
+
+	service := NewModuleService(&testModuleStore{}, &testArtifactStorage{}, "modules", nil)
+	release, err := service.Publish(context.Background(), domain.PublishModuleInput{
+		Owner:     "ACME",
+		FileName:  "module.tar.gz",
+		FileBytes: archive,
+	})
+	if err != nil {
+		t.Fatalf("Publish() error = %v", err)
+	}
+	if release.Owner != "ACME" || release.Name != "apache_2" {
+		t.Fatalf("Publish() identity = %s/%s, want ACME/apache_2", release.Owner, release.Name)
 	}
 }
 

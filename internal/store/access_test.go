@@ -1,11 +1,27 @@
 package store
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 )
+
+type recordingAccessConfigWriter struct {
+	tokens []typedAccessTokenRecord
+}
+
+func (w *recordingAccessConfigWriter) insertTeam(string) error                           { return nil }
+func (w *recordingAccessConfigWriter) insertOwner(string, string) error                  { return nil }
+func (w *recordingAccessConfigWriter) insertOIDCMapping(string, accessOIDCMapping) error { return nil }
+func (w *recordingAccessConfigWriter) insertToken(_ string, tokenType string, record auth.AccessTokenRecord) error {
+	if record.ID == "" || record.Digest == "" {
+		return errors.New("incomplete token")
+	}
+	w.tokens = append(w.tokens, typedAccessTokenRecord{tokenType: tokenType, record: record})
+	return nil
+}
 
 func testAccessTokenHasher(t *testing.T) *auth.TokenHasher {
 	t.Helper()
@@ -66,6 +82,26 @@ func TestAccessOIDCMappingsSkipsEmptyValues(t *testing.T) {
 	})
 	if len(mappings) != 0 {
 		t.Fatalf("expected 0 mappings for empty/whitespace values, got %d", len(mappings))
+	}
+}
+
+func TestPersistTeamConfigsSkipsBlankLegacyTokens(t *testing.T) {
+	t.Parallel()
+
+	writer := &recordingAccessConfigWriter{}
+	err := persistTeamConfigs([]auth.TeamConfig{{
+		Team:          "teamname",
+		ReadTokens:    []string{"", "  ", "read-token"},
+		PublishTokens: []string{"\t", "publish-token"},
+	}}, testAccessTokenHasher(t), writer)
+	if err != nil {
+		t.Fatalf("persistTeamConfigs() error = %v", err)
+	}
+	if len(writer.tokens) != 2 {
+		t.Fatalf("persisted tokens = %d, want 2 non-blank tokens", len(writer.tokens))
+	}
+	if writer.tokens[0].tokenType != "read" || writer.tokens[1].tokenType != "publish" {
+		t.Fatalf("unexpected persisted token roles: %#v", writer.tokens)
 	}
 }
 

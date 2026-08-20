@@ -22,6 +22,7 @@ type parityStore interface {
 	Store
 	DeletedReleaseStore
 	ReleaseUsageStore
+	ModuleReleaseBatchStore
 }
 
 func TestStoreParityNormalizesNilReleaseMetadata(t *testing.T) {
@@ -157,6 +158,44 @@ func TestStoreParityCountsUpstreamModulesByOwner(t *testing.T) {
 			}
 			if counts[upstreamOwner] != 2 || counts[localOwner] != 0 {
 				t.Fatalf("upstream owner counts = %#v, want %q:2 without local owner", counts, upstreamOwner)
+			}
+		})
+	}
+}
+
+func TestStoreParityCountsReleasesForSelectedModules(t *testing.T) {
+	for _, tc := range parityStoreCases(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := tc.open(t)
+			t.Cleanup(st.Close)
+
+			owner := "parity_release_counts_" + tc.name
+			modules := make([]domain.Module, 2)
+			for index, name := range []string{"first", "second"} {
+				module, err := st.UpsertModule(ctx, owner, name)
+				if err != nil {
+					t.Fatalf("UpsertModule(%s) error = %v", name, err)
+				}
+				modules[index] = module
+				for releaseIndex := range index + 1 {
+					version := fmt.Sprintf("1.0.%d", releaseIndex)
+					if _, err := st.CreateRelease(ctx, domain.Release{
+						ID: module.ID + ":" + version, ModuleID: module.ID, Owner: owner, Name: name,
+						Source: "local", Version: version, FileName: owner + "-" + name + "-" + version + ".tar.gz",
+						ContentType: "application/gzip", Metadata: map[string]any{},
+					}); err != nil {
+						t.Fatalf("CreateRelease(%s, %s) error = %v", name, version, err)
+					}
+				}
+			}
+
+			counts, err := st.CountReleasesForModules(ctx, modules)
+			if err != nil {
+				t.Fatalf("CountReleasesForModules() error = %v", err)
+			}
+			if len(counts) != 2 || counts[0].Count != 1 || counts[1].Count != 2 {
+				t.Fatalf("release counts = %#v, want 1 and 2", counts)
 			}
 		})
 	}

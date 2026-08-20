@@ -33,7 +33,10 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/throttle"
 )
 
-var moduleIdentityPartPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_]*$`)
+var (
+	moduleOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9]+$`)
+	moduleNamePattern  = regexp.MustCompile(`^[a-z0-9_]+$`)
+)
 
 const readinessCapabilityTTL = 5 * time.Minute
 
@@ -144,12 +147,12 @@ func (s *ModuleService) Publish(ctx context.Context, input domain.PublishModuleI
 		return domain.Release{}, err
 	}
 
-	if !moduleIdentityPartPattern.MatchString(input.Owner) {
+	if !moduleOwnerPattern.MatchString(input.Owner) {
 		err := invalidInput("invalid owner")
 		metrics.ObservePublish(err)
 		return domain.Release{}, err
 	}
-	if !moduleIdentityPartPattern.MatchString(input.Name) {
+	if !moduleNamePattern.MatchString(input.Name) {
 		err := invalidInput("invalid name")
 		metrics.ObservePublish(err)
 		return domain.Release{}, err
@@ -610,6 +613,30 @@ func (s *ModuleService) ListReleasesForModules(ctx context.Context, modules []do
 		grouped[module.Owner+"\x00"+module.Name] = versions
 	}
 	return grouped, nil
+}
+
+func (s *ModuleService) CountReleasesForModules(ctx context.Context, modules []domain.Module) (map[string]int, error) {
+	batchStore, ok := s.modules.(store.ModuleReleaseBatchStore)
+	if !ok {
+		counts := make(map[string]int, len(modules))
+		for _, module := range modules {
+			versions, err := s.modules.ListReleases(ctx, module.Owner, module.Name)
+			if err != nil {
+				return nil, err
+			}
+			counts[module.Owner+"\x00"+module.Name] = len(versions)
+		}
+		return counts, nil
+	}
+	rows, err := batchStore.CountReleasesForModules(ctx, modules)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		counts[row.Owner+"\x00"+row.Name] = row.Count
+	}
+	return counts, nil
 }
 
 func (s *ModuleService) ListAllReleases(ctx context.Context) ([]store.ReleaseSummary, error) {
@@ -1196,10 +1223,10 @@ func (s *ModuleService) RefreshCachedUpstreamModules(ctx context.Context, limit,
 func (s *ModuleService) IndexUpstreamModule(ctx context.Context, upstreamModule proxy.UpstreamModule) error {
 	owner := upstreamModule.Owner
 	name := upstreamModule.Name
-	if !moduleIdentityPartPattern.MatchString(owner) {
+	if !moduleOwnerPattern.MatchString(owner) {
 		return errors.New("invalid upstream module owner")
 	}
-	if !moduleIdentityPartPattern.MatchString(name) {
+	if !moduleNamePattern.MatchString(name) {
 		return errors.New("invalid upstream module name")
 	}
 	unlock, err := s.modules.LockModule(ctx, owner, name)
@@ -1569,7 +1596,7 @@ func fallbackString(value, fallback string) string {
 
 // splitModuleIdentity accepts Puppet module identities only in owner-name,
 // owner/name, or bare name form. Owners and module names are validated later by
-// moduleIdentityPartPattern, so nested owner/name/path identities are intentionally rejected.
+// moduleOwnerPattern and moduleNamePattern, so nested owner/name/path identities are intentionally rejected.
 func splitModuleIdentity(raw string) (owner, name string) {
 	if left, right, ok := strings.Cut(raw, "-"); ok {
 		return left, right

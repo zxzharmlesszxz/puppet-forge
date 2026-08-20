@@ -368,6 +368,7 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) (returnErr 
 
 		create index if not exists idx_modules_updated_at on modules (updated_at desc);
 		create index if not exists idx_releases_module_id on releases (module_id);
+		create index if not exists idx_releases_storage_path on releases (storage_path);
 		create index if not exists idx_manage_sessions_expires_at on manage_sessions (expires_at);
 		create index if not exists idx_oidc_states_expires_at on oidc_states (expires_at);
 		create index if not exists idx_oidc_sessions_expires_at on oidc_sessions (expires_at);
@@ -1858,6 +1859,40 @@ func (s *PostgresStore) ListReleasesForModules(ctx context.Context, modules []do
 	}
 	sortModuleReleaseSummaries(releases)
 	return releases, nil
+}
+
+func (s *PostgresStore) CountReleasesForModules(ctx context.Context, modules []domain.Module) ([]ModuleReleaseCount, error) {
+	if len(modules) == 0 {
+		return nil, nil
+	}
+	owners := make([]string, len(modules))
+	names := make([]string, len(modules))
+	for i, module := range modules {
+		owners[i] = module.Owner
+		names[i] = module.Name
+	}
+	const query = `
+		select selected.owner, selected.name, count(r.id)
+		from unnest($1::text[], $2::text[]) as selected(owner, name)
+		left join modules m on m.owner = selected.owner and m.name = selected.name
+		left join releases r on r.module_id = m.id
+		group by selected.owner, selected.name
+		order by selected.owner, selected.name
+	`
+	rows, err := s.pool.Query(ctx, query, owners, names)
+	if err != nil {
+		return nil, fmt.Errorf("count releases for modules: %w", err)
+	}
+	defer rows.Close()
+	var counts []ModuleReleaseCount
+	for rows.Next() {
+		var count ModuleReleaseCount
+		if err := rows.Scan(&count.Owner, &count.Name, &count.Count); err != nil {
+			return nil, fmt.Errorf("scan module release count: %w", err)
+		}
+		counts = append(counts, count)
+	}
+	return counts, rows.Err()
 }
 
 func (s *PostgresStore) ListAllReleases(ctx context.Context) ([]ReleaseSummary, error) {

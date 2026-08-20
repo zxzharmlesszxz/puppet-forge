@@ -20,10 +20,6 @@ type UpstreamCachePruneResult struct {
 }
 
 func (s *ModuleService) PruneUpstreamArtifactCache(ctx context.Context, cutoff time.Time) (UpstreamCachePruneResult, error) {
-	releaseStore, ok := s.modules.(store.ArtifactReleaseStore)
-	if !ok {
-		return UpstreamCachePruneResult{}, errors.New("module store does not support artifact references")
-	}
 	lister, ok := s.artifacts.(storage.ArtifactMetadataIterator)
 	if !ok {
 		return UpstreamCachePruneResult{}, errors.New("artifact storage does not support object metadata iteration")
@@ -32,15 +28,6 @@ func (s *ModuleService) PruneUpstreamArtifactCache(ctx context.Context, cutoff t
 	if !ok {
 		return UpstreamCachePruneResult{}, errors.New("module store does not support artifact reference checks")
 	}
-	releases, err := releaseStore.ListArtifactReleases(ctx)
-	if err != nil {
-		return UpstreamCachePruneResult{}, fmt.Errorf("list artifact references: %w", err)
-	}
-	referencedPaths := make(map[string]struct{}, len(releases))
-	for _, release := range releases {
-		referencedPaths[release.StoragePath] = struct{}{}
-	}
-
 	result := UpstreamCachePruneResult{}
 	var deleteErrors []error
 	omittedErrors := 0
@@ -51,12 +38,9 @@ func (s *ModuleService) PruneUpstreamArtifactCache(ctx context.Context, cutoff t
 		}
 		omittedErrors++
 	}
-	err = lister.IterateObjectMetadata(ctx, upstreamArtifactCachePrefix, func(object storage.ListedObject) error {
+	err := lister.IterateObjectMetadata(ctx, upstreamArtifactCachePrefix, func(object storage.ListedObject) error {
 		result.Scanned++
 		if object.UpdatedAt.IsZero() || !object.UpdatedAt.Before(cutoff) {
-			return nil
-		}
-		if _, referenced := referencedPaths[object.Path]; referenced {
 			return nil
 		}
 		deleted := false

@@ -154,6 +154,9 @@ func accessTokenRecords(hasher *auth.TokenHasher, cfg auth.TeamConfig) ([]typedA
 	records := make([]typedAccessTokenRecord, 0, len(cfg.ReadTokens)+len(cfg.PublishTokens)+len(cfg.ReadTokenRecords)+len(cfg.PublishTokenRecords))
 	appendRaw := func(tokenType string, tokens []string) error {
 		for _, token := range tokens {
+			if strings.TrimSpace(token) == "" {
+				continue
+			}
 			record, err := accessTokenRecordFromRaw(hasher, tokenType, token)
 			if err != nil {
 				return err

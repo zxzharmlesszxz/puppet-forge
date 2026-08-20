@@ -21,6 +21,14 @@ type blockingArtifactReferenceStore struct {
 	release chan struct{}
 }
 
+type failingArtifactSnapshotStore struct {
+	*store.SQLiteStore
+}
+
+func (s *failingArtifactSnapshotStore) ListArtifactReleases(context.Context) ([]store.ArtifactReleaseRecord, error) {
+	return nil, errors.New("artifact snapshot must not be loaded during cleanup")
+}
+
 func (s *blockingArtifactReferenceStore) IsArtifactReferenced(ctx context.Context, storagePath string) (bool, error) {
 	select {
 	case s.started <- struct{}{}:
@@ -89,7 +97,8 @@ func TestPruneUpstreamArtifactCacheDeletesOnlyOldUnreferencedObjects(t *testing.
 	artifacts.objectTimes["modules/local-orphan.tar.gz"] = now.Add(-48 * time.Hour)
 	artifacts.mu.Unlock()
 
-	result, err := NewModuleService(st, artifacts, "modules", nil).PruneUpstreamArtifactCache(ctx, now.Add(-24*time.Hour))
+	result, err := NewModuleService(&failingArtifactSnapshotStore{SQLiteStore: st}, artifacts, "modules", nil).
+		PruneUpstreamArtifactCache(ctx, now.Add(-24*time.Hour))
 	if err != nil {
 		t.Fatalf("PruneUpstreamArtifactCache() error = %v", err)
 	}
