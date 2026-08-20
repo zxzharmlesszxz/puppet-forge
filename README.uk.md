@@ -607,9 +607,10 @@ make helm-package
 GO=go GOLANGCI_LINT=golangci-lint make check
 ```
 
-Перед `make test-browser` один раз виконай `npm ci`. У CI браузерні тести
-виконуються у зафіксованому Playwright-контейнері, тому версії браузера й test runner
-залишаються узгодженими.
+`make test-browser` запускає Go fixture для рендерингу на основній машині, а браузерні
+тести виконує в зафіксованому офіційному Docker image Playwright. Залежності
+встановлюються в тимчасовій файловій системі контейнера, тому локальні Node.js, npm і
+Chromium не потрібні, а версії браузера й test runner лишаються узгодженими локально та в CI.
 
 ## Kubernetes
 

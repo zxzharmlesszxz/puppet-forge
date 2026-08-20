@@ -605,8 +605,10 @@ make helm-package
 
 `make docker-smoke` builds the final image and verifies its non-root UID, embedded version, help output, and OCI version label. `make compose-smoke` starts the local Compose stack in detached mode, runs HTTP smoke, runs r10k one-shot, and returns the r10k exit code.
 
-Run `npm ci` once before `make test-browser`. CI executes the browser suite in the
-pinned Playwright container, so its browser and test-runner versions remain aligned.
+`make test-browser` starts the Go rendering fixture on the host and runs the browser
+suite in the pinned official Playwright Docker image. Dependencies are installed in
+an ephemeral container filesystem, so no local Node.js, npm, or Chromium installation
+is required and the browser and test-runner versions remain aligned locally and in CI.
 
 By default, the Makefile uses `go`, `gofmt`, and `golangci-lint` from `PATH`. Override tools with variables:
 

@@ -111,7 +111,7 @@ test-race: ## Run Go tests with the race detector.
 	CGO_ENABLED=1 $(GO) test -buildvcs=false -race -ldflags "$(LDFLAGS)" ./...
 
 test-browser: ## Run browser interaction regressions with Playwright.
-	npm run test:browser
+	PLAYWRIGHT_IMAGE="$(PLAYWRIGHT_IMAGE)" DOCKER="$(DOCKER)" GO="$(GO)" CURL="$(CURL)" bash scripts/browser-tests.sh
 
 coverage: ## Run tests with coverage and write coverage reports.
 	$(GO) test -buildvcs=false -ldflags "$(LDFLAGS)" -covermode=atomic -coverprofile=$(COVERAGE_PROFILE) ./...

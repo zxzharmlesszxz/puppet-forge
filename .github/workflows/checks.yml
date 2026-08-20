@@ -91,8 +91,6 @@ jobs:
   browser:
     name: Browser Tests
     runs-on: ubuntu-24.04
-    container:
-      image: mcr.microsoft.com/playwright:v1.62.0-noble@sha256:baed2032d533817f3dbe6425de795788430ba345e819a1201337009ba17c9d07
     needs:
       - go-check
 
@@ -105,11 +103,8 @@ jobs:
         with:
           go-version: ${{ inputs.go-version }}
 
-      - name: Install Browser Test Dependencies
-        run: npm ci
-
       - name: Run Browser Tests
-        run: npm run test:browser
+        run: make test-browser
 
   build:
     name: Build Binary
