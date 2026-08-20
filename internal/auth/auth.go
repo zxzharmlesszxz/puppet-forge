@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
 
 type TeamConfig struct {
@@ -33,6 +35,8 @@ type TeamConfig struct {
 }
 
 const GlobalAdminTeam = "platform-admin"
+
+const runtimeAdminTeam = "bootstrap-admin"
 
 func (cfg *TeamConfig) UnmarshalJSON(data []byte) error {
 	type teamConfigAlias TeamConfig
@@ -163,11 +167,20 @@ func newAuthorizer(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer,
 		return nil
 	}
 
+	teamNames := make(map[string]string, len(configs))
 	for _, cfg := range configs {
 		cfg.Team = strings.TrimSpace(cfg.Team)
 		if cfg.Team == "" {
 			return nil, errors.New("team is required in access config")
 		}
+		if !IsGlobalAdminConfig(cfg) && !isRuntimeAdminConfig(cfg) && !domain.ValidModuleOwner(cfg.Team) {
+			return nil, fmt.Errorf("team %q must contain only ASCII letters and digits", cfg.Team)
+		}
+		teamKey := strings.ToLower(cfg.Team)
+		if existing, ok := teamNames[teamKey]; ok {
+			return nil, fmt.Errorf("teams %q and %q differ only by letter case", existing, cfg.Team)
+		}
+		teamNames[teamKey] = cfg.Team
 		if err := validateTeamConfigRole(cfg); err != nil {
 			return nil, err
 		}
@@ -178,6 +191,9 @@ func newAuthorizer(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer,
 		for _, owner := range owners {
 			if owner == "" {
 				continue
+			}
+			if !domain.ValidModuleOwner(owner) {
+				return nil, fmt.Errorf("publish space %q must contain only ASCII letters and digits", owner)
 			}
 			ownerSet[owner] = struct{}{}
 		}
@@ -285,6 +301,10 @@ func IsGlobalAdminConfig(cfg TeamConfig) bool {
 	return strings.TrimSpace(cfg.Team) == GlobalAdminTeam
 }
 
+func isRuntimeAdminConfig(cfg TeamConfig) bool {
+	return strings.TrimSpace(cfg.Team) == runtimeAdminTeam && len(cfg.AdminTokens) > 0
+}
+
 func validateTeamConfigRole(cfg TeamConfig) error {
 	if IsGlobalAdminConfig(cfg) {
 		if len(cfg.ReadTokens) > 0 ||
@@ -365,8 +385,8 @@ func (a *Authorizer) AuthenticateOIDC(email, subject string, groups []string) (P
 		if principal, ok := a.oidcEmails[normalizedEmail]; ok {
 			addCandidate(principal)
 		}
-		if domain := EmailDomain(normalizedEmail); domain != "" {
-			if principal, ok := a.oidcDomains[domain]; ok {
+		if emailDomain := EmailDomain(normalizedEmail); emailDomain != "" {
+			if principal, ok := a.oidcDomains[emailDomain]; ok {
 				addCandidate(principal)
 			}
 		}
@@ -529,9 +549,9 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-func normalizeDomain(domain string) string {
-	domain = strings.ToLower(strings.TrimSpace(domain))
-	return strings.TrimPrefix(domain, "@")
+func normalizeDomain(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.TrimPrefix(value, "@")
 }
 
 func normalizeGroup(group string) string {
@@ -539,11 +559,11 @@ func normalizeGroup(group string) string {
 }
 
 func EmailDomain(email string) string {
-	_, domain, ok := strings.Cut(email, "@")
+	_, emailDomain, ok := strings.Cut(email, "@")
 	if !ok {
 		return ""
 	}
-	return normalizeDomain(domain)
+	return normalizeDomain(emailDomain)
 }
 
 func AccessConfigsWithRuntimeAdmin(configs []TeamConfig, adminToken string) []TeamConfig {
@@ -553,7 +573,7 @@ func AccessConfigsWithRuntimeAdmin(configs []TeamConfig, adminToken string) []Te
 	next := make([]TeamConfig, 0, len(configs)+1)
 	next = append(next, configs...)
 	next = append(next, TeamConfig{
-		Team:        "bootstrap-admin",
+		Team:        runtimeAdminTeam,
 		AdminTokens: []string{adminToken},
 	})
 	return next

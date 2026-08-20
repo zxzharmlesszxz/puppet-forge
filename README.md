@@ -221,6 +221,7 @@ Important rules:
 - On a clean start, log in to `/manage` with `ADMIN_TOKEN`, open `/manage/teams`, and configure teams, tokens, OIDC groups, and OIDC team admins. Global administrators assign extra publishing spaces under `/manage/admin/spaces`; global OIDC admins are configured under `/manage/admin/access`.
 - Every token value must be globally unique across teams and access roles. Reusing a token with the `read` or `publish` role, or reusing an admin token, is rejected without exposing the token in the error.
 - `platform-admin` is a reserved configuration identity for global admin tokens and OIDC mappings. It cannot be created or used as a publishing team or module space.
+- Publishing team names and writable extra spaces use the module-owner syntax `[A-Za-z0-9]+`; team names must also be unique without regard to letter case.
 - The web catalog (`/` and `/modules/...`) remains informationally public regardless of `PUBLIC_MODULE_ACCESS`.
 - Read tokens allow read API, download, and `/v3/*` access.
 - Tokens with the `publish` role allow read, publish, and update access only within permitted publishing spaces; they do not allow module deletion.

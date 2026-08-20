@@ -576,6 +576,44 @@ func TestNewAuthorizerRejectsReusedTokensAcrossRolesAndTeams(t *testing.T) {
 	}
 }
 
+func TestNewAuthorizerValidatesPublishingTeamNames(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		configs []TeamConfig
+		wantErr string
+	}{
+		{
+			name:    "invalid team",
+			configs: []TeamConfig{{Team: "team-name"}},
+			wantErr: "must contain only ASCII letters and digits",
+		},
+		{
+			name:    "invalid extra space",
+			configs: []TeamConfig{{Team: "teamname", PublishOwners: []string{"shared_space"}}},
+			wantErr: "publish space",
+		},
+		{
+			name:    "case insensitive duplicate",
+			configs: []TeamConfig{{Team: "TeamName"}, {Team: "teamname"}},
+			wantErr: "differ only by letter case",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := NewAuthorizer(tc.configs)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("NewAuthorizer() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+
+	if _, err := NewAuthorizer([]TeamConfig{{Team: "Team123"}}); err != nil {
+		t.Fatalf("NewAuthorizer(valid uppercase team) error = %v", err)
+	}
+}
+
 func TestNewAuthorizerReservesGlobalAdminTeam(t *testing.T) {
 	t.Parallel()
 

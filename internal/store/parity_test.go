@@ -800,7 +800,7 @@ func TestStoreParityAccessConfigRoundTrip(t *testing.T) {
 			st := tc.open(t)
 			t.Cleanup(st.Close)
 
-			prefix := "parity-" + tc.name + "-"
+			prefix := "parityaccess" + tc.name
 			want := []auth.TeamConfig{
 				{
 					Team:                prefix + "teamname",
@@ -875,7 +875,7 @@ func TestStoreParityMarksAccessTokenUsed(t *testing.T) {
 			st := tc.open(t)
 			t.Cleanup(st.Close)
 
-			team := "parity-token-usage-" + tc.name
+			team := "paritytokenusage" + tc.name
 			existing, err := st.LoadTeamConfigs(ctx)
 			if err != nil {
 				t.Fatalf("LoadTeamConfigs(before) error = %v", err)
@@ -949,7 +949,7 @@ func TestStoreParityPurgesOnlyOldInactiveAccessTokens(t *testing.T) {
 			st := tc.open(t)
 			t.Cleanup(st.Close)
 
-			team := "parity-token-retention-" + tc.name
+			team := "paritytokenretention" + tc.name
 			existing, err := st.LoadTeamConfigs(ctx)
 			if err != nil {
 				t.Fatalf("LoadTeamConfigs(before) error = %v", err)
@@ -1255,7 +1255,7 @@ func TestStoreParityRejectsReusedAccessTokensWithoutReplacingConfig(t *testing.T
 			st := tc.open(t)
 			t.Cleanup(st.Close)
 
-			prefix := "parity-duplicate-" + tc.name + "-"
+			prefix := "parityduplicate" + tc.name
 			existing, err := st.LoadTeamConfigs(ctx)
 			if err != nil {
 				t.Fatalf("LoadTeamConfigs(before) error = %v", err)

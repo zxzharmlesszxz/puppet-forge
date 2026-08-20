@@ -16,7 +16,6 @@ import (
 	"mime"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -31,11 +30,6 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/storage"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/throttle"
-)
-
-var (
-	moduleOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9]+$`)
-	moduleNamePattern  = regexp.MustCompile(`^[a-z0-9_]+$`)
 )
 
 const readinessCapabilityTTL = 5 * time.Minute
@@ -147,12 +141,12 @@ func (s *ModuleService) Publish(ctx context.Context, input domain.PublishModuleI
 		return domain.Release{}, err
 	}
 
-	if !moduleOwnerPattern.MatchString(input.Owner) {
+	if !domain.ValidModuleOwner(input.Owner) {
 		err := invalidInput("invalid owner")
 		metrics.ObservePublish(err)
 		return domain.Release{}, err
 	}
-	if !moduleNamePattern.MatchString(input.Name) {
+	if !domain.ValidModuleName(input.Name) {
 		err := invalidInput("invalid name")
 		metrics.ObservePublish(err)
 		return domain.Release{}, err
@@ -1223,10 +1217,10 @@ func (s *ModuleService) RefreshCachedUpstreamModules(ctx context.Context, limit,
 func (s *ModuleService) IndexUpstreamModule(ctx context.Context, upstreamModule proxy.UpstreamModule) error {
 	owner := upstreamModule.Owner
 	name := upstreamModule.Name
-	if !moduleOwnerPattern.MatchString(owner) {
+	if !domain.ValidModuleOwner(owner) {
 		return errors.New("invalid upstream module owner")
 	}
-	if !moduleNamePattern.MatchString(name) {
+	if !domain.ValidModuleName(name) {
 		return errors.New("invalid upstream module name")
 	}
 	unlock, err := s.modules.LockModule(ctx, owner, name)
@@ -1596,7 +1590,7 @@ func fallbackString(value, fallback string) string {
 
 // splitModuleIdentity accepts Puppet module identities only in owner-name,
 // owner/name, or bare name form. Owners and module names are validated later by
-// moduleOwnerPattern and moduleNamePattern, so nested owner/name/path identities are intentionally rejected.
+// domain identity validation, so nested owner/name/path identities are intentionally rejected.
 func splitModuleIdentity(raw string) (owner, name string) {
 	if left, right, ok := strings.Cut(raw, "-"); ok {
 		return left, right

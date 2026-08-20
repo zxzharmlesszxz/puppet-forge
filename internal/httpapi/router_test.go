@@ -3711,7 +3711,7 @@ func TestManageAccessStructuredRenameTeam(t *testing.T) {
 	resp, err := client.PostForm(serverURL+"/manage/access", manageFormValues(t, client, serverURL, url.Values{
 		"action":               {"save_team"},
 		"original_team":        {"teamname"},
-		"team":                 {"teamname-platform"},
+		"team":                 {"teamnameplatform"},
 		"publish_tokens":       {"renamed-token"},
 		"extra_publish_spaces": {"ignored-space"},
 		"oidc_groups":          {"teamname-platform-devops"},
@@ -3735,11 +3735,11 @@ func TestManageAccessStructuredRenameTeam(t *testing.T) {
 			t.Fatalf("old team name was not removed: %#v", saved)
 		}
 	}
-	renamed := findTeamConfig(saved, "teamname-platform")
+	renamed := findTeamConfig(saved, "teamnameplatform")
 	if renamed == nil {
 		t.Fatalf("renamed team was not saved: %#v", saved)
 	}
-	if len(renamed.PublishOwners) != 2 || !slices.Contains(renamed.PublishOwners, "teamname-platform") || !slices.Contains(renamed.PublishOwners, "platform") {
+	if len(renamed.PublishOwners) != 2 || !slices.Contains(renamed.PublishOwners, "teamnameplatform") || !slices.Contains(renamed.PublishOwners, "platform") {
 		t.Fatalf("unexpected renamed owners: %#v", renamed.PublishOwners)
 	}
 	if len(renamed.OIDCGroups) != 1 || renamed.OIDCGroups[0] != "teamname-platform-devops" {
@@ -4339,7 +4339,7 @@ func TestManageOverviewPaginatesTeamsAndSpacesIndependently(t *testing.T) {
 	st := newHTTPAPITestStore(t)
 	configs := make([]auth.TeamConfig, 0, manageOverviewTeamPageSize+1)
 	for i := range manageOverviewTeamPageSize + 1 {
-		configs = append(configs, auth.TeamConfig{Team: fmt.Sprintf("team-%02d", i)})
+		configs = append(configs, auth.TeamConfig{Team: fmt.Sprintf("team%02d", i)})
 	}
 	client, serverURL := newAccessManageClient(t, st, ctx, configs)
 
@@ -4349,14 +4349,14 @@ func TestManageOverviewPaginatesTeamsAndSpacesIndependently(t *testing.T) {
 		`11 spaces · page 2 of 2`,
 		`href="/manage?spaces_page=2#teams">Previous</a>`,
 		`href="/manage?teams_page=2#spaces">Previous</a>`,
-		`href="/manage/teams/team-10/access">team-10</a>`,
-		`href="/manage/modules?q=team-10%2F">team-10</a>`,
+		`href="/manage/teams/team10/access">team10</a>`,
+		`href="/manage/modules?q=team10%2F">team10</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("independent overview pagination misses %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, `href="/manage/teams/team-00/access">team-00</a>`) {
+	if strings.Contains(body, `href="/manage/teams/team00/access">team00</a>`) {
 		t.Fatalf("second team page still contains a first-page team:\n%s", body)
 	}
 }
@@ -4703,10 +4703,39 @@ func TestGlobalAdminManagesPublishSpaceAssignments(t *testing.T) {
 	_, _, err = router.publishSpaceConfigsFromForm(formRequest(url.Values{
 		"action": {"assign"},
 		"team":   {"teamname"},
+		"space":  {"shared-space"},
+	}))
+	if err == nil || !strings.Contains(err.Error(), "only ASCII letters and digits") {
+		t.Fatalf("assigning invalid publish space error = %v", err)
+	}
+
+	_, _, err = router.publishSpaceConfigsFromForm(formRequest(url.Values{
+		"action": {"assign"},
+		"team":   {"teamname"},
 		"space":  {"alpha"},
 	}))
 	if err == nil || !strings.Contains(err.Error(), "primary space of another team") {
 		t.Fatalf("assigning another team's primary space error = %v", err)
+	}
+
+	if err := router.modules.IndexUpstreamModule(ctx, proxy.UpstreamModule{
+		Slug:  "puppetlabs-stdlib",
+		Owner: "puppetlabs",
+		Name:  "stdlib",
+		CurrentRelease: proxy.UpstreamReleaseRef{
+			Slug:    "puppetlabs-stdlib-9.0.0",
+			Version: "9.0.0",
+		},
+	}); err != nil {
+		t.Fatalf("IndexUpstreamModule() error = %v", err)
+	}
+	_, _, err = router.publishSpaceConfigsFromForm(formRequest(url.Values{
+		"action": {"assign"},
+		"team":   {"teamname"},
+		"space":  {"puppetlabs"},
+	}))
+	if err == nil || !strings.Contains(err.Error(), "belongs to Official Forge and is read only") {
+		t.Fatalf("assigning Official Forge space error = %v", err)
 	}
 }
 
@@ -4839,7 +4868,7 @@ func TestManageAccessAddTeamNavLinks(t *testing.T) {
 		`<a href="/manage/teams" aria-current="page">Teams</a>`,
 		`<a href="/manage/teams/new" aria-current="page">Add team</a>`,
 		`<form method="post" action="/manage/teams/new">`,
-		`<input id="new-team" name="team" placeholder="platform" required>`,
+		`<input id="new-team" name="team" placeholder="Platform" pattern="[A-Za-z0-9]+" required>`,
 		`<form method="post" action="/manage/logout">`,
 	} {
 		if !strings.Contains(body, want) {
@@ -4881,6 +4910,22 @@ func TestManageAccessAddTeamKeepsValidationAndSuccessInTeamContext(t *testing.T)
 
 	resp, err = noRedirect.PostForm(server.URL+"/manage/teams/new", manageFormValues(t, client, server.URL, url.Values{
 		"action": {"save_team"},
+		"team":   {"team-name"},
+	}))
+	if err != nil {
+		t.Fatalf("POST invalid add-team form error = %v", err)
+	}
+	body, readErr = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read invalid add-team response: %v", readErr)
+	}
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "team must contain only ASCII letters and digits") {
+		t.Fatalf("invalid add-team response status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = noRedirect.PostForm(server.URL+"/manage/teams/new", manageFormValues(t, client, server.URL, url.Values{
+		"action": {"save_team"},
 		"team":   {"teamname"},
 	}))
 	if err != nil {
@@ -4896,6 +4941,22 @@ func TestManageAccessAddTeamKeepsValidationAndSuccessInTeamContext(t *testing.T)
 	}
 	if len(configs) != 1 || configs[0].Team != "teamname" {
 		t.Fatalf("valid add-team form persisted configs = %#v", configs)
+	}
+
+	resp, err = noRedirect.PostForm(server.URL+"/manage/teams/new", manageFormValues(t, client, server.URL, url.Values{
+		"action": {"save_team"},
+		"team":   {"TeamName"},
+	}))
+	if err != nil {
+		t.Fatalf("POST case-duplicate add-team form error = %v", err)
+	}
+	body, readErr = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read case-duplicate add-team response: %v", readErr)
+	}
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "teamname") || !strings.Contains(string(body), "already exists") {
+		t.Fatalf("case-duplicate add-team response status=%d body=%s", resp.StatusCode, string(body))
 	}
 }
 

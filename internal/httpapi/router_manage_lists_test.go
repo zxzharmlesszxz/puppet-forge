@@ -129,7 +129,7 @@ func TestManageListFiltersTeamsAndPublishSpaces(t *testing.T) {
 	t.Parallel()
 
 	teams := []manageTeamSummary{
-		{Team: "platform", Spaces: []string{"platform", "shared-modules"}},
+		{Team: "platform", Spaces: []string{"platform", "sharedmodules"}},
 		{Team: "security", Spaces: []string{"security"}},
 	}
 	for query, want := range map[string]string{"PLATFORM": "platform", "shared": "platform", "security": "security"} {
@@ -141,10 +141,10 @@ func TestManageListFiltersTeamsAndPublishSpaces(t *testing.T) {
 
 	spaces := []managePublishSpaceAssignment{
 		{Team: "platform", Space: "platform", Primary: true},
-		{Team: "platform", Space: "shared-modules"},
+		{Team: "platform", Space: "sharedmodules"},
 		{Space: "puppetlabs", Upstream: true},
 	}
-	for query, want := range map[string]string{"primary": "platform", "extra": "shared-modules", "SHARED": "shared-modules", "upstream": "puppetlabs"} {
+	for query, want := range map[string]string{"primary": "platform", "extra": "sharedmodules", "SHARED": "sharedmodules", "upstream": "puppetlabs"} {
 		filtered := filterManagePublishSpaceAssignments(spaces, query)
 		if len(filtered) != 1 || filtered[0].Space != want {
 			t.Fatalf("filterManagePublishSpaceAssignments(%q) = %#v, want space %q", query, filtered, want)

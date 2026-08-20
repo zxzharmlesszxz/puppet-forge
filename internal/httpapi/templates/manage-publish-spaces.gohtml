@@ -71,7 +71,7 @@
         {{csrfInput .CSRFToken}}
         <input type="hidden" name="action" value="assign">
         <div><label for="publish-space-team">Team</label><select id="publish-space-team" name="team" required>{{range .Teams}}<option value="{{.}}">{{.}}</option>{{end}}</select></div>
-        <div><label for="publish-space-name">Extra publish space</label><input id="publish-space-name" name="space" placeholder="shared-modules" pattern="[a-z0-9][a-z0-9_-]*" maxlength="128" required></div>
+        <div><label for="publish-space-name">Extra publish space</label><input id="publish-space-name" name="space" placeholder="SharedModules" pattern="[A-Za-z0-9]+" maxlength="128" required></div>
         <button type="submit">Assign space</button>
       </form>{{else}}<div class="empty">Create a team before assigning extra publish spaces.</div>{{end}}
     </section>

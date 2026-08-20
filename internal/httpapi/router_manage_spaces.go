@@ -5,15 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
-
-var publishSpaceNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
 func (r *Router) managePublishSpacesPage(w http.ResponseWriter, req *http.Request) {
 	principal, ok := r.requireManage(w, req)
@@ -116,8 +114,8 @@ func (r *Router) publishSpaceConfigsFromForm(req *http.Request) ([]auth.TeamConf
 	if team == "" {
 		return nil, "", errors.New("team is required")
 	}
-	if !publishSpaceNamePattern.MatchString(space) {
-		return nil, "", errors.New("publish space must contain only lowercase letters, digits, underscores, or hyphens")
+	if !domain.ValidModuleOwner(space) {
+		return nil, "", errors.New("publish space must contain only ASCII letters and digits")
 	}
 	if len(space) > 128 {
 		return nil, "", errors.New("publish space must not exceed 128 characters")
@@ -138,8 +136,19 @@ func (r *Router) publishSpaceConfigsFromForm(req *http.Request) ([]auth.TeamConf
 		return nil, "", fmt.Errorf("publish space %q is the primary space of another team", space)
 	}
 
+	action := strings.TrimSpace(req.FormValue("action"))
+	if action == "assign" {
+		upstreamSpaces, err := r.modules.CountUpstreamModulesByOwner(req.Context())
+		if err != nil {
+			return nil, "", err
+		}
+		if _, upstream := upstreamSpaces[space]; upstream {
+			return nil, "", fmt.Errorf("publish space %q belongs to Official Forge and is read only", space)
+		}
+	}
+
 	extras := extraPublishOwnersForForm(cfg.Team, cfg.PublishOwners)
-	switch strings.TrimSpace(req.FormValue("action")) {
+	switch action {
 	case "assign":
 		if !containsString(extras, space) {
 			extras = append(extras, space)

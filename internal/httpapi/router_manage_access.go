@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
@@ -175,12 +176,13 @@ func (r *Router) accessConfigsWithUpsertedTeam(req *http.Request, principal auth
 	if cfg.Team == "" {
 		return nil, "", errors.New("team is required")
 	}
-	if originalTeam == "" {
-		if findAccessConfig(configs, cfg.Team) != nil {
-			return nil, "", fmt.Errorf("team %q already exists", cfg.Team)
+	if !domain.ValidModuleOwner(cfg.Team) {
+		return nil, "", errors.New("team must contain only ASCII letters and digits")
+	}
+	for _, existing := range configs {
+		if existing.Team != originalTeam && strings.EqualFold(existing.Team, cfg.Team) {
+			return nil, "", fmt.Errorf("team %q already exists", existing.Team)
 		}
-	} else if cfg.Team != originalTeam && findAccessConfig(configs, cfg.Team) != nil {
-		return nil, "", fmt.Errorf("team %q already exists", cfg.Team)
 	}
 
 	existing := findAccessConfig(configs, originalTeam)
