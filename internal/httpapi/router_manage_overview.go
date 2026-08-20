@@ -65,8 +65,17 @@ func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	if redirectOutOfRangeOverviewPage(w, req, modulePage, moduleTotal, modulePageSize, "modules_page", "modules") {
+	canonicalModulePage, modulePageChanged := normalizedListPage(modulePage, modulePageSize, moduleTotal)
+	if handleCanonicalListPage(w, req, modulePageChanged, overviewPageURL(req.URL.Query(), "modules_page", canonicalModulePage, "modules")) {
 		return
+	}
+	if modulePageChanged {
+		modulePage = canonicalModulePage
+		modules, moduleTotal, err = r.manageOverviewModules(ctx, principal, configs, modulePage, modulePageSize)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	moduleCounts, err := r.modules.CountModulesByOwner(ctx, manageOverviewTeamOwners(configs, principal))
 	if err != nil {
@@ -75,9 +84,11 @@ func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 	}
 	spaces := manageOverviewSpaces(configs, moduleCounts, principal)
 	spaceTotal := len(spaces)
-	if redirectOutOfRangeOverviewPage(w, req, spacePage, spaceTotal, spacePageSize, "spaces_page", "spaces") {
+	canonicalSpacePage, spacePageChanged := normalizedListPage(spacePage, spacePageSize, spaceTotal)
+	if handleCanonicalListPage(w, req, spacePageChanged, overviewPageURL(req.URL.Query(), "spaces_page", canonicalSpacePage, "spaces")) {
 		return
 	}
+	spacePage = canonicalSpacePage
 	spaces = pageItems(spaces, spacePage, spacePageSize)
 
 	var teams []manageOverviewTeamSummary
@@ -86,9 +97,11 @@ func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 		teams = manageOverviewTeams(manageTeamSummaries(configs, moduleCounts, principal))
 		teamTotal = len(teams)
 	}
-	if redirectOutOfRangeOverviewPage(w, req, teamPage, teamTotal, teamPageSize, "teams_page", "teams") {
+	canonicalTeamPage, teamPageChanged := normalizedListPage(teamPage, teamPageSize, teamTotal)
+	if handleCanonicalListPage(w, req, teamPageChanged, overviewPageURL(req.URL.Query(), "teams_page", canonicalTeamPage, "teams")) {
 		return
 	}
+	teamPage = canonicalTeamPage
 	teams = pageItems(teams, teamPage, teamPageSize)
 
 	csrfToken, err := r.ensureManageCSRFToken(w, req)
@@ -185,23 +198,6 @@ func requestedOverviewPage(req *http.Request, parameter string, pageSize int) (i
 		return 0, errors.New("invalid " + parameter)
 	}
 	return page, nil
-}
-
-func redirectOutOfRangeOverviewPage(w http.ResponseWriter, req *http.Request, page, total, pageSize int, parameter, anchor string) bool {
-	if validateOverviewPage(page, total, pageSize, parameter) == nil {
-		return false
-	}
-	totalPages := max(1, (total+pageSize-1)/pageSize)
-	http.Redirect(w, req, overviewPageURL(req.URL.Query(), parameter, totalPages, anchor), http.StatusSeeOther)
-	return true
-}
-
-func validateOverviewPage(page, total, pageSize int, parameter string) error {
-	totalPages := max(1, (total+pageSize-1)/pageSize)
-	if page > totalPages {
-		return errors.New("invalid " + parameter)
-	}
-	return nil
 }
 
 func overviewPagination(current url.Values, pageParameter, sizeParameter, anchor string, page, total, pageSize int) paginationData {

@@ -1,0 +1,45 @@
+{{define "manage-module-card"}}
+{{$cardID := moduleCardID .Module.Owner .Module.Name}}
+{{$releaseCount := moduleReleaseCount .}}
+<details id="{{$cardID}}" class="module-details" data-section-key="module:{{.Module.Owner}}/{{.Module.Name}}" data-module-card-url="{{.CardURL}}"{{if or .VersionsLoaded .Versions}} data-module-card-loaded="true"{{end}}>
+  <summary class="catalog-item">
+    <span class="item-title">{{.Module.Owner}}/{{.Module.Name}}</span>
+    <span class="item-subtitle">{{if .Module.LatestVersion}}{{.Module.LatestVersion}}{{else}}none{{end}}</span>
+    <span class="badge">{{$releaseCount}} version{{if ne $releaseCount 1}}s{{end}}</span>
+    {{if .CanDelete}}
+    <span class="module-actions">
+      <button class="danger-button" type="submit" form="delete-module-{{.Module.Owner}}-{{.Module.Name}}">Delete module</button>
+    </span>
+    {{end}}
+  </summary>
+  <div class="module-notice-slot" aria-live="polite"></div>
+  {{if .CanDelete}}
+  <form id="delete-module-{{.Module.Owner}}-{{.Module.Name}}" method="post" action="/manage/modules/{{.Module.Owner}}/{{.Module.Name}}/delete" hidden data-async-mutation data-remove-target="{{$cardID}}">
+    {{csrfInput .CSRFToken}}
+    {{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}
+  </form>
+  {{end}}
+  <div class="release-list">
+    {{if or .VersionsLoaded .Versions}}
+      {{range .Versions}}
+      <div class="release-version{{if .Latest}} is-latest{{else if .Active}} is-active{{end}}">
+        {{.Version}}
+        {{if .Latest}}<span class="usage-badge">latest</span>{{end}}
+        {{if .Active}}<span class="usage-badge">in use</span>{{end}}
+        {{if and (not .Latest) (not .Active) $.CanDelete}}
+        <form method="post" action="/manage/modules/{{$.Module.Owner}}/{{$.Module.Name}}/versions/{{.Version}}/delete" data-async-mutation data-refresh-target="{{$cardID}}">
+          {{csrfInput $.CSRFToken}}
+          {{if $.Next}}<input type="hidden" name="next" value="{{$.Next}}">{{end}}
+          <button class="release-danger-button" type="submit">Delete</button>
+        </form>
+        {{end}}
+      </div>
+      {{else}}
+      <span class="muted">No releases.</span>
+      {{end}}
+    {{else}}
+    <span class="muted">Open to load releases.</span>
+    {{end}}
+  </div>
+</details>
+{{end}}

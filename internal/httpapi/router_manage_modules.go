@@ -5,12 +5,14 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
@@ -45,12 +47,25 @@ func (r *Router) manageModulesPage(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-
+	canonicalPage, changed := normalizedListPage(page, pageSize, total)
+	canonicalURL := managePageURLWithValues("/manage/modules", req.URL.Query(), canonicalPage, manageModuleListTarget)
+	if handleCanonicalListPage(w, req, changed, canonicalURL) {
+		return
+	}
+	if changed {
+		page = canonicalPage
+		rows, total, err = r.loadManageModuleRows(req.Context(), principal, nil, query, page, pageSize)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
 	csrfToken, err := r.ensureManageCSRFToken(w, req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	configureManageModuleRows(rows, csrfToken, "/manage/modules")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	executeHTMLTemplate(w, managePageTemplate, managePageData{
 		Navigation: r.manageNavigation(req, principal, csrfToken, "modules", ""),
@@ -100,38 +115,75 @@ func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Princi
 	if err != nil {
 		return nil, 0, err
 	}
-	activeReleases, err := r.modules.ListActiveReleasesForModules(ctx, time.Now().Add(-r.activeReleaseTTL), modules)
-	if err != nil {
-		return nil, 0, err
-	}
-	activeReleaseSet := make(map[struct{ owner, name, version string }]struct{}, len(activeReleases))
-	for _, release := range activeReleases {
-		activeReleaseSet[struct{ owner, name, version string }{release.Owner, release.Name, release.Version}] = struct{}{}
-	}
-	releasesByModule, err := r.modules.ListReleasesForModules(ctx, modules)
+	releaseCounts, err := r.modules.CountReleasesForModules(ctx, modules)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	rows := make([]manageModuleRow, 0, len(modules))
 	for _, module := range modules {
-		versions := releasesByModule[module.Owner+"\x00"+module.Name]
-		versionRows := make([]manageVersionRow, 0, len(versions))
-		for _, version := range versions {
-			_, active := activeReleaseSet[struct{ owner, name, version string }{module.Owner, module.Name, version.Version}]
-			versionRows = append(versionRows, manageVersionRow{
-				Version: version.Version,
-				Active:  active,
-				Latest:  version.Version == module.LatestVersion,
-			})
-		}
 		rows = append(rows, manageModuleRow{
-			Module:    module,
-			Versions:  versionRows,
-			CanDelete: canDeleteInSpace(principal, module.Owner),
+			Module:       module,
+			ReleaseCount: releaseCounts[module.Owner+"\x00"+module.Name],
+			CanDelete:    canDeleteInSpace(principal, module.Owner),
+			CardID:       manageModuleCardID(module.Owner, module.Name),
+			CardURL:      manageModuleCardURL(module.Owner, module.Name),
 		})
 	}
 	return rows, total, nil
+}
+
+func (r *Router) loadManageModuleCard(ctx context.Context, principal auth.Principal, owner, name string) (manageModuleRow, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	module, err := r.modules.GetModule(ctx, owner, name)
+	if err != nil {
+		return manageModuleRow{}, err
+	}
+	versions, err := r.modules.ListReleases(ctx, owner, name)
+	if err != nil {
+		return manageModuleRow{}, err
+	}
+	activeReleases, err := r.modules.ListActiveReleasesForModules(ctx, time.Now().Add(-r.activeReleaseTTL), []domain.Module{module})
+	if err != nil {
+		return manageModuleRow{}, err
+	}
+	active := make(map[string]struct{}, len(activeReleases))
+	for _, release := range activeReleases {
+		active[release.Version] = struct{}{}
+	}
+	rows := make([]manageVersionRow, 0, len(versions))
+	for _, version := range versions {
+		_, inUse := active[version.Version]
+		rows = append(rows, manageVersionRow{Version: version.Version, Active: inUse, Latest: version.Version == module.LatestVersion})
+	}
+	return manageModuleRow{
+		Module:         module,
+		Versions:       rows,
+		ReleaseCount:   len(rows),
+		CanDelete:      canDeleteInSpace(principal, owner),
+		VersionsLoaded: true,
+		CardID:         manageModuleCardID(owner, name),
+		CardURL:        manageModuleCardURL(owner, name),
+	}, nil
+}
+
+func configureManageModuleRows(rows []manageModuleRow, csrfToken, next string) {
+	for i := range rows {
+		rows[i].CSRFToken = csrfToken
+		rows[i].Next = next
+		if next != "" && next != "/manage/modules" {
+			rows[i].CardURL += "?next=" + url.QueryEscape(next)
+		}
+	}
+}
+
+func manageModuleCardID(owner, name string) string {
+	return "item-" + owner + "-" + name
+}
+
+func manageModuleCardURL(owner, name string) string {
+	return "/manage/modules/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/card"
 }
 
 func requestedManagePageWithSize(req *http.Request, pageSize int) (int, error) {
@@ -203,11 +255,11 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 	}
 	allowed, rateLimitErr := r.allowSharedRateLimit(req, "manage-publish", 60, time.Minute)
 	if rateLimitErr != nil {
-		redirectManageError(w, req, errors.New("publish rate limit service is unavailable"))
+		respondManageMutationHTTPError(w, req, http.StatusServiceUnavailable, errors.New("publish rate limit service is unavailable"))
 		return
 	}
 	if !allowed {
-		redirectManageError(w, req, errors.New("too many publish attempts"))
+		respondManageMutationHTTPError(w, req, http.StatusTooManyRequests, errors.New("too many publish attempts"))
 		return
 	}
 
@@ -218,23 +270,23 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 			writeError(w, http.StatusRequestEntityTooLarge, err)
 			return
 		}
-		redirectManageError(w, req, err)
+		respondManageMutationError(w, req, err)
 		return
 	}
 	defer cleanup()
 	if !principal.CanPublishOwner(input.Owner) {
 		r.audit(req, principal, "publish_module", "failure", "forbidden", "space", input.Owner)
-		redirectManageError(w, req, errors.New("token is not allowed to publish to this space"))
+		respondManageMutationHTTPError(w, req, http.StatusForbidden, errors.New("token is not allowed to publish to this space"))
 		return
 	}
 	release, err := r.modules.Publish(req.Context(), input)
 	if err != nil {
 		r.audit(req, principal, "publish_module", "failure", auditReason(err), "space", input.Owner)
-		redirectManageError(w, req, err)
+		respondManageMutationServiceError(w, req, err)
 		return
 	}
 	r.audit(req, principal, "publish_module", "success", "none", "space", release.Owner, "module", release.Owner+"/"+release.Name, "release", release.Version, "sha256", release.SHA256)
-	redirectManageResult(w, req, "/manage/modules", "message", "module published")
+	respondManageMutationSuccess(w, req, "/manage/modules", "module published", manageModuleListTarget, "")
 }
 
 func (r *Router) manageUpstreamModule(w http.ResponseWriter, req *http.Request) {
@@ -254,71 +306,140 @@ func (r *Router) manageUpstreamModule(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 	if !principal.CanAdmin {
-		redirectManageError(w, req, errors.New("global admin access required"))
+		respondManageMutationHTTPError(w, req, http.StatusForbidden, errors.New("global admin access required"))
 		return
 	}
 
 	owner, name, err := parseUpstreamModuleFormValue(req.FormValue("module"))
 	if err != nil {
-		redirectManageError(w, req, err)
+		respondManageMutationServiceError(w, req, err)
 		return
 	}
 	if err := r.modules.SyncUpstreamModule(req.Context(), owner, name); err != nil {
 		r.audit(req, principal, "import_upstream_module", "failure", auditReason(err), "module", owner+"/"+name)
-		redirectManageError(w, req, err)
+		respondManageMutationError(w, req, err)
 		return
 	}
 	r.audit(req, principal, "import_upstream_module", "success", "none", "module", owner+"/"+name)
-	http.Redirect(w, req, "/manage/modules?message="+url.QueryEscape("upstream module added"), http.StatusFound)
+	respondManageMutationSuccess(w, req, "/manage/modules", "upstream module added", manageModuleListTarget, "")
 }
 
 func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
-		return
-	}
 	principal, ok := r.requireManage(w, req)
 	if !ok {
+		return
+	}
+	trimmed := strings.Trim(strings.TrimPrefix(req.URL.Path, "/manage/modules/"), "/")
+	parts := strings.Split(trimmed, "/")
+	if req.Method == http.MethodGet && len(parts) == 3 && parts[2] == "card" {
+		owner, name := parts[0], parts[1]
+		if !canViewManageSpace(principal, owner) {
+			writeError(w, http.StatusForbidden, errors.New("module space access required"))
+			return
+		}
+		row, err := r.loadManageModuleCard(req.Context(), principal, owner, name)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		csrfToken, err := r.ensureManageCSRFToken(w, req)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		rows := []manageModuleRow{row}
+		configureManageModuleRows(rows, csrfToken, manageReturnPath(req, "/manage/modules"))
+		row = rows[0]
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		executeHTMLTemplateNamed(w, managePageTemplate, "manage-module-card", row)
+		return
+	}
+	if req.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 		return
 	}
 	if !r.requireManageCSRF(w, req) {
 		return
 	}
 
-	trimmed := strings.Trim(strings.TrimPrefix(req.URL.Path, "/manage/modules/"), "/")
-	parts := strings.Split(trimmed, "/")
 	if len(parts) == 3 && parts[2] == "delete" {
 		owner, name := parts[0], parts[1]
 		if !canDeleteInSpace(principal, owner) {
-			redirectManageError(w, req, errors.New("admin or team admin access required"))
+			respondManageMutationHTTPError(w, req, http.StatusForbidden, errors.New("admin or team admin access required"))
 			return
 		}
 		if err := r.modules.DeleteModuleIfAllowed(req.Context(), owner, name, time.Now().Add(-r.activeReleaseTTL)); err != nil {
 			r.audit(req, principal, "delete_module", "failure", auditReason(err), "space", owner, "module", owner+"/"+name)
-			redirectManageError(w, req, err)
+			respondManageMutationServiceError(w, req, err)
 			return
 		}
 		r.audit(req, principal, "delete_module", "success", "none", "space", owner, "module", owner+"/"+name)
-		redirectManageResult(w, req, "/manage/modules", "message", "module deleted")
+		respondManageMutationSuccess(w, req, "/manage/modules", "module deleted", "", manageModuleCardID(owner, name))
 		return
 	}
 	if len(parts) == 5 && parts[2] == "versions" && parts[4] == "delete" {
 		owner, name, version := parts[0], parts[1], parts[3]
 		if !canDeleteInSpace(principal, owner) {
-			redirectManageError(w, req, errors.New("admin or team admin access required"))
+			respondManageMutationHTTPError(w, req, http.StatusForbidden, errors.New("admin or team admin access required"))
 			return
 		}
 		if err := r.modules.DeleteReleaseIfAllowed(req.Context(), owner, name, version, time.Now().Add(-r.activeReleaseTTL)); err != nil {
 			r.audit(req, principal, "delete_release", "failure", auditReason(err), "space", owner, "module", owner+"/"+name, "release", version)
-			redirectManageError(w, req, err)
+			respondManageMutationServiceError(w, req, err)
 			return
 		}
 		r.audit(req, principal, "delete_release", "success", "none", "space", owner, "module", owner+"/"+name, "release", version)
-		redirectManageResult(w, req, "/manage/modules", "message", "version deleted")
+		respondManageMutationSuccess(w, req, "/manage/modules", "version deleted", manageModuleCardID(owner, name), "")
 		return
 	}
 
 	writeError(w, http.StatusNotFound, errors.New("route not found"))
+}
+
+func canViewManageSpace(principal auth.Principal, owner string) bool {
+	if principal.CanAdmin || principal.CanPublishOwner(owner) {
+		return true
+	}
+	return slices.Contains(manageableOwners(principal), owner)
+}
+
+func isAsyncManageMutation(req *http.Request) bool {
+	return req.Header.Get("X-Puppet-Forge-Async-Mutation") == "true"
+}
+
+func respondManageMutationError(w http.ResponseWriter, req *http.Request, err error) {
+	respondManageMutationHTTPError(w, req, http.StatusBadRequest, err)
+}
+
+func respondManageMutationHTTPError(w http.ResponseWriter, req *http.Request, status int, err error) {
+	if isAsyncManageMutation(req) {
+		writeError(w, status, err)
+		return
+	}
+	redirectManageError(w, req, err)
+}
+
+func respondManageMutationServiceError(w http.ResponseWriter, req *http.Request, err error) {
+	if isAsyncManageMutation(req) {
+		writeServiceError(w, err)
+		return
+	}
+	redirectManageError(w, req, err)
+}
+
+func respondManageMutationSuccess(w http.ResponseWriter, req *http.Request, fallback, message, refreshTarget, removeTarget string) {
+	if isAsyncManageMutation(req) {
+		if refreshTarget != "" {
+			w.Header().Set("X-Puppet-Forge-Refresh", refreshTarget)
+		}
+		if removeTarget != "" {
+			w.Header().Set("X-Puppet-Forge-Remove", removeTarget)
+		}
+		w.Header().Set("X-Puppet-Forge-Message", message)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	redirectManageResult(w, req, fallback, "message", message)
 }
 
 func parseUpstreamModuleFormValue(raw string) (string, string, error) {

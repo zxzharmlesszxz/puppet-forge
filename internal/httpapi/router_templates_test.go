@@ -759,8 +759,10 @@ func TestPopulateManageTeamTokensFiltersActiveTokensBeforePagination(t *testing.
 		},
 		TokenHistory: []accessTokenFormRow{{ID: "expired", Kind: "Read", Status: "Expired"}},
 	}}
-	if err := populateManageTeamTokens(req, "/manage/teams/teamname/tokens", &data); err != nil {
+	if redirected, err := populateManageTeamTokens(httptest.NewRecorder(), req, "/manage/teams/teamname/tokens", &data); err != nil {
 		t.Fatalf("populateManageTeamTokens() error = %v", err)
+	} else if redirected {
+		t.Fatal("populateManageTeamTokens() redirected unexpectedly")
 	}
 	if len(data.Team.Tokens) != 1 || data.Team.Tokens[0].ID != "publish" || data.TokenPagination.Total != 1 {
 		t.Fatalf("active token filter result = %#v, pagination = %#v", data.Team.Tokens, data.TokenPagination)

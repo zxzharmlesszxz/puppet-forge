@@ -388,9 +388,15 @@ func accessTokenFormRows(records []auth.AccessTokenRecord, kind string, now time
 }
 
 type manageModuleRow struct {
-	Module    domain.Module
-	Versions  []manageVersionRow
-	CanDelete bool
+	Module         domain.Module
+	Versions       []manageVersionRow
+	ReleaseCount   int
+	CanDelete      bool
+	VersionsLoaded bool
+	CardID         string
+	CardURL        string
+	Next           string
+	CSRFToken      string
 }
 
 type manageVersionRow struct {
@@ -429,6 +435,13 @@ var csrfFuncs = template.FuncMap{
 		// #nosec G203 -- token is HTML-escaped before constructing the fixed hidden input element.
 		return template.HTML(`<input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(token) + `">`)
 	},
+	"moduleCardID": manageModuleCardID,
+	"moduleReleaseCount": func(row manageModuleRow) int {
+		if row.ReleaseCount == 0 && len(row.Versions) > 0 {
+			return len(row.Versions)
+		}
+		return row.ReleaseCount
+	},
 }
 
 //go:embed templates/*.gohtml
@@ -443,7 +456,7 @@ func mustParsePublicTemplate(filename string) *template.Template {
 }
 
 func mustParseCSRFTemplate(filename string) *template.Template {
-	return template.Must(template.New(filename).Funcs(csrfFuncs).ParseFS(templateFS, "templates/manage-navigation.gohtml", "templates/list-filter.gohtml", "templates/clipboard.gohtml", "templates/page-size-persistence.gohtml", "templates/async-lists.gohtml", "templates/"+filename))
+	return template.Must(template.New(filename).Funcs(csrfFuncs).ParseFS(templateFS, "templates/manage-navigation.gohtml", "templates/manage-module-card.gohtml", "templates/list-filter.gohtml", "templates/clipboard.gohtml", "templates/page-size-persistence.gohtml", "templates/async-lists.gohtml", "templates/"+filename))
 }
 
 var manageLoginTemplate = mustParseTemplate("manage-login.gohtml")
@@ -469,8 +482,18 @@ var indexPageTemplate = mustParsePublicTemplate("index-page.gohtml")
 var modulePageTemplate = mustParsePublicTemplate("module-page.gohtml")
 
 func executeHTMLTemplate(w http.ResponseWriter, tmpl *template.Template, data any) {
+	executeHTMLTemplateNamed(w, tmpl, "", data)
+}
+
+func executeHTMLTemplateNamed(w http.ResponseWriter, tmpl *template.Template, name string, data any) {
 	var body bytes.Buffer
-	if err := tmpl.Execute(&body, data); err != nil {
+	var err error
+	if name == "" {
+		err = tmpl.Execute(&body, data)
+	} else {
+		err = tmpl.ExecuteTemplate(&body, name, data)
+	}
+	if err != nil {
 		slog.Error("render html template", "request_id", w.Header().Get(requestIDHeader), "template", tmpl.Name(), "err", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return

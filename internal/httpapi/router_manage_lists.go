@@ -134,6 +134,23 @@ func paginationFor(page, pageSize, total int, pageURL func(int) string) paginati
 	return pagination
 }
 
+func normalizedListPage(page, pageSize, total int) (int, bool) {
+	totalPages := max(1, (total+pageSize-1)/pageSize)
+	return min(page, totalPages), page > totalPages
+}
+
+func handleCanonicalListPage(w http.ResponseWriter, req *http.Request, changed bool, canonicalURL string) bool {
+	if !changed {
+		return false
+	}
+	if strings.TrimSpace(req.Header.Get("X-Puppet-Forge-Fragment")) != "" {
+		w.Header().Set("X-Puppet-Forge-Canonical-URL", canonicalURL)
+		return false
+	}
+	http.Redirect(w, req, canonicalURL, http.StatusSeeOther)
+	return true
+}
+
 func manageListPagination(basePath string, current url.Values, anchor string, page, pageSize, total int) (paginationData, error) {
 	pageURL := func(target int) string {
 		values := url.Values{}
@@ -153,10 +170,30 @@ func manageListPagination(basePath string, current url.Values, anchor string, pa
 		return result
 	}
 	pagination := paginationFor(page, pageSize, total, pageURL)
-	if page > max(1, pagination.TotalPages) {
-		return paginationData{}, errors.New("invalid page")
-	}
 	return configurePageSize(pagination, current, basePath, "per_page", "page", anchor, anchor), nil
+}
+
+func manageListPageURL(basePath string, current url.Values, anchor string, page int) string {
+	values := url.Values{}
+	for key, entries := range current {
+		if key == "page" || isPageSizeParameter(key) || key == "message" || key == "error" {
+			continue
+		}
+		for _, entry := range entries {
+			values.Add(key, entry)
+		}
+	}
+	if page > 1 {
+		values.Set("page", strconv.Itoa(page))
+	}
+	result := basePath
+	if encoded := values.Encode(); encoded != "" {
+		result += "?" + encoded
+	}
+	if anchor != "" {
+		result += "#" + anchor
+	}
+	return result
 }
 
 func (r *Router) loadTeamConfigsAndModuleCounts(ctx context.Context) ([]auth.TeamConfig, map[string]int, error) {

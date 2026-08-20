@@ -78,6 +78,12 @@ func (r *Router) renderManagePublishSpaces(w http.ResponseWriter, req *http.Requ
 
 	assignments, teams := managePublishSpaceAssignments(configs, moduleCounts, upstreamModuleCounts)
 	assignments = filterManagePublishSpaceAssignments(assignments, query)
+	canonicalPage, changed := normalizedListPage(page, pageSize, len(assignments))
+	canonicalURL := manageListPageURL("/manage/admin/spaces", req.URL.Query(), "publish-space-list", canonicalPage)
+	if handleCanonicalListPage(w, req, changed, canonicalURL) {
+		return
+	}
+	page = canonicalPage
 	pagination, err := manageListPagination("/manage/admin/spaces", req.URL.Query(), "publish-space-list", page, pageSize, len(assignments))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)

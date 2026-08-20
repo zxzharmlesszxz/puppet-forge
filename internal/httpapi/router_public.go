@@ -38,9 +38,18 @@ func (r *Router) indexPage(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	if err := validateOverviewPage(page, total, pageSize, "page"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
+	canonicalPage, changed := normalizedListPage(page, pageSize, total)
+	canonicalURL := managePageURLWithValues("/", req.URL.Query(), canonicalPage, "module-list")
+	if handleCanonicalListPage(w, req, changed, canonicalURL) {
 		return
+	}
+	if changed {
+		page = canonicalPage
+		modules, total, err = r.modules.ListModulesPageFiltered(req.Context(), owners, query, pageSize, (page-1)*pageSize)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	pagination := managePaginationForRequest("/", req.URL.Query(), "module-list", "module-list", page, pageSize, total)
 

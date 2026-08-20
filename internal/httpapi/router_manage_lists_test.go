@@ -68,8 +68,35 @@ func TestManageListPaginationPreservesFilter(t *testing.T) {
 	if len(pagination.SizeParams) != 2 || pagination.SizeParams[0] != (queryParameter{Name: "ignored", Value: "value"}) || pagination.SizeParams[1] != (queryParameter{Name: "q", Value: "platform"}) {
 		t.Fatalf("page-size parameters = %#v", pagination.SizeParams)
 	}
-	if _, err := manageListPagination("/manage/teams", nil, "teams-list", 2, 20, 0); err == nil {
-		t.Fatal("out-of-range page accepted for an empty result")
+	if page, changed := normalizedListPage(2, 20, 0); page != 1 || !changed {
+		t.Fatalf("normalizedListPage() = (%d, %t), want (1, true)", page, changed)
+	}
+}
+
+func TestHandleCanonicalListPageUsesFragmentHeader(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/manage/modules?page=3", nil)
+	req.Header.Set("X-Puppet-Forge-Fragment", "manage-module-list")
+	recorder := httptest.NewRecorder()
+	if redirected := handleCanonicalListPage(recorder, req, true, "/manage/modules?page=2#manage-module-list"); redirected {
+		t.Fatal("fragment request was redirected")
+	}
+	if got := recorder.Header().Get("X-Puppet-Forge-Canonical-URL"); got != "/manage/modules?page=2#manage-module-list" {
+		t.Fatalf("canonical URL header = %q", got)
+	}
+}
+
+func TestHandleCanonicalListPageRedirectsFullRequest(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/manage/modules?page=3", nil)
+	recorder := httptest.NewRecorder()
+	if redirected := handleCanonicalListPage(recorder, req, true, "/manage/modules?page=2#manage-module-list"); !redirected {
+		t.Fatal("full request was not redirected")
+	}
+	if recorder.Code != http.StatusSeeOther || recorder.Header().Get("Location") != "/manage/modules?page=2#manage-module-list" {
+		t.Fatalf("response = (%d, %q)", recorder.Code, recorder.Header().Get("Location"))
 	}
 }
 

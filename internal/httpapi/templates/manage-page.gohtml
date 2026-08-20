@@ -50,6 +50,7 @@
       color: var(--muted);
       font-size: 14px;
     }
+    .muted { color: var(--muted); }
     a, .link-button {
       color: var(--accent);
       text-decoration: none;
@@ -331,7 +332,7 @@
         <summary><h2>Upload or Update</h2></summary>
         <div class="panel-disclosure-content">
           <p class="section-lead">Choose an allowed target space and upload a Puppet module archive. Module identity and metadata are read from metadata.json.</p>
-          <form method="post" action="/manage/modules" enctype="multipart/form-data">
+          <form method="post" action="/manage/modules" enctype="multipart/form-data" data-async-mutation data-refresh-target="manage-module-list">
             {{csrfInput $.CSRFToken}}
             <div class="grid">
               <div>
@@ -360,7 +361,7 @@
       <details class="panel-disclosure" data-section-key="add-upstream-module">
         <summary><h2>Add Upstream Module</h2></summary>
         <div class="panel-disclosure-content">
-          <form method="post" action="/manage/upstream">
+          <form method="post" action="/manage/upstream" data-async-mutation data-refresh-target="manage-module-list">
             {{csrfInput $.CSRFToken}}
             <div class="grid">
               <div class="field-full">
@@ -380,46 +381,7 @@
       {{template "list-filter" .Filter}}
       {{if .Modules}}
       {{range .Modules}}
-      {{$row := .}}
-      {{$owner := .Module.Owner}}
-      {{$name := .Module.Name}}
-      {{$latest := .Module.LatestVersion}}
-      <details id="item-{{$owner}}-{{$name}}" class="module-details" data-section-key="{{$owner}}/{{$name}}">
-        <summary class="catalog-item">
-          <span class="item-title">{{$owner}}/{{$name}}</span>
-          <span class="item-subtitle">
-            {{if $latest}}{{$latest}}{{else}}none{{end}}
-          </span>
-          <span class="badge">
-            {{len .Versions}} version{{if ne (len .Versions) 1}}s{{end}}
-          </span>
-          {{if .CanDelete}}
-          <span class="module-actions">
-            <button class="danger-button" type="submit" form="delete-module-{{$owner}}-{{$name}}">Delete module</button>
-          </span>
-          {{end}}
-        </summary>
-        {{if .CanDelete}}<form id="delete-module-{{$owner}}-{{$name}}" method="post" action="/manage/modules/{{$owner}}/{{$name}}/delete" hidden>{{csrfInput $.CSRFToken}}</form>{{end}}
-        <div class="release-list">
-          {{range .Versions}}
-          <div class="release-version{{if .Latest}} is-latest{{else if .Active}} is-active{{end}}">
-            {{.Version}}
-            {{if .Latest}}
-            <span class="usage-badge">latest</span>
-            {{end}}
-            {{if .Active}}
-            <span class="usage-badge">in use</span>
-            {{end}}
-            {{if and (not .Latest) (not .Active) (or $.Principal.CanAdmin $.Principal.CanManageTeam)}}
-            <form method="post" action="/manage/modules/{{$row.Module.Owner}}/{{$row.Module.Name}}/versions/{{.Version}}/delete">
-              {{csrfInput $.CSRFToken}}
-              <button class="release-danger-button" type="submit">Delete</button>
-            </form>
-            {{end}}
-          </div>
-          {{end}}
-        </div>
-      </details>
+      {{template "manage-module-card" .}}
       {{end}}
       {{else}}
       <div class="empty">No modules in this scope.</div>

@@ -5,6 +5,7 @@
       const storagePrefix = "puppet-forge:page-size:";
       const requests = new Map();
       const inputTimers = new WeakMap();
+      const pendingMutations = new WeakSet();
       const asyncLists = () => Array.from(document.querySelectorAll("[data-async-list][id]"));
       const asyncList = (id) => id ? document.getElementById(id) : null;
       const targetForForm = (form) => form.dataset.asyncFilter || form.closest("[data-async-list]")?.id || "";
@@ -54,11 +55,13 @@
        * @param {boolean} [options.forceOpen]
        * @param {string} [options.history]
        * @param {string} [options.focusName]
+       * @param {string | URL} [options.fallbackURL]
        */
       const refreshList = async (targetID, requestURL, options = {}) => {
         const current = asyncList(targetID);
-        if (!current) return;
+        if (!current) return null;
         const url = requestURL.toString();
+        const fallbackURL = options.fallbackURL ? options.fallbackURL.toString() : url;
         requests.get(targetID)?.abort();
         const request = new AbortController();
         requests.set(targetID, request);
@@ -70,11 +73,11 @@
           });
           if (requests.get(targetID) !== request) return;
           if (response.redirected) {
-            window.location.assign(response.url);
+            window.location.assign(fallbackURL);
             return;
           }
           if (!response.ok) {
-            window.location.assign(url);
+            window.location.assign(fallbackURL);
             return;
           }
           const responseText = await response.text();
@@ -82,12 +85,13 @@
           const nextPage = new DOMParser().parseFromString(responseText, "text/html");
           const replacement = nextPage.getElementById(targetID);
           if (!replacement) {
-            window.location.assign(url);
+            window.location.assign(fallbackURL);
             return;
           }
           const updated = replaceList(current, replacement, options.forceOpen === true);
-          if (options.history === "push") window.history.pushState(null, "", url);
-          if (options.history === "replace") window.history.replaceState(null, "", url);
+          const canonicalURL = response.headers.get("X-Puppet-Forge-Canonical-URL") || url;
+          if (options.history === "push") window.history.pushState(null, "", canonicalURL);
+          if (options.history === "replace" || canonicalURL !== url) window.history.replaceState(null, "", canonicalURL);
           if (options.focusName) {
             const input = updated.querySelector(`[name="${CSS.escape(options.focusName)}"]`);
             if (input instanceof HTMLInputElement) {
@@ -95,8 +99,10 @@
               input.setSelectionRange(input.value.length, input.value.length);
             }
           }
+          return updated;
         } catch (error) {
-          if (requests.get(targetID) === request && error.name !== "AbortError") window.location.assign(url);
+          if (requests.get(targetID) === request && error.name !== "AbortError") window.location.assign(fallbackURL);
+          return null;
         } finally {
           if (requests.get(targetID) === request) {
             requests.delete(targetID);
@@ -110,8 +116,78 @@
         await Promise.all(ids.map((id) => refreshList(id, new URL(window.location.href))));
       };
 
+      const showMutationNotice = (source, message, failed) => {
+        const scope = source.closest(".panel, .section-content, .module-details") || source.parentElement;
+        if (!scope) return;
+        const noticeScope = scope.matches(".module-details") ? scope.querySelector(":scope > .module-notice-slot") : scope;
+        if (!noticeScope) return;
+        noticeScope.querySelector(":scope > .async-mutation-notice")?.remove();
+        const notice = document.createElement("div");
+        notice.className = `notice ${failed ? "error" : "ok"} async-mutation-notice`;
+        notice.setAttribute("role", failed ? "alert" : "status");
+        notice.textContent = message;
+        noticeScope.prepend(notice);
+        window.setTimeout(() => notice.remove(), failed ? 12000 : 5000);
+      };
+
+      const submitMutation = async (form) => {
+        const buttons = Array.from(form.querySelectorAll('button[type="submit"], input[type="submit"]'));
+        buttons.forEach((button) => { button.disabled = true; });
+        const containingList = form.closest("[data-async-list][id]");
+        try {
+          const response = await window.fetch(form.action, {
+            method: (form.method || "post").toUpperCase(),
+            body: new FormData(form),
+            headers: { Accept: "application/json", "X-Puppet-Forge-Async-Mutation": "true" },
+          });
+          if (response.redirected) {
+            window.location.assign(response.url);
+            return;
+          }
+          if (!response.ok) {
+            let message = `Request failed (${response.status})`;
+            try {
+              const payload = await response.json();
+              if (typeof payload.error === "string" && payload.error) message = payload.error;
+            } catch (_) {}
+            showMutationNotice(form, message, true);
+            return;
+          }
+          const removeTarget = form.dataset.removeTarget || response.headers.get("X-Puppet-Forge-Remove") || "";
+          const refreshTarget = form.dataset.refreshTarget || response.headers.get("X-Puppet-Forge-Refresh") || "";
+          const message = response.headers.get("X-Puppet-Forge-Message") || "Updated";
+          if (form.enctype === "multipart/form-data") form.reset();
+          if (removeTarget) document.getElementById(removeTarget)?.remove();
+          let noticeTarget = containingList;
+          if (refreshTarget) {
+            const target = asyncList(refreshTarget);
+            const requestURL = target?.getAttribute("data-module-card-url") || window.location.href;
+            await refreshList(refreshTarget, new URL(requestURL, window.location.href), {
+              forceOpen: true,
+              fallbackURL: window.location.href,
+            });
+            noticeTarget = asyncList(refreshTarget);
+          } else if (removeTarget && containingList?.id) {
+            noticeTarget = await refreshList(containingList.id, new URL(window.location.href), { forceOpen: true });
+          }
+          showMutationNotice(noticeTarget instanceof Element ? noticeTarget : form, message, false);
+        } catch (_) {
+          showMutationNotice(form, "Request failed", true);
+        } finally {
+          buttons.forEach((button) => { button.disabled = false; });
+        }
+      };
+
       document.addEventListener("submit", (event) => {
-        if (!(event.target instanceof HTMLFormElement) || !event.target.dataset.asyncFilter) return;
+        if (!(event.target instanceof HTMLFormElement)) return;
+        if (event.target.hasAttribute("data-async-mutation")) {
+          event.preventDefault();
+          if (pendingMutations.has(event.target)) return;
+          pendingMutations.add(event.target);
+          submitMutation(event.target).finally(() => pendingMutations.delete(event.target));
+          return;
+        }
+        if (!event.target.dataset.asyncFilter) return;
         event.preventDefault();
         const input = event.target.querySelector('input[type="search"]');
         refreshList(targetForForm(event.target), formURL(event.target), {
@@ -153,6 +229,15 @@
         event.stopImmediatePropagation();
         persistPageSize(form, event.target.value);
         refreshList(targetID, formURL(form), { history: "replace", forceOpen: true });
+      }, true);
+      document.addEventListener("toggle", (event) => {
+        if (!(event.target instanceof HTMLDetailsElement)) return;
+        const card = event.target;
+        if (!card.open || card.dataset.moduleCardLoaded || !card.id || !card.dataset.moduleCardUrl) return;
+        refreshList(card.id, new URL(card.dataset.moduleCardUrl, window.location.href), {
+          forceOpen: true,
+          fallbackURL: window.location.href,
+        });
       }, true);
       window.addEventListener("popstate", () => {
         refreshAllLists().catch(() => window.location.reload());

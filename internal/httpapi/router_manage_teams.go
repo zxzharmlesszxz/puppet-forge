@@ -54,6 +54,12 @@ func (r *Router) manageTeamsPage(w http.ResponseWriter, req *http.Request) {
 	}
 
 	rows := filterManageTeamSummaries(manageTeamSummaries(configs, moduleCounts, principal), query)
+	canonicalPage, changed := normalizedListPage(page, pageSize, len(rows))
+	canonicalURL := manageListPageURL("/manage/teams", req.URL.Query(), "teams-list", canonicalPage)
+	if handleCanonicalListPage(w, req, changed, canonicalURL) {
+		return
+	}
+	page = canonicalPage
 	pagination, err := manageListPagination("/manage/teams", req.URL.Query(), "teams-list", page, pageSize, len(rows))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -169,8 +175,10 @@ func (r *Router) manageTeamPage(w http.ResponseWriter, req *http.Request) {
 
 	switch section {
 	case manageTeamTokensSection:
-		if err := populateManageTeamTokens(req, teamBasePath+"/tokens", &data); err != nil {
+		if redirected, err := populateManageTeamTokens(w, req, teamBasePath+"/tokens", &data); err != nil {
 			writeError(w, http.StatusBadRequest, err)
+			return
+		} else if redirected {
 			return
 		}
 	case manageTeamModulesSection:
@@ -179,8 +187,10 @@ func (r *Router) manageTeamPage(w http.ResponseWriter, req *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		if err := r.populateManageTeamModules(req, principal, teamBasePath+"/modules", page, pageSize, &data); err != nil {
+		if redirected, err := r.populateManageTeamModules(w, req, principal, teamBasePath+"/modules", page, pageSize, &data); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
+			return
+		} else if redirected {
 			return
 		}
 	}
@@ -192,6 +202,9 @@ func (r *Router) manageTeamPage(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data.CSRFToken = csrfToken
+	if data.ShowModules {
+		configureManageModuleRows(data.Modules, csrfToken, teamBasePath+"/modules")
+	}
 	data.Navigation = r.manageNavigation(req, principal, csrfToken, "team-"+string(section), team)
 	executeHTMLTemplate(w, manageTeamTemplate, data)
 }
@@ -214,14 +227,14 @@ func parseManageTeamPath(path string) (string, manageTeamSection, bool, bool) {
 	}
 }
 
-func populateManageTeamTokens(req *http.Request, basePath string, data *manageTeamData) error {
+func populateManageTeamTokens(w http.ResponseWriter, req *http.Request, basePath string, data *manageTeamData) (bool, error) {
 	tokenPage, err := requestedTokenPage(req, "token_page")
 	if err != nil {
-		return err
+		return false, err
 	}
 	tokenHistoryPage, err := requestedTokenPage(req, "history_page")
 	if err != nil {
-		return err
+		return false, err
 	}
 	tokenPageSize := requestedPageSize(req, basePath, "token_per_page", "active-tokens", tokenHistoryPageSize)
 	tokenHistoryPageSize := requestedPageSize(req, basePath, "history_per_page", "token-history", tokenHistoryPageSize)
@@ -229,6 +242,20 @@ func populateManageTeamTokens(req *http.Request, basePath string, data *manageTe
 	data.ActiveTokenQuery = strings.TrimSpace(req.URL.Query().Get("active_token_query"))
 	activeTokens := filterTokens(data.Team.Tokens, data.ActiveTokenQuery)
 	tokenTotal := len(activeTokens)
+	canonicalTokenPage, tokenPageChanged := normalizedListPage(tokenPage, tokenPageSize, tokenTotal)
+	canonicalHistoryPage, historyPageChanged := normalizedListPage(tokenHistoryPage, tokenHistoryPageSize, len(filterTokens(data.Team.TokenHistory, strings.TrimSpace(req.URL.Query().Get("token_query")))))
+	if tokenPageChanged || historyPageChanged {
+		anchor := "token-history"
+		if tokenPageChanged {
+			anchor = "active-tokens"
+		}
+		canonicalURL := tokenPagesURL(basePath, req.URL.Query(), canonicalTokenPage, canonicalHistoryPage, anchor)
+		if handleCanonicalListPage(w, req, true, canonicalURL) {
+			return true, nil
+		}
+		tokenPage = canonicalTokenPage
+		tokenHistoryPage = canonicalHistoryPage
+	}
 	data.Team.Tokens = pageItems(activeTokens, tokenPage, tokenPageSize)
 	tokenHistory := data.Team.TokenHistory
 	data.TokenHistoryQuery = strings.TrimSpace(req.URL.Query().Get("token_query"))
@@ -252,10 +279,10 @@ func populateManageTeamTokens(req *http.Request, basePath string, data *manageTe
 		"Filter revoked and expired tokens", "token_query", "Filter by role, status, prefix, or name",
 		data.TokenHistoryQuery, tokenHistoryClearURL, tokenHistoryParams...,
 	)
-	return nil
+	return false, nil
 }
 
-func (r *Router) populateManageTeamModules(req *http.Request, principal auth.Principal, basePath string, page, pageSize int, data *manageTeamData) error {
+func (r *Router) populateManageTeamModules(w http.ResponseWriter, req *http.Request, principal auth.Principal, basePath string, page, pageSize int, data *manageTeamData) (bool, error) {
 	for _, space := range data.Spaces {
 		if principal.CanPublishOwner(space) {
 			data.PublishSpaces = append(data.PublishSpaces, space)
@@ -264,7 +291,19 @@ func (r *Router) populateManageTeamModules(req *http.Request, principal auth.Pri
 	data.Query = strings.TrimSpace(req.URL.Query().Get("q"))
 	modules, total, err := r.loadManageModuleRows(req.Context(), principal, stringSet(data.Spaces), data.Query, page, pageSize)
 	if err != nil {
-		return err
+		return false, err
+	}
+	canonicalPage, changed := normalizedListPage(page, pageSize, total)
+	canonicalURL := managePageURLWithValues(basePath, req.URL.Query(), canonicalPage, manageTeamModuleListTarget)
+	if handleCanonicalListPage(w, req, changed, canonicalURL) {
+		return true, nil
+	}
+	if changed {
+		page = canonicalPage
+		modules, total, err = r.loadManageModuleRows(req.Context(), principal, stringSet(data.Spaces), data.Query, page, pageSize)
+		if err != nil {
+			return false, err
+		}
 	}
 	data.Modules = modules
 	data.Pagination = managePaginationForRequest(basePath, req.URL.Query(), manageTeamModuleListTarget, manageTeamModuleListTarget, page, pageSize, total)
@@ -272,7 +311,7 @@ func (r *Router) populateManageTeamModules(req *http.Request, principal auth.Pri
 		"team-module-filter", "team-catalog-query", basePath, manageTeamModuleListTarget,
 		"Filter modules", "q", "Filter by owner/name", data.Query, basePath,
 	)
-	return nil
+	return false, nil
 }
 
 func filterTokens(tokens []accessTokenFormRow, query string) []accessTokenFormRow {
@@ -350,6 +389,29 @@ func tokenPagination(basePath string, query url.Values, pageParameter, sizeParam
 	}
 	pagination := paginationFor(page, pageSize, total, pageURL)
 	return configurePageSize(pagination, query, basePath, sizeParameter, pageParameter, anchor, anchor)
+}
+
+func tokenPagesURL(basePath string, query url.Values, tokenPage, historyPage int, anchor string) string {
+	values := url.Values{}
+	for key, entries := range query {
+		if key == "token_page" || key == "history_page" || isPageSizeParameter(key) || key == "message" || key == "error" {
+			continue
+		}
+		for _, entry := range entries {
+			values.Add(key, entry)
+		}
+	}
+	if tokenPage > 1 {
+		values.Set("token_page", strconv.Itoa(tokenPage))
+	}
+	if historyPage > 1 {
+		values.Set("history_page", strconv.Itoa(historyPage))
+	}
+	result := basePath
+	if encoded := values.Encode(); encoded != "" {
+		result += "?" + encoded
+	}
+	return result + "#" + anchor
 }
 
 func teamPublishSpaces(cfg auth.TeamConfig) []string {

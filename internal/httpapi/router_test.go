@@ -1317,7 +1317,14 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 	client := &http.Client{Transport: server.Client().Transport}
 	client.Jar = jar
 	postManageToken(t, client, server.URL, "admin-token")
-	body := getBody(t, client, server.URL+"/manage/modules")
+	pageBody := getBody(t, client, server.URL+"/manage/modules")
+	if !strings.Contains(pageBody, `data-module-card-url="/manage/modules/teamname/apache/card"`) {
+		t.Fatalf("manage page does not expose lazy module card endpoint:\n%s", pageBody)
+	}
+	if strings.Contains(pageBody, "in use") {
+		t.Fatalf("manage page eagerly renders release usage:\n%s", pageBody)
+	}
+	body := getBody(t, client, server.URL+"/manage/modules/teamname/apache/card")
 
 	if strings.Contains(body, "/manage/modules/teamname/apache/versions/1.2.3/delete") {
 		t.Fatalf("manage page exposes delete for active release:\n%s", body)
@@ -1354,8 +1361,8 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 		`.release-version:has(.release-danger-button:hover)`,
 		`.release-version:has(.release-danger-button:focus-visible)`,
 	} {
-		if !strings.Contains(body, wantStyle) {
-			t.Fatalf("manage page does not render release highlight style %q:\n%s", wantStyle, body)
+		if !strings.Contains(pageBody, wantStyle) {
+			t.Fatalf("manage page does not render release highlight style %q:\n%s", wantStyle, pageBody)
 		}
 	}
 	if strings.Contains(body, `class="link-button danger" type="submit">delete</button>`) {
@@ -1778,7 +1785,7 @@ func TestUpstreamV3FileDownloadMarksReleaseUsed(t *testing.T) {
 	client := &http.Client{Transport: server.Client().Transport}
 	client.Jar = jar
 	postManageToken(t, client, server.URL, "admin-token")
-	body := getBody(t, client, server.URL+"/manage/modules")
+	body := getBody(t, client, server.URL+"/manage/modules/teamname/apache/card")
 
 	if !strings.Contains(body, "in use") {
 		t.Fatalf("manage page does not mark upstream v3 download as active:\n%s", body)
@@ -1893,7 +1900,7 @@ func TestUpstreamV3ReleaseUsesLocalFileURIAndMarksSelectedVersionActive(t *testi
 	client := &http.Client{Transport: server.Client().Transport}
 	client.Jar = jar
 	postManageToken(t, client, server.URL, "admin-token")
-	body := getBody(t, client, server.URL+"/manage/modules")
+	body := getBody(t, client, server.URL+"/manage/modules/puppetlabs/concat/card")
 
 	if !strings.Contains(body, "9.1.0") || !strings.Contains(body, "in use") {
 		t.Fatalf("manage page does not mark selected upstream release active:\n%s", body)
@@ -1963,7 +1970,7 @@ func TestV3ReleaseRequestMarksSelectedVersionActive(t *testing.T) {
 	client := &http.Client{Transport: server.Client().Transport}
 	client.Jar = jar
 	postManageToken(t, client, server.URL, "admin-token")
-	body := getBody(t, client, server.URL+"/manage/modules")
+	body := getBody(t, client, server.URL+"/manage/modules/puppetlabs/concat/card")
 
 	if !strings.Contains(body, "9.1.0") || !strings.Contains(body, "in use") {
 		t.Fatalf("manage page does not mark requested release active:\n%s", body)
@@ -2791,6 +2798,16 @@ func TestLoadManageModuleRowsPaginatesFilteredStoreResults(t *testing.T) {
 	if total != 55 || len(first) != manageModulePageSize {
 		t.Fatalf("first manage page rows = %d, total = %d", len(first), total)
 	}
+	if first[0].ReleaseCount != 1 || len(first[0].Versions) != 0 || first[0].VersionsLoaded {
+		t.Fatalf("initial manage row eagerly loaded releases: %#v", first[0])
+	}
+	card, err := router.loadManageModuleCard(ctx, principal, first[0].Module.Owner, first[0].Module.Name)
+	if err != nil {
+		t.Fatalf("loadManageModuleCard() error = %v", err)
+	}
+	if !card.VersionsLoaded || card.ReleaseCount != 1 || len(card.Versions) != 1 {
+		t.Fatalf("loaded manage module card = %#v", card)
+	}
 
 	second, total, err := router.loadManageModuleRows(ctx, principal, nil, "teamname/module-", 2, manageModulePageSize)
 	if err != nil {
@@ -2814,6 +2831,42 @@ func TestManagePaginationPreservesSearchQuery(t *testing.T) {
 	}
 	if pagination.NextURL != "/manage/modules?page=3&q=teamname%2Fweb+server" {
 		t.Fatalf("NextURL = %q", pagination.NextURL)
+	}
+}
+
+func TestAsyncManageMutationSuccessReturnsRefreshContract(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "/manage/modules", nil)
+	req.Header.Set("X-Puppet-Forge-Async-Mutation", "true")
+	rec := httptest.NewRecorder()
+	respondManageMutationSuccess(rec, req, "/manage/modules", "module published", manageModuleListTarget, "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if got := rec.Header().Get("X-Puppet-Forge-Refresh"); got != manageModuleListTarget {
+		t.Fatalf("X-Puppet-Forge-Refresh = %q", got)
+	}
+	if got := rec.Header().Get("X-Puppet-Forge-Message"); got != "module published" {
+		t.Fatalf("X-Puppet-Forge-Message = %q", got)
+	}
+}
+
+func TestAsyncManageMutationErrorReturnsJSONInsteadOfRedirect(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "/manage/modules", nil)
+	req.Header.Set("X-Puppet-Forge-Async-Mutation", "true")
+	rec := httptest.NewRecorder()
+	respondManageMutationHTTPError(rec, req, http.StatusForbidden, errors.New("space access required"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+	if location := rec.Header().Get("Location"); location != "" {
+		t.Fatalf("unexpected redirect location %q", location)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"error":"space access required"`) {
+		t.Fatalf("response body = %s", body)
 	}
 }
 
@@ -2900,19 +2953,21 @@ func TestManageRequestSourceCompatibleWithCSRF(t *testing.T) {
 		origin     string
 		fetchSite  string
 		publicBase string
+		allowed    []string
 		want       bool
 	}{
 		{name: "direct HTTP", target: "http://forge.example/manage", origin: "http://forge.example", want: true},
 		{name: "direct HTTPS", target: "https://forge.example/manage", origin: "https://forge.example", want: true},
 		{name: "TLS terminated before service", target: "http://forge.example/manage", origin: "https://forge.example", want: true},
 		{name: "HTTPS downgrade rejected", target: "https://forge.example/manage", origin: "http://forge.example", want: false},
-		{name: "ingress alias accepted with csrf", target: "http://internal:8080/manage", origin: "https://forge.example", want: true},
+		{name: "ingress alias accepted when public host is allowed", target: "http://internal:8080/manage", origin: "https://forge.example", allowed: []string{"forge.example"}, want: true},
+		{name: "unconfigured ingress alias rejected", target: "http://internal:8080/manage", origin: "https://forge.example", want: false},
 		{name: "browser confirmed same origin", target: "http://internal:8080/manage", origin: "http://forge.example", fetchSite: "same-origin", want: true},
 		{name: "browser reported cross site", target: "http://forge.example/manage", origin: "http://forge.example", fetchSite: "cross-site", want: false},
 		{name: "opaque browser origin relies on csrf token", target: "http://forge.example/manage", origin: "null", want: true},
 		{name: "opaque cross-site origin rejected", target: "http://forge.example/manage", origin: "null", fetchSite: "cross-site", want: false},
 		{name: "browser same origin survives proxy scheme mismatch", target: "https://internal/manage", origin: "http://forge.example", fetchSite: "same-origin", want: true},
-		{name: "public port alias accepted with csrf", target: "http://forge.example:8080/manage", origin: "https://forge.example", want: true},
+		{name: "public port alias accepted when public host is allowed", target: "http://forge.example:8080/manage", origin: "https://forge.example", allowed: []string{"forge.example"}, want: true},
 		{name: "non HTTP origin rejected", target: "http://forge.example/manage", origin: "file://forge.example", want: false},
 		{name: "non HTTP origin rejected despite fetch metadata", target: "http://internal/manage", origin: "file://forge.example", fetchSite: "same-origin", want: false},
 		{name: "preserved ingress host", target: "http://service.namespace.svc/manage", host: "forge.example", origin: "https://forge.example", want: true},
@@ -2930,7 +2985,7 @@ func TestManageRequestSourceCompatibleWithCSRF(t *testing.T) {
 			if tc.fetchSite != "" {
 				req.Header.Set("Sec-Fetch-Site", tc.fetchSite)
 			}
-			if got := manageRequestSourceCompatibleWithCSRF(req, tc.publicBase); got != tc.want {
+			if got := manageRequestSourceCompatibleWithCSRF(req, tc.publicBase, tc.allowed); got != tc.want {
 				t.Fatalf("manageRequestSourceCompatibleWithCSRF() = %t, want %t", got, tc.want)
 			}
 		})
@@ -4419,7 +4474,7 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 		if !strings.Contains(body, `class="danger-button" type="submit" form="delete-module-teamname-apache">Delete module</button>`) {
 			t.Fatalf("manage page does not render module delete as a danger button for %#v:\n%s", principal, body)
 		}
-		if !strings.Contains(body, `<form id="delete-module-teamname-apache" method="post" action="/manage/modules/teamname/apache/delete" hidden>`) {
+		if !strings.Contains(body, `<form id="delete-module-teamname-apache" method="post" action="/manage/modules/teamname/apache/delete" hidden`) {
 			t.Fatalf("manage page does not associate module delete button with an external form for %#v:\n%s", principal, body)
 		}
 		for _, wantStyle := range []string{
@@ -4851,7 +4906,7 @@ func TestManageModulesRemembersOpenSections(t *testing.T) {
 
 	body := getBody(t, client, server.URL+"/manage/modules")
 	for _, want := range []string{
-		`data-section-key="teamname/apache"`,
+		`data-section-key="module:teamname/apache"`,
 		`puppet-forge:manage:open-sections`,
 		`window.localStorage.setItem(storageKey`,
 		`document.addEventListener("submit", saveOpenSections)`,
@@ -5327,7 +5382,7 @@ func getV3ModulesAndManagePage(t *testing.T, server *httptest.Server) string {
 	client := &http.Client{Transport: server.Client().Transport}
 	client.Jar = jar
 	postManageToken(t, client, server.URL, "admin-token")
-	return getBody(t, client, server.URL+"/manage/modules")
+	return getBody(t, client, server.URL+"/manage/modules/stm/debconf/card")
 }
 
 func TestEnsureManageCSRFTokenReturnsErrorWhenRandomGenerationFails(t *testing.T) {
