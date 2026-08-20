@@ -31,6 +31,62 @@ type authorizerResult struct {
 	err        error
 }
 
+func newSQLiteStoreForTests(t *testing.T) *store.SQLiteStore {
+	t.Helper()
+	baseStore, err := store.NewSQLiteStore("sqlite://:memory:")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(baseStore.Close)
+	return baseStore
+}
+
+func blockingStoreRouter(ctx *testing.T) *blockingAccessConfigStore {
+	baseStore := newSQLiteStoreForTests(ctx)
+	return &blockingAccessConfigStore{
+		SQLiteStore: baseStore,
+		started:     make(chan struct{}, 1),
+		release:     make(chan struct{}),
+	}
+}
+
+func mustNewAuthorizer(t *testing.T, team, role, token string) *auth.Authorizer {
+	t.Helper()
+	var cfg []auth.TeamConfig
+	switch role {
+	case "read":
+		cfg = []auth.TeamConfig{{Team: team, ReadTokens: []string{token}}}
+	case "publish":
+		cfg = []auth.TeamConfig{{Team: team, PublishTokens: []string{token}}}
+	default:
+		t.Fatalf("unsupported role %q", role)
+	}
+	authorizer, err := auth.NewAuthorizer(cfg)
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
+	}
+	return authorizer
+}
+
+func makeAuthorizerRouter(baseStore store.ModuleStore, initial *auth.Authorizer, refreshedAgo time.Duration) *Router {
+	return &Router{
+		modules:             service.NewModuleService(baseStore, nil, "modules", nil),
+		authorizer:          initial,
+		authorizerRefreshed: time.Now().Add(refreshedAgo),
+		refreshAccessConfig: true,
+	}
+}
+
+func failingAccessStoreRouter(ctx *testing.T, initial *auth.Authorizer, refreshedAgo time.Duration) *Router {
+	baseStore := newSQLiteStoreForTests(ctx)
+	return &Router{
+		modules:             service.NewModuleService(&failingAccessConfigStore{SQLiteStore: baseStore, err: errors.New("database unavailable")}, nil, "modules", nil),
+		authorizer:          initial,
+		authorizerRefreshed: time.Now().Add(refreshedAgo),
+		refreshAccessConfig: true,
+	}
+}
+
 func (s *blockingAccessConfigStore) LoadTeamConfigs(ctx context.Context) ([]auth.TeamConfig, error) {
 	select {
 	case s.started <- struct{}{}:
@@ -44,41 +100,25 @@ func (s *blockingAccessConfigStore) LoadTeamConfigs(ctx context.Context) ([]auth
 	}
 }
 
+func asyncCurrentAuthorizer(router *Router) <-chan authorizerResult {
+	done := make(chan authorizerResult, 1)
+	go func() {
+		authorizer, err := router.currentAuthorizer(context.Background())
+		done <- authorizerResult{authorizer: authorizer, err: err}
+	}()
+	return done
+}
+
 func TestCurrentAuthorizerUsesStaleSnapshotWhileRefreshIsInProgress(t *testing.T) {
 	t.Parallel()
 
-	baseStore, err := store.NewSQLiteStore("sqlite://:memory:")
-	if err != nil {
-		t.Fatalf("NewSQLiteStore() error = %v", err)
-	}
-	t.Cleanup(baseStore.Close)
-	blockingStore := &blockingAccessConfigStore{
-		SQLiteStore: baseStore,
-		started:     make(chan struct{}, 1),
-		release:     make(chan struct{}),
-	}
-	initial, err := auth.NewAuthorizer([]auth.TeamConfig{{Team: "teamname", ReadTokens: []string{"read-token"}}})
-	if err != nil {
-		t.Fatalf("NewAuthorizer() error = %v", err)
-	}
-	router := &Router{
-		modules:             service.NewModuleService(blockingStore, nil, "modules", nil),
-		authorizer:          initial,
-		authorizerRefreshed: time.Now().Add(-2 * accessConfigRefreshTTL),
-		refreshAccessConfig: true,
-	}
-	firstDone := make(chan authorizerResult, 1)
-	go func() {
-		authorizer, err := router.currentAuthorizer(context.Background())
-		firstDone <- authorizerResult{authorizer: authorizer, err: err}
-	}()
+	blockingStore := blockingStoreRouter(t)
+	initial := mustNewAuthorizer(t, "teamname", "read", "read-token")
+	router := makeAuthorizerRouter(blockingStore, initial, -2*accessConfigRefreshTTL)
+	firstDone := asyncCurrentAuthorizer(router)
 	<-blockingStore.started
 
-	secondDone := make(chan authorizerResult, 1)
-	go func() {
-		authorizer, err := router.currentAuthorizer(context.Background())
-		secondDone <- authorizerResult{authorizer: authorizer, err: err}
-	}()
+	secondDone := asyncCurrentAuthorizer(router)
 	select {
 	case result := <-secondDone:
 		if result.err != nil {
@@ -102,31 +142,10 @@ func TestCurrentAuthorizerUsesStaleSnapshotWhileRefreshIsInProgress(t *testing.T
 func TestCurrentAuthorizerRejectsExpiredSnapshotWhileRefreshIsInProgress(t *testing.T) {
 	t.Parallel()
 
-	baseStore, err := store.NewSQLiteStore("sqlite://:memory:")
-	if err != nil {
-		t.Fatalf("NewSQLiteStore() error = %v", err)
-	}
-	t.Cleanup(baseStore.Close)
-	blockingStore := &blockingAccessConfigStore{
-		SQLiteStore: baseStore,
-		started:     make(chan struct{}, 1),
-		release:     make(chan struct{}),
-	}
-	initial, err := auth.NewAuthorizer([]auth.TeamConfig{{Team: "teamname", ReadTokens: []string{"read-token"}}})
-	if err != nil {
-		t.Fatalf("NewAuthorizer() error = %v", err)
-	}
-	router := &Router{
-		modules:             service.NewModuleService(blockingStore, nil, "modules", nil),
-		authorizer:          initial,
-		authorizerRefreshed: time.Now().Add(-accessConfigMaxStaleTTL - time.Second),
-		refreshAccessConfig: true,
-	}
-	firstDone := make(chan authorizerResult, 1)
-	go func() {
-		authorizer, err := router.currentAuthorizer(context.Background())
-		firstDone <- authorizerResult{authorizer: authorizer, err: err}
-	}()
+	blockingStore := blockingStoreRouter(t)
+	initial := mustNewAuthorizer(t, "teamname", "read", "read-token")
+	router := makeAuthorizerRouter(blockingStore, initial, -accessConfigMaxStaleTTL-time.Second)
+	firstDone := asyncCurrentAuthorizer(router)
 	<-blockingStore.started
 
 	got, err := router.currentAuthorizer(context.Background())
@@ -151,21 +170,8 @@ func TestCurrentAuthorizerRejectsExpiredSnapshotWhileRefreshIsInProgress(t *test
 func TestCurrentAuthorizerRejectsExpiredSnapshotAfterRefreshFailure(t *testing.T) {
 	t.Parallel()
 
-	baseStore, err := store.NewSQLiteStore("sqlite://:memory:")
-	if err != nil {
-		t.Fatalf("NewSQLiteStore() error = %v", err)
-	}
-	t.Cleanup(baseStore.Close)
-	initial, err := auth.NewAuthorizer([]auth.TeamConfig{{Team: "teamname", PublishTokens: []string{"publish-token"}}})
-	if err != nil {
-		t.Fatalf("NewAuthorizer() error = %v", err)
-	}
-	router := &Router{
-		modules:             service.NewModuleService(&failingAccessConfigStore{SQLiteStore: baseStore, err: errors.New("database unavailable")}, nil, "modules", nil),
-		authorizer:          initial,
-		authorizerRefreshed: time.Now().Add(-accessConfigMaxStaleTTL - time.Second),
-		refreshAccessConfig: true,
-	}
+	initial := mustNewAuthorizer(t, "teamname", "publish", "publish-token")
+	router := failingAccessStoreRouter(t, initial, -accessConfigMaxStaleTTL-time.Second)
 
 	got, err := router.currentAuthorizer(context.Background())
 	if err == nil {
@@ -179,11 +185,7 @@ func TestCurrentAuthorizerRejectsExpiredSnapshotAfterRefreshFailure(t *testing.T
 func TestRefreshManageAuthorizerFailsClosed(t *testing.T) {
 	t.Parallel()
 
-	baseStore, err := store.NewSQLiteStore("sqlite://:memory:")
-	if err != nil {
-		t.Fatalf("NewSQLiteStore() error = %v", err)
-	}
-	t.Cleanup(baseStore.Close)
+	baseStore := newSQLiteStoreForTests(t)
 	router := &Router{
 		modules:             service.NewModuleService(&failingAccessConfigStore{SQLiteStore: baseStore, err: errors.New("database unavailable")}, nil, "modules", nil),
 		refreshAccessConfig: true,

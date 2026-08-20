@@ -307,7 +307,7 @@ func clearManageCSRFToken(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) requireManageCSRF(w http.ResponseWriter, req *http.Request) bool {
-	if allowed, reason := checkManageRequestSourceForCSRF(req, r.publicBaseURL); !allowed {
+	if allowed, reason := checkManageRequestSourceForCSRF(req, r.publicBaseURL, r.allowedPublicHosts); !allowed {
 		slog.Warn("manage csrf source rejected",
 			"request_id", w.Header().Get(requestIDHeader),
 			"reason", reason,
@@ -366,12 +366,12 @@ func (r *Router) requireManageCSRF(w http.ResponseWriter, req *http.Request) boo
 	return true
 }
 
-func manageRequestSourceCompatibleWithCSRF(req *http.Request, publicBaseURL string) bool {
-	allowed, _ := checkManageRequestSourceForCSRF(req, publicBaseURL)
+func manageRequestSourceCompatibleWithCSRF(req *http.Request, publicBaseURL string, allowedPublicHosts ...[]string) bool {
+	allowed, _ := checkManageRequestSourceForCSRF(req, publicBaseURL, allowedPublicHosts...)
 	return allowed
 }
 
-func checkManageRequestSourceForCSRF(req *http.Request, publicBaseURL string) (bool, string) {
+func checkManageRequestSourceForCSRF(req *http.Request, publicBaseURL string, allowedPublicHosts ...[]string) (bool, string) {
 	fetchSite := strings.ToLower(strings.TrimSpace(req.Header.Get("Sec-Fetch-Site")))
 	if fetchSite == "cross-site" {
 		return false, "fetch_site_cross_site"
@@ -412,10 +412,14 @@ func checkManageRequestSourceForCSRF(req *http.Request, publicBaseURL string) (b
 		return false, "source_scheme_downgrade"
 	}
 	if !strings.EqualFold(sourceURL.Host, expectedURL.Host) {
-		// Ingresses may rewrite Host or expose the same service through several
-		// public aliases. The session-bound token checked by requireManageCSRF is
-		// the authorization boundary for that ambiguous case.
-		return true, ""
+		var allowed []string
+		if len(allowedPublicHosts) > 0 {
+			allowed = allowedPublicHosts[0]
+		}
+		if authorityAllowed(sourceURL.Host, allowed) {
+			return true, ""
+		}
+		return false, "source_host_mismatch"
 	}
 	if sourceScheme == expectedScheme {
 		return true, ""

@@ -769,7 +769,8 @@ func TestSafeRedirectPathRejectsProtocolRelativeURLs(t *testing.T) {
 		{name: "encoded backslash URL", next: `/%255c%255cevil.example.com/path`, want: "/"},
 		{name: "encoded control character", next: `/manage%0dlocation`, want: "/"},
 		{name: "invalid escape", next: `/manage%zz`, want: "/"},
-		{name: "encoded local path", next: `/%6danage`, want: `/%6danage`},
+		{name: "encoded local path", next: `/%6danage`, want: `/manage`},
+		{name: "raw local path", next: `/manage`, want: `/manage`},
 	}
 
 	for _, tt := range tests {

@@ -378,7 +378,7 @@ func safeRedirectPath(next string) string {
 			return "/"
 		}
 	}
-	return next
+	return candidate
 }
 
 func (a *OIDCAuth) failState(w http.ResponseWriter, r *http.Request, message string) {
