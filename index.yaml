@@ -2,6 +2,16 @@ apiVersion: v1
 entries:
   puppet-forge:
   - apiVersion: v2
+    appVersion: v0.2.1
+    created: "2026-08-21T00:25:37.142037586Z"
+    description: Helm chart for the Puppet Forge service
+    digest: 6109721958f4414c64b9eadf2a3279b6152f30447e3de475011579576f833f32
+    name: puppet-forge
+    type: application
+    urls:
+    - puppet-forge-0.2.1.tgz
+    version: 0.2.1
+  - apiVersion: v2
     appVersion: v0.2.0
     created: "2026-08-15T12:42:42.806476338Z"
     description: Helm chart for the Puppet Forge service
@@ -51,4 +61,4 @@ entries:
     urls:
     - puppet-forge-0.1.0.tgz
     version: 0.1.0
-generated: "2026-08-15T12:42:42.806499821Z"
+generated: "2026-08-21T00:25:37.142061711Z"
