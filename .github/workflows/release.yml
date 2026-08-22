@@ -14,7 +14,7 @@ concurrency:
 env:
   RELEASE_PLATFORMS: "linux/amd64 linux/arm64 darwin/amd64 darwin/arm64"
   DOCKER_PLATFORMS: "linux/amd64,linux/arm64"
-  GO_VERSION: "1.26.6"
+  GO_VERSION: "1.27.0"
 
 permissions:
   contents: read
@@ -57,7 +57,7 @@ jobs:
       - preflight
     uses: ./.github/workflows/checks.yml
     with:
-      go-version: "1.26.6"
+      go-version: "1.27.0"
       release-platforms: "linux/amd64 linux/arm64 darwin/amd64 darwin/arm64"
 
   release:

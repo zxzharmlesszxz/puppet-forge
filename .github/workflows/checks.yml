@@ -7,7 +7,7 @@ on:
     inputs:
       go-version:
         type: string
-        default: "1.26.6"
+        default: "1.27.0"
       release-platforms:
         type: string
         default: "linux/amd64 linux/arm64 darwin/amd64 darwin/arm64"
