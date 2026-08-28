@@ -25,7 +25,8 @@ LABEL org.opencontainers.image.title="puppet-forge" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
 
-RUN apk add --no-cache ca-certificates \
+RUN apk upgrade --no-cache \
+    && apk add --no-cache ca-certificates \
     && addgroup -S -g 10001 forge \
     && adduser -S -D -H -u 10001 -G forge forge
 
