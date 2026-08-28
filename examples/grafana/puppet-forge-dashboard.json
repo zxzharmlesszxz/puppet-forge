@@ -2158,91 +2158,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "round(sum by (result) (increase(puppet_forge_upstream_artifact_integrity_total{job=~\"$job\"}[$__range])))",
-                        "legendFormat": "{{result}}",
-                        "range": false,
-                        "instant": true
-                      }
-                    },
-                    "refId": "A",
-                    "hidden": false
-                  }
-                }
-              ],
-              "transformations": [],
-              "queryOptions": {}
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "stat",
-            "version": "13.0.1",
-            "spec": {
-              "options": {
-                "colorMode": "background",
-                "graphMode": "none",
-                "justifyMode": "center",
-                "orientation": "horizontal",
-                "percentChangeColorMode": "standard",
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "fields": "",
-                  "values": false
-                },
-                "showPercentChange": false,
-                "textMode": "auto",
-                "wideLayout": true
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "mappings": [],
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "value": 0,
-                        "color": "green"
-                      }
-                    ]
-                  },
-                  "unit": "short"
-                },
-                "overrides": []
-              }
-            }
-          }
-        }
-      },
-      "panel-55": {
-        "kind": "Panel",
-        "spec": {
-          "id": 55,
-          "title": "Upstream Artifact Cleanup",
-          "description": "Lease-elected cleanup cycle outcomes and deleted objects counted over the selected dashboard time range.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${DS_PROMETHEUS}"
-                      },
-                      "spec": {
-                        "editorMode": "code",
-                        "expr": "round(sum by (result) (increase(puppet_forge_upstream_artifact_cleanup_total{job=~\"$job\"}[$__range])))",
-                        "legendFormat": "cycle {{result}}",
+                        "expr": "round(sum(increase(puppet_forge_upstream_artifact_integrity_total{job=~\"$job\"}[$__range]))) or vector(0)",
+                        "legendFormat": "checks",
                         "range": false,
                         "instant": true
                       }
@@ -2263,8 +2180,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "round(sum(increase(puppet_forge_upstream_artifact_cleanup_objects_total{job=~\"$job\"}[$__range]))) or vector(0)",
-                        "legendFormat": "objects deleted",
+                        "expr": "round(sum(increase(puppet_forge_upstream_artifact_integrity_total{job=~\"$job\",result=\"repaired\"}[$__range]))) or vector(0)",
+                        "legendFormat": "repaired",
                         "range": false,
                         "instant": true
                       }
@@ -2285,8 +2202,190 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "round(sum(increase(puppet_forge_upstream_artifact_cleanup_failures_total{job=~\"$job\"}[$__range]))) or vector(0)",
-                        "legendFormat": "objects failed",
+                        "expr": "round(sum(increase(puppet_forge_upstream_artifact_integrity_total{job=~\"$job\",result=\"error\"}[$__range]))) or vector(0)",
+                        "legendFormat": "errors",
+                        "range": false,
+                        "instant": true
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "stat",
+            "version": "13.0.1",
+            "spec": {
+              "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "vertical",
+                "percentChangeColorMode": "standard",
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "showPercentChange": false,
+                "textMode": "auto",
+                "wideLayout": false
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      }
+                    ]
+                  },
+                  "unit": "short"
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "checks"
+                    },
+                    "properties": [
+                      {
+                        "id": "color",
+                        "value": {
+                          "fixedColor": "blue",
+                          "mode": "fixed"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "repaired"
+                    },
+                    "properties": [
+                      {
+                        "id": "color",
+                        "value": {
+                          "fixedColor": "orange",
+                          "mode": "fixed"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "errors"
+                    },
+                    "properties": [
+                      {
+                        "id": "thresholds",
+                        "value": {
+                          "mode": "absolute",
+                          "steps": [
+                            {
+                              "value": 0,
+                              "color": "green"
+                            },
+                            {
+                              "value": 1,
+                              "color": "red"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-55": {
+        "kind": "Panel",
+        "spec": {
+          "id": 55,
+          "title": "Upstream Artifact Cleanup",
+          "description": "Cleanup cycles, scanned and deleted objects, failures, and average duration over the selected dashboard time range.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${DS_PROMETHEUS}"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "round(sum(increase(puppet_forge_upstream_artifact_cleanup_total{job=~\"$job\"}[$__range]))) or vector(0)",
+                        "legendFormat": "cycles",
+                        "range": false,
+                        "instant": true
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${DS_PROMETHEUS}"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "round(sum(increase(puppet_forge_upstream_artifact_cleanup_scanned_total{job=~\"$job\"}[$__range]))) or vector(0)",
+                        "legendFormat": "scanned",
+                        "range": false,
+                        "instant": true
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${DS_PROMETHEUS}"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "round(sum(increase(puppet_forge_upstream_artifact_cleanup_objects_total{job=~\"$job\"}[$__range]))) or vector(0)",
+                        "legendFormat": "deleted",
                         "range": false,
                         "instant": true
                       }
@@ -2307,8 +2406,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "round(sum(increase(puppet_forge_upstream_artifact_cleanup_scanned_total{job=~\"$job\"}[$__range]))) or vector(0)",
-                        "legendFormat": "objects scanned",
+                        "expr": "round(sum(increase(puppet_forge_upstream_artifact_cleanup_failures_total{job=~\"$job\"}[$__range]))) or vector(0)",
+                        "legendFormat": "failed",
                         "range": false,
                         "instant": true
                       }
@@ -2330,12 +2429,34 @@
                       "spec": {
                         "editorMode": "code",
                         "expr": "(sum(increase(puppet_forge_upstream_artifact_cleanup_duration_seconds_sum{job=~\"$job\"}[$__range])) or vector(0)) / clamp_min((sum(increase(puppet_forge_upstream_artifact_cleanup_duration_seconds_count{job=~\"$job\"}[$__range])) or vector(0)), 1)",
-                        "legendFormat": "average duration (seconds)",
+                        "legendFormat": "average duration",
                         "range": false,
                         "instant": true
                       }
                     },
                     "refId": "E",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${DS_PROMETHEUS}"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "round(sum(increase(puppet_forge_upstream_artifact_cleanup_total{job=~\"$job\",result=\"error\"}[$__range]))) or vector(0)",
+                        "legendFormat": "cycle errors",
+                        "range": false,
+                        "instant": true
+                      }
+                    },
+                    "refId": "F",
                     "hidden": false
                   }
                 }
@@ -2350,10 +2471,10 @@
             "version": "13.0.1",
             "spec": {
               "options": {
-                "colorMode": "background",
+                "colorMode": "value",
                 "graphMode": "none",
                 "justifyMode": "center",
-                "orientation": "horizontal",
+                "orientation": "vertical",
                 "percentChangeColorMode": "standard",
                 "reduceOptions": {
                   "calcs": [
@@ -2364,7 +2485,7 @@
                 },
                 "showPercentChange": false,
                 "textMode": "auto",
-                "wideLayout": true
+                "wideLayout": false
               },
               "fieldConfig": {
                 "defaults": {
@@ -2383,7 +2504,124 @@
                   },
                   "unit": "short"
                 },
-                "overrides": []
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "cycles"
+                    },
+                    "properties": [
+                      {
+                        "id": "color",
+                        "value": {
+                          "fixedColor": "blue",
+                          "mode": "fixed"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "cycle errors"
+                    },
+                    "properties": [
+                      {
+                        "id": "thresholds",
+                        "value": {
+                          "mode": "absolute",
+                          "steps": [
+                            {
+                              "value": 0,
+                              "color": "green"
+                            },
+                            {
+                              "value": 1,
+                              "color": "red"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "scanned"
+                    },
+                    "properties": [
+                      {
+                        "id": "color",
+                        "value": {
+                          "fixedColor": "blue",
+                          "mode": "fixed"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "deleted"
+                    },
+                    "properties": [
+                      {
+                        "id": "color",
+                        "value": {
+                          "fixedColor": "green",
+                          "mode": "fixed"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "failed"
+                    },
+                    "properties": [
+                      {
+                        "id": "thresholds",
+                        "value": {
+                          "mode": "absolute",
+                          "steps": [
+                            {
+                              "value": 0,
+                              "color": "green"
+                            },
+                            {
+                              "value": 1,
+                              "color": "red"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "average duration"
+                    },
+                    "properties": [
+                      {
+                        "id": "color",
+                        "value": {
+                          "fixedColor": "purple",
+                          "mode": "fixed"
+                        }
+                      },
+                      {
+                        "id": "unit",
+                        "value": "s"
+                      },
+                      {
+                        "id": "decimals",
+                        "value": 3
+                      }
+                    ]
+                  }
+                ]
               }
             }
           }
@@ -2394,7 +2632,7 @@
         "spec": {
           "id": 56,
           "title": "Artifact Stream Outcomes",
-          "description": "Completed local and upstream-cache artifact response streams counted over the selected dashboard time range. Errors occur after HTTP headers have already been sent.",
+          "description": "Per-second outcomes of local and upstream-cache artifact response streams. Errors occur after HTTP headers have already been sent.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -2412,10 +2650,10 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "round(sum by (source, result) (increase(puppet_forge_artifact_stream_total{job=~\"$job\"}[$__range])))",
+                        "expr": "sum by (source, result) (rate(puppet_forge_artifact_stream_total{job=~\"$job\"}[$__rate_interval]))",
                         "legendFormat": "{{source}} {{result}}",
-                        "range": false,
-                        "instant": true
+                        "range": true,
+                        "instant": false
                       }
                     },
                     "refId": "A",
@@ -2429,30 +2667,60 @@
           },
           "vizConfig": {
             "kind": "VizConfig",
-            "group": "stat",
+            "group": "timeseries",
             "version": "13.0.1",
             "spec": {
               "options": {
-                "colorMode": "background",
-                "graphMode": "none",
-                "justifyMode": "center",
-                "orientation": "horizontal",
-                "percentChangeColorMode": "standard",
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "fields": "",
-                  "values": false
+                "legend": {
+                  "calcs": [],
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "showLegend": true
                 },
-                "showPercentChange": false,
-                "textMode": "auto",
-                "wideLayout": true
+                "tooltip": {
+                  "hideZeros": true,
+                  "mode": "multi",
+                  "sort": "desc"
+                }
               },
               "fieldConfig": {
                 "defaults": {
                   "color": {
                     "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "barWidthFactor": 0.6,
+                    "drawStyle": "line",
+                    "fillOpacity": 12,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "showValues": false,
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
                   },
                   "mappings": [],
                   "thresholds": {
@@ -2464,9 +2732,55 @@
                       }
                     ]
                   },
-                  "unit": "short"
+                  "unit": "ops"
                 },
-                "overrides": []
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "^.* success$"
+                    },
+                    "properties": [
+                      {
+                        "id": "color",
+                        "value": {
+                          "fixedColor": "green",
+                          "mode": "fixed"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "^.* error$"
+                    },
+                    "properties": [
+                      {
+                        "id": "color",
+                        "value": {
+                          "fixedColor": "red",
+                          "mode": "fixed"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "^.* client_cancel$"
+                    },
+                    "properties": [
+                      {
+                        "id": "color",
+                        "value": {
+                          "fixedColor": "orange",
+                          "mode": "fixed"
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             }
           }
@@ -2703,7 +3017,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "max by (owner) (last_over_time(puppet_forge_modules{job=~\"$job\"}[$__range]))",
+                        "expr": "sort_desc(max by (owner) (last_over_time(puppet_forge_modules{job=~\"$job\"}[$__range])))",
                         "legendFormat": "",
                         "range": false,
                         "instant": true,
@@ -2732,17 +3046,19 @@
                     "options": {
                       "excludeByName": {
                         "Time": true,
-                        "Value": true,
+                        "Value": false,
                         "__name__": true,
                         "instance": true,
                         "job": true
                       },
                       "includeByName": {},
                       "indexByName": {
-                        "owner": 0
+                        "owner": 0,
+                        "Value": 1
                       },
                       "renameByName": {
-                        "owner": "Owner"
+                        "owner": "Owner",
+                        "Value": "Modules"
                       }
                     }
                   }
@@ -4663,123 +4979,6 @@
           }
         }
       },
-      "panel-40": {
-        "kind": "Panel",
-        "spec": {
-          "id": 40,
-          "title": "Modules by Owner",
-          "description": "Indexed modules grouped by owner.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${DS_PROMETHEUS}"
-                      },
-                      "spec": {
-                        "editorMode": "code",
-                        "expr": "max by (owner) (last_over_time(puppet_forge_modules{job=~\"$job\"}[$__range]))",
-                        "legendFormat": "{{owner}}",
-                        "range": false,
-                        "instant": true
-                      }
-                    },
-                    "refId": "A",
-                    "hidden": false
-                  }
-                }
-              ],
-              "transformations": [],
-              "queryOptions": {}
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "stat",
-            "version": "13.0.1",
-            "spec": {
-              "options": {
-                "colorMode": "background",
-                "graphMode": "none",
-                "justifyMode": "center",
-                "orientation": "auto",
-                "percentChangeColorMode": "standard",
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "fields": "",
-                  "values": false
-                },
-                "showPercentChange": false,
-                "textMode": "auto",
-                "wideLayout": true
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "axisBorderShow": false,
-                    "axisCenteredZero": false,
-                    "axisColorMode": "text",
-                    "axisLabel": "",
-                    "axisPlacement": "auto",
-                    "barAlignment": 0,
-                    "barWidthFactor": 0.6,
-                    "drawStyle": "line",
-                    "fillOpacity": 15,
-                    "gradientMode": "none",
-                    "hideFrom": {
-                      "legend": false,
-                      "tooltip": false,
-                      "viz": false
-                    },
-                    "insertNulls": false,
-                    "lineInterpolation": "linear",
-                    "lineWidth": 1,
-                    "pointSize": 5,
-                    "scaleDistribution": {
-                      "type": "linear"
-                    },
-                    "showPoints": "never",
-                    "showValues": false,
-                    "spanNulls": false,
-                    "stacking": {
-                      "group": "A",
-                      "mode": "none"
-                    },
-                    "thresholdsStyle": {
-                      "mode": "off"
-                    }
-                  },
-                  "mappings": [],
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "value": 0,
-                        "color": "green"
-                      }
-                    ]
-                  },
-                  "unit": "short"
-                },
-                "overrides": []
-              }
-            }
-          }
-        }
-      },
       "panel-41": {
         "kind": "Panel",
         "spec": {
@@ -6495,15 +6694,16 @@
                         "hideHeader": false,
                         "fillScreen": false,
                         "layout": {
-                          "kind": "AutoGridLayout",
+                          "kind": "GridLayout",
                           "spec": {
-                            "maxColumnCount": 2,
-                            "columnWidthMode": "standard",
-                            "rowHeightMode": "standard",
                             "items": [
                               {
-                                "kind": "AutoGridLayoutItem",
+                                "kind": "GridLayoutItem",
                                 "spec": {
+                                  "x": 0,
+                                  "y": 0,
+                                  "width": 12,
+                                  "height": 8,
                                   "element": {
                                     "kind": "ElementReference",
                                     "name": "panel-19"
@@ -6511,8 +6711,12 @@
                                 }
                               },
                               {
-                                "kind": "AutoGridLayoutItem",
+                                "kind": "GridLayoutItem",
                                 "spec": {
+                                  "x": 12,
+                                  "y": 0,
+                                  "width": 12,
+                                  "height": 8,
                                   "element": {
                                     "kind": "ElementReference",
                                     "name": "panel-20"
@@ -6520,8 +6724,12 @@
                                 }
                               },
                               {
-                                "kind": "AutoGridLayoutItem",
+                                "kind": "GridLayoutItem",
                                 "spec": {
+                                  "x": 0,
+                                  "y": 8,
+                                  "width": 8,
+                                  "height": 5,
                                   "element": {
                                     "kind": "ElementReference",
                                     "name": "panel-54"
@@ -6529,8 +6737,12 @@
                                 }
                               },
                               {
-                                "kind": "AutoGridLayoutItem",
+                                "kind": "GridLayoutItem",
                                 "spec": {
+                                  "x": 8,
+                                  "y": 8,
+                                  "width": 16,
+                                  "height": 5,
                                   "element": {
                                     "kind": "ElementReference",
                                     "name": "panel-55"
@@ -6538,8 +6750,12 @@
                                 }
                               },
                               {
-                                "kind": "AutoGridLayoutItem",
+                                "kind": "GridLayoutItem",
                                 "spec": {
+                                  "x": 0,
+                                  "y": 13,
+                                  "width": 24,
+                                  "height": 8,
                                   "element": {
                                     "kind": "ElementReference",
                                     "name": "panel-56"
@@ -6580,19 +6796,6 @@
                                 "spec": {
                                   "x": 0,
                                   "y": 0,
-                                  "width": 24,
-                                  "height": 6,
-                                  "element": {
-                                    "kind": "ElementReference",
-                                    "name": "panel-40"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 0,
-                                  "y": 6,
                                   "width": 12,
                                   "height": 6,
                                   "element": {
@@ -6605,7 +6808,7 @@
                                 "kind": "GridLayoutItem",
                                 "spec": {
                                   "x": 12,
-                                  "y": 6,
+                                  "y": 0,
                                   "width": 12,
                                   "height": 6,
                                   "element": {
