@@ -119,6 +119,7 @@
       const showMutationNotice = (source, message, failed) => {
         const scope = source.closest(".panel, .section-content, .module-details") || source.parentElement;
         if (!scope) return;
+        if (failed && scope instanceof HTMLDetailsElement) scope.open = true;
         const noticeScope = scope.matches(".module-details") ? scope.querySelector(":scope > .module-notice-slot") : scope;
         if (!noticeScope) return;
         noticeScope.querySelector(":scope > .async-mutation-notice")?.remove();

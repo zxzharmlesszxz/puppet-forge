@@ -274,19 +274,29 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer cleanup()
+	input.Replace = req.FormValue("replace") == "true"
 	if !principal.CanPublishOwner(input.Owner) {
 		r.audit(req, principal, "publish_module", "failure", "forbidden", "space", input.Owner)
 		respondManageMutationHTTPError(w, req, http.StatusForbidden, errors.New("token is not allowed to publish to this space"))
 		return
 	}
+	if input.Replace && !canDeleteInSpace(principal, input.Owner) {
+		r.audit(req, principal, "replace_module_release", "failure", "forbidden", "space", input.Owner)
+		respondManageMutationHTTPError(w, req, http.StatusForbidden, errors.New("team administrator access is required to replace a release"))
+		return
+	}
+	action, message := "publish_module", "module published"
+	if input.Replace {
+		action, message = "replace_module_release", "module release replaced"
+	}
 	release, err := r.modules.Publish(req.Context(), input)
 	if err != nil {
-		r.audit(req, principal, "publish_module", "failure", auditReason(err), "space", input.Owner)
+		r.audit(req, principal, action, "failure", auditReason(err), "space", input.Owner)
 		respondManageMutationServiceError(w, req, err)
 		return
 	}
-	r.audit(req, principal, "publish_module", "success", "none", "space", release.Owner, "module", release.Owner+"/"+release.Name, "release", release.Version, "sha256", release.SHA256)
-	respondManageMutationSuccess(w, req, "/manage/modules", "module published", manageModuleListTarget, "")
+	r.audit(req, principal, action, "success", "none", "space", release.Owner, "module", release.Owner+"/"+release.Name, "release", release.Version, "sha256", release.SHA256)
+	respondManageMutationSuccess(w, req, "/manage/modules", message, manageModuleListTarget, "")
 }
 
 func (r *Router) manageUpstreamModule(w http.ResponseWriter, req *http.Request) {

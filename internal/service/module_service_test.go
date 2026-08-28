@@ -709,6 +709,48 @@ func TestPublishRetryWithSameArchiveIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestPublishReplaceSwapsReleaseAndQueuesPreviousArtifact(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.NewSQLiteStore("sqlite://:memory:")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(st.Close)
+	artifacts := &testArtifactStorage{}
+	moduleService := NewModuleService(st, artifacts, "modules", nil)
+
+	first, err := moduleService.Publish(ctx, domain.PublishModuleInput{
+		Owner: "teamname", FileName: "module.tar.gz", FileBytes: buildPublishArchive(t, "teamname-module", "1.0.0", "broken"),
+	})
+	if err != nil {
+		t.Fatalf("first Publish() error = %v", err)
+	}
+	replaced, err := moduleService.Publish(ctx, domain.PublishModuleInput{
+		Owner: "teamname", FileName: "module.tar.gz", FileBytes: buildPublishArchive(t, "teamname-module", "1.0.0", "fixed"), Replace: true,
+	})
+	if err != nil {
+		t.Fatalf("replacement Publish() error = %v", err)
+	}
+	if replaced.ID != first.ID {
+		t.Fatalf("replacement changed release ID: got %q, want %q", replaced.ID, first.ID)
+	}
+	if replaced.SHA256 == first.SHA256 || replaced.StoragePath == first.StoragePath {
+		t.Fatalf("replacement kept old content: first=%#v replaced=%#v", first, replaced)
+	}
+	deletions, err := st.ListArtifactDeletions(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListArtifactDeletions() error = %v", err)
+	}
+	if len(deletions) != 1 || deletions[0].StoragePath != first.StoragePath {
+		t.Fatalf("artifact deletions = %#v, want old artifact %q", deletions, first.StoragePath)
+	}
+	if artifacts.objectCount() != 2 {
+		t.Fatalf("objects = %d, want old and current objects until cleanup", artifacts.objectCount())
+	}
+}
+
 func TestPublishRetryRejectsMissingOrCorruptRegisteredArtifact(t *testing.T) {
 	t.Parallel()
 
@@ -992,12 +1034,19 @@ func TestArtifactDeletionPreservesRepublishedObject(t *testing.T) {
 	if second.StoragePath != first.StoragePath {
 		t.Fatalf("republished storage path = %q, want %q", second.StoragePath, first.StoragePath)
 	}
+	pending, err := moduleService.CountArtifactDeletions(ctx)
+	if err != nil {
+		t.Fatalf("CountArtifactDeletions() error = %v", err)
+	}
+	if pending != 0 {
+		t.Fatalf("republish left %d stale artifact deletion(s)", pending)
+	}
 
 	result, err := moduleService.ProcessArtifactDeletions(ctx, 10)
 	if err != nil {
 		t.Fatalf("ProcessArtifactDeletions() error = %v", err)
 	}
-	if result.Attempted != 1 || result.Canceled != 1 || result.Deleted != 0 || result.Pending != 0 {
+	if result.Attempted != 0 || result.Canceled != 0 || result.Deleted != 0 || result.Pending != 0 {
 		t.Fatalf("cleanup result = %#v", result)
 	}
 	if len(artifacts.objectBody(first.StoragePath)) == 0 {

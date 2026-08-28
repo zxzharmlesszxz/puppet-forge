@@ -220,6 +220,39 @@ test("module deletion removes its card and suppresses duplicate submits", async 
   expect(postCount).toBe(1);
 });
 
+test("failed module deletion opens its card and exposes the error", async ({ page }) => {
+  await page.route("http://forge.test/**", async (route) => {
+    if (route.request().method() === "POST") {
+      return route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "module contains an active release" }),
+      });
+    }
+    return route.fulfill({
+      contentType: "text/html",
+      body: `<!doctype html><html lang="en"><body>
+        <details id="item-teamname-module" class="module-details">
+          <summary>teamname/module</summary>
+          <div class="module-notice-slot" aria-live="polite"></div>
+          <form id="delete-module" method="post" action="/manage/modules/teamname/module/delete" data-async-mutation data-remove-target="item-teamname-module">
+            <button type="submit">Delete module</button>
+          </form>
+        </details>
+        <script>${controller}</script>
+      </body></html>`,
+    });
+  });
+
+  await page.goto("http://forge.test/manage/modules");
+  await expect(page.locator("#item-teamname-module")).not.toHaveAttribute("open", "");
+  await page.locator("#delete-module").evaluate((element) => {
+    if (element instanceof HTMLFormElement) element.requestSubmit();
+  });
+  await expect(page.locator("#item-teamname-module")).toHaveAttribute("open", "");
+  await expect(page.locator(".module-notice-slot .async-mutation-notice.error")).toHaveText("module contains an active release");
+});
+
 test("mutation validation and server errors remain local", async ({ page }) => {
   let status = 422;
   await page.route("http://forge.test/**", async (route) => {

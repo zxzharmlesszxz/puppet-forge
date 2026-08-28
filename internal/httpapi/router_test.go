@@ -2548,6 +2548,9 @@ func TestManageActionsEnforceRoleBoundary(t *testing.T) {
 	if strings.Contains(body, "/manage/modules/teamname/apache/delete") || strings.Contains(body, "/manage/modules/teamname/apache/versions/1.2.3/delete") {
 		t.Fatalf("publisher manage page exposes delete actions:\n%s", body)
 	}
+	if strings.Contains(body, `name="replace"`) {
+		t.Fatalf("publisher manage page exposes release replacement:\n%s", body)
+	}
 
 	resp, err = publishClient.PostForm(server.URL+"/manage/modules/teamname/apache/delete", manageFormValues(t, publishClient, server.URL, nil))
 	if err != nil {
@@ -2601,6 +2604,29 @@ func TestManageActionsEnforceRoleBoundary(t *testing.T) {
 	}
 	if _, err := st.GetModule(ctx, "teamname", "nginx"); err != nil {
 		t.Fatalf("publisher manage publish did not create module: %v", err)
+	}
+
+	replacementArchive, err := testutil.BuildTarGz(map[string]string{
+		"teamname-nginx-1.0.0/metadata.json": `{"name":"teamname-nginx","version":"1.0.0"}`,
+		"teamname-nginx-1.0.0/changed.txt":   "replacement",
+	})
+	if err != nil {
+		t.Fatalf("testutil.BuildTarGz(replacement) error = %v", err)
+	}
+	publishBodyBuffer, contentType = buildPublishMultipart(t, "teamname", "nginx", "1.0.0", replacementArchive, csrfToken, url.Values{"replace": {"true"}})
+	req, err = http.NewRequest(http.MethodPost, server.URL+"/manage/modules", publishBodyBuffer)
+	if err != nil {
+		t.Fatalf("NewRequest(manage replacement) error = %v", err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("X-Puppet-Forge-Async-Mutation", "true")
+	resp, err = publishClient.Do(req)
+	if err != nil {
+		t.Fatalf("publisher POST manage replacement error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("publisher manage replacement status = %d, want %d", resp.StatusCode, http.StatusForbidden)
 	}
 
 	adminClient := &http.Client{Transport: transport}
@@ -5222,7 +5248,7 @@ func findTeamConfig(configs []auth.TeamConfig, team string) *auth.TeamConfig {
 	return nil
 }
 
-func buildPublishMultipart(t *testing.T, owner, name, version string, archive []byte, csrfToken string) (*bytes.Buffer, string) {
+func buildPublishMultipart(t *testing.T, owner, name, version string, archive []byte, csrfToken string, extraFields ...url.Values) (*bytes.Buffer, string) {
 	t.Helper()
 
 	var body bytes.Buffer
@@ -5232,6 +5258,13 @@ func buildPublishMultipart(t *testing.T, owner, name, version string, archive []
 	}
 	if csrfToken != "" {
 		fields["csrf_token"] = csrfToken
+	}
+	for _, values := range extraFields {
+		for key, entries := range values {
+			if len(entries) > 0 {
+				fields[key] = entries[0]
+			}
+		}
 	}
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {

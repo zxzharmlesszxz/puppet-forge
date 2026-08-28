@@ -176,6 +176,22 @@
       font: inherit;
       background: white;
     }
+    .replace-option {
+      display: flex;
+      grid-column: 1 / -1;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 0;
+      padding: 12px;
+      border: 1px solid #e1c27a;
+      border-radius: 6px;
+      background: #fff8e5;
+      color: var(--ink);
+      cursor: pointer;
+    }
+    .replace-option input { width: 18px; height: 18px; margin: 1px 0 0; padding: 0; flex: 0 0 auto; }
+    .replace-option span { display: block; }
+    .replace-option small { display: block; margin-top: 3px; color: var(--muted); font-weight: 400; line-height: 1.35; }
     textarea {
       min-height: 72px;
       resize: vertical;
@@ -348,6 +364,12 @@
                 <input id="module-archive-input" name="file" type="file" accept=".gz,.tgz,.tar.gz" required>
                 <p class="field-hint">Use a Puppet module .tar.gz archive.</p>
               </div>
+              {{if or .Principal.CanAdmin .Principal.CanManageTeam}}
+              <label class="replace-option">
+                <input name="replace" type="checkbox" value="true">
+                <span>Replace an existing release with the same version<small>Admin-only correction. Clients that cached the previous checksum may need to retry.</small></span>
+              </label>
+              {{end}}
             </div>
             <button class="primary" type="submit">Publish</button>
           </form>

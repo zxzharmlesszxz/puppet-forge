@@ -65,7 +65,7 @@ Publishing flow:
 2. The service verifies that the authenticated principal may publish to that space.
 3. The service reads identity and metadata from the archive and requires its namespace to match the selected space.
 4. MD5, SHA-256, and size are calculated once. The archive is created without overwrite at `modules/<owner>/<name>/<version>/<sha256>.tar.gz`.
-5. Local release identity is immutable: retrying identical bytes is idempotent, while different bytes for an existing module/version return `409 Conflict`.
+5. Bearer-token publishing keeps local release identity immutable: retrying identical bytes is idempotent, while different bytes for an existing module/version return `409 Conflict`. A global or owning team administrator may explicitly select **Replace existing release** in the management UI to correct a bad archive without disabling active-release protection.
 6. Release metadata is created in the selected SQL backend and returned to the client. Definite persistence failures compensate the uncommitted object.
 
 Proxy flow:
@@ -224,7 +224,8 @@ Important rules:
 - Publishing team names and writable extra spaces use the module-owner syntax `[A-Za-z0-9]+`; team names must also be unique without regard to letter case.
 - The web catalog (`/` and `/modules/...`) remains informationally public regardless of `PUBLIC_MODULE_ACCESS`.
 - Read tokens allow read API, download, and `/v3/*` access.
-- Tokens with the `publish` role allow read, publish, and update access only within permitted publishing spaces; they do not allow module deletion.
+- Tokens with the `publish` role allow read and immutable publish access only within permitted publishing spaces; they cannot replace an existing version or delete modules.
+- Global administrators may replace an existing local release in any writable space. Team administrators may replace one only in their managed primary team space. Replacement uploads a new content-addressed object, atomically switches SQL metadata, and queues the superseded object for durable deletion; clients that cached the previous checksum may need to retry.
 - Deleting modules and versions is allowed for global admins in any namespace and for OIDC team admins only in their primary team space.
 - Extra publishing spaces are assigned or unassigned only by global administrators under `/manage/admin/spaces`. They allow publishing/updating, but do not grant delete ownership.
 - OIDC team-admin mappings allow editing tokens and OIDC groups only for the mapped team.

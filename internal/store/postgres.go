@@ -1114,6 +1114,18 @@ func (s *PostgresStore) createRelease(ctx context.Context, release domain.Releas
 		_ = tx.Rollback(ctx)
 	}()
 
+	var previousSource, previousStoragePath string
+	if !createOnly {
+		err := tx.QueryRow(ctx, `
+			select source, storage_path
+			from releases
+			where module_id = $1 and version = $2
+		`, release.ModuleID, release.Version).Scan(&previousSource, &previousStoragePath)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return domain.Release{}, fmt.Errorf("read replaced release artifact: %w", err)
+		}
+	}
+
 	insertRelease := `
 		insert into releases (
 			id, module_id, slug, source, version, description, readme, file_name, content_type, size_bytes,
@@ -1164,6 +1176,20 @@ func (s *PostgresStore) createRelease(ctx context.Context, release domain.Releas
 		}
 		return domain.Release{}, fmt.Errorf("insert release: %w", err)
 	}
+	if release.Source == "local" && release.StoragePath != "" {
+		if _, err := tx.Exec(ctx, `delete from artifact_deletions where storage_path = $1`, release.StoragePath); err != nil {
+			return domain.Release{}, fmt.Errorf("cancel current artifact deletion: %w", err)
+		}
+	}
+	if previousSource == "local" && previousStoragePath != "" && previousStoragePath != release.StoragePath {
+		if _, err := tx.Exec(ctx, `
+			insert into artifact_deletions (storage_path, owner, name)
+			values ($1, $2, $3)
+			on conflict(storage_path) do nothing
+		`, previousStoragePath, release.Owner, release.Name); err != nil {
+			return domain.Release{}, fmt.Errorf("queue replaced artifact deletion: %w", err)
+		}
+	}
 
 	const updateModule = `
 		update modules
@@ -1183,7 +1209,7 @@ func (s *PostgresStore) createRelease(ctx context.Context, release domain.Releas
 		return domain.Release{}, fmt.Errorf("commit release tx: %w", err)
 	}
 
-	return release, nil
+	return s.GetRelease(ctx, release.Owner, release.Name, release.Version)
 }
 
 func (s *PostgresStore) UpdateReleaseChecksums(ctx context.Context, owner, name, version, md5, sha256, storagePath string, sizeBytes int64) error {

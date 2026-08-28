@@ -50,7 +50,7 @@ The service separates:
 5. Multipart input, checksums, object-storage upload, and artifact responses use streaming readers so archive size does not become per-request heap usage.
 6. The service calculates MD5, SHA-256, and size, then serializes publication for the module identity across replicas.
 7. Artifact storage creates `<prefix>/<owner>/<name>/<version>/<sha256>.tar.gz` with a backend precondition that prevents overwriting an existing object.
-8. SQL creates the local release only if that module/version does not exist. Retrying the same bytes is idempotent; different bytes for the same version return `409 Conflict` and never replace the stored release.
+8. Bearer-token publishing creates the local release only if that module/version does not exist. Retrying the same bytes is idempotent, and different bytes return `409 Conflict`. An explicit management-only replacement requires global or owning-team delete capability; SQL atomically switches the release to the new content-addressed path and queues the superseded local object for durable deletion.
 9. A definite SQL failure removes the uncommitted object and any empty module row. If commit status cannot be verified, the content-addressed object is preserved for reconciliation instead of risking deletion of committed data.
 10. API returns the created release payload. Manual identity and metadata form overrides are rejected.
 

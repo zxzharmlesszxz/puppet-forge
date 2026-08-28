@@ -767,6 +767,49 @@ func TestStoreParityArtifactDeletionOutbox(t *testing.T) {
 	}
 }
 
+func TestStoreParityReleaseReplacementQueuesOnlySupersededArtifact(t *testing.T) {
+	for _, tc := range parityStoreCases(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := tc.open(t)
+			t.Cleanup(st.Close)
+			deletionStore := st.(ArtifactDeletionStore)
+
+			owner := "replace-artifact-" + tc.name
+			module, err := st.UpsertModule(ctx, owner, "archive")
+			if err != nil {
+				t.Fatalf("UpsertModule() error = %v", err)
+			}
+			first := NewRelease(
+				module.ID, owner, "archive", "1.0.0", "", "", "archive.tar.gz", "application/gzip",
+				"old-md5", "old-sha256", "modules/replace/archive/1.0.0/old.tar.gz", 7, nil,
+			)
+			first, err = st.CreateRelease(ctx, first)
+			if err != nil {
+				t.Fatalf("CreateRelease(first) error = %v", err)
+			}
+			replacement := NewRelease(
+				module.ID, owner, "archive", "1.0.0", "", "", "archive.tar.gz", "application/gzip",
+				"new-md5", "new-sha256", "modules/replace/archive/1.0.0/new.tar.gz", 8, nil,
+			)
+			replacement, err = st.CreateRelease(ctx, replacement)
+			if err != nil {
+				t.Fatalf("CreateRelease(replacement) error = %v", err)
+			}
+			if replacement.ID != first.ID || replacement.SHA256 != "new-sha256" {
+				t.Fatalf("replacement = %#v, want original ID and new checksum", replacement)
+			}
+			deletions, err := deletionStore.ListArtifactDeletions(ctx, 10)
+			if err != nil {
+				t.Fatalf("ListArtifactDeletions() error = %v", err)
+			}
+			if len(deletions) != 1 || deletions[0].StoragePath != first.StoragePath {
+				t.Fatalf("artifact deletions = %#v, want superseded artifact %q", deletions, first.StoragePath)
+			}
+		})
+	}
+}
+
 func TestPostgresStoreConcurrentSchemaSetup(t *testing.T) {
 	dsn := os.Getenv("PUPPET_FORGE_TEST_POSTGRES_DSN")
 	if dsn == "" {

@@ -200,11 +200,13 @@ func (s *ModuleService) Publish(ctx context.Context, input domain.PublishModuleI
 			metrics.ObservePublish(nil)
 			return existing, nil
 		}
-		err = fmt.Errorf("%w: release %s/%s %s already exists with different content", store.ErrConflict, input.Owner, input.Name, input.Version)
-		metrics.ObservePublish(err)
-		return domain.Release{}, err
+		if !input.Replace {
+			err = fmt.Errorf("%w: release %s/%s %s already exists with different content", store.ErrConflict, input.Owner, input.Name, input.Version)
+			metrics.ObservePublish(err)
+			return domain.Release{}, err
+		}
 	}
-	if !errors.Is(err, store.ErrNotFound) {
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		metrics.ObservePublish(err)
 		return domain.Release{}, err
 	}
@@ -249,7 +251,11 @@ func (s *ModuleService) Publish(ctx context.Context, input domain.PublishModuleI
 		input.Metadata,
 	)
 
-	release, err = s.modules.CreateReleaseIfAbsent(ctx, release)
+	if input.Replace {
+		release, err = s.modules.CreateRelease(ctx, release)
+	} else {
+		release, err = s.modules.CreateReleaseIfAbsent(ctx, release)
+	}
 	if err != nil {
 		committed, getErr := s.modules.GetRelease(ctx, input.Owner, input.Name, input.Version)
 		if getErr == nil &&

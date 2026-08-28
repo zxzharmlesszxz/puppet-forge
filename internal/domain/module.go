@@ -51,6 +51,7 @@ type PublishModuleInput struct {
 	Owner       string
 	Name        string
 	Version     string
+	Replace     bool
 	Description string
 	Readme      string
 	FileName    string

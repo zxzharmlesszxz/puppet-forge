@@ -1152,6 +1152,18 @@ func (s *SQLiteStore) createRelease(ctx context.Context, release domain.Release,
 		_ = tx.Rollback()
 	}()
 
+	var previousSource, previousStoragePath string
+	if !createOnly {
+		err := tx.QueryRowContext(ctx, `
+			select source, storage_path
+			from releases
+			where module_id = ? and version = ?
+		`, release.ModuleID, release.Version).Scan(&previousSource, &previousStoragePath)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return domain.Release{}, fmt.Errorf("read replaced release artifact: %w", err)
+		}
+	}
+
 	insertRelease := `
 		insert into releases (
 			id, module_id, slug, source, version, description, readme, file_name, content_type, size_bytes,
@@ -1204,6 +1216,20 @@ func (s *SQLiteStore) createRelease(ctx context.Context, release domain.Release,
 		}
 		if rows == 0 {
 			return domain.Release{}, ErrConflict
+		}
+	}
+	if release.Source == "local" && release.StoragePath != "" {
+		if _, err := tx.ExecContext(ctx, `delete from artifact_deletions where storage_path = ?`, release.StoragePath); err != nil {
+			return domain.Release{}, fmt.Errorf("cancel current artifact deletion: %w", err)
+		}
+	}
+	if previousSource == "local" && previousStoragePath != "" && previousStoragePath != release.StoragePath {
+		if _, err := tx.ExecContext(ctx, `
+			insert into artifact_deletions (storage_path, owner, name)
+			values (?, ?, ?)
+			on conflict(storage_path) do nothing
+		`, previousStoragePath, release.Owner, release.Name); err != nil {
+			return domain.Release{}, fmt.Errorf("queue replaced artifact deletion: %w", err)
 		}
 	}
 
