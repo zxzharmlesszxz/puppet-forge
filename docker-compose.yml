@@ -102,7 +102,7 @@ services:
       - postgres-data:/var/lib/postgresql
 
   gcs:
-    image: fsouza/fake-gcs-server:1.55.1
+    image: fsouza/fake-gcs-server:1.56.1
     command:
       - -scheme
       - http
