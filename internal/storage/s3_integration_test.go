@@ -48,7 +48,7 @@ func TestS3StorageIntegrationLifecycle(t *testing.T) {
 
 	key := "modules/teamname/module/1.0.0/sha256.tar.gz"
 	original := []byte("immutable artifact body")
-	created, err := storage.UploadReaderIfAbsent(ctx, key, "application/gzip", bytes.NewReader(original))
+	created, err := storage.UploadReaderIfAbsent(ctx, key, "application/gzip", struct{ io.Reader }{bytes.NewReader(original)})
 	if err != nil || !created {
 		t.Fatalf("UploadReaderIfAbsent(first) = %v, %v", created, err)
 	}

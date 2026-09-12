@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"path"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/httputil"
@@ -95,23 +96,52 @@ func (s *S3Storage) putObject(ctx context.Context, objectPath string, contentTyp
 }
 
 func (s *S3Storage) putObjectReader(ctx context.Context, objectPath string, contentType string, body io.Reader, createOnly bool) (bool, error) {
+	uploadBody, cleanup, err := prepareS3UploadBody(body)
+	if err != nil {
+		return false, err
+	}
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
 		Key:         aws.String(cleanObjectPath(objectPath)),
-		Body:        body,
+		Body:        uploadBody,
 		ContentType: aws.String(contentType),
 	}
 	if createOnly {
 		input.IfNoneMatch = aws.String("*")
 	}
-	_, err := s.client.PutObject(ctx, input)
+	_, err = s.client.PutObject(ctx, input)
+	cleanupErr := cleanup()
 	if err != nil {
 		if createOnly && isS3PreconditionFailed(err) {
-			return false, nil
+			return false, cleanupErr
 		}
-		return false, fmt.Errorf("put object: %w", err)
+		return false, errors.Join(fmt.Errorf("put object: %w", err), cleanupErr)
+	}
+	if cleanupErr != nil {
+		return false, cleanupErr
 	}
 	return true, nil
+}
+
+func prepareS3UploadBody(body io.Reader) (io.Reader, func() error, error) {
+	if _, ok := body.(io.ReadSeeker); ok {
+		return body, func() error { return nil }, nil
+	}
+
+	temporary, err := os.CreateTemp("", "puppet-forge-s3-upload-*")
+	if err != nil {
+		return nil, nil, fmt.Errorf("create temporary S3 upload: %w", err)
+	}
+	cleanup := func() error {
+		return errors.Join(temporary.Close(), os.Remove(temporary.Name()))
+	}
+	if _, err := io.Copy(temporary, body); err != nil {
+		return nil, nil, errors.Join(fmt.Errorf("spool S3 upload: %w", err), cleanup())
+	}
+	if _, err := temporary.Seek(0, io.SeekStart); err != nil {
+		return nil, nil, errors.Join(fmt.Errorf("rewind temporary S3 upload: %w", err), cleanup())
+	}
+	return temporary, cleanup, nil
 }
 
 func (s *S3Storage) Open(ctx context.Context, objectPath string) (ObjectReader, error) {
