@@ -1,0 +1,9 @@
+apiVersion: 1
+
+providers:
+  - name: Puppet Forge
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /tmp/grafana-dashboards

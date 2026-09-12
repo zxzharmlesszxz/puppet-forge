@@ -542,7 +542,13 @@ Helm-чарт також підтримує ресурси Prometheus Operator, 
 docker compose up --build
 ```
 
-Сервіс буде доступний на `http://localhost:8080`.
+Локальний набір відкриває:
+
+- Puppet Forge на `http://localhost:8080`;
+- Prometheus на `http://localhost:9091`;
+- Grafana на `http://localhost:3001`, типово з обліковими даними `admin` / `admin`.
+
+Grafana запускається з уже налаштованими джерелом даних Prometheus і дашбордом Puppet Forge. Порт можна перевизначити через `GRAFANA_PORT`, а локальні облікові дані через `GRAFANA_ADMIN_USER` та `GRAFANA_ADMIN_PASSWORD`.
 
 Compose запускає:
 

@@ -149,6 +149,47 @@ services:
         mc alias set local http://minio:9000 minioadmin minioadmin &&
         mc mb --ignore-existing local/puppet-forge-artifacts
 
+  prometheus:
+    image: prom/prometheus:v3.13.2@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
+    depends_on:
+      app:
+        condition: service_healthy
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./examples/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./examples/prometheus/alerts:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:13.0.1
+    depends_on:
+      - prometheus
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        mkdir -p /tmp/grafana-dashboards
+        sed 's/[$]{DS_PROMETHEUS}/prometheus/g' /etc/grafana/dashboard-source/puppet-forge.json > /tmp/grafana-dashboards/puppet-forge.json
+        exec /run.sh
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - ./examples/grafana/provisioning/datasources/prometheus.yml:/etc/grafana/provisioning/datasources/puppet-forge.yml:ro
+      - ./examples/grafana/provisioning/dashboards/puppet-forge.yml:/etc/grafana/provisioning/dashboards/puppet-forge.yml:ro
+      - ./examples/grafana/puppet-forge-dashboard.json:/etc/grafana/dashboard-source/puppet-forge.json:ro
+      - grafana-data:/var/lib/grafana
+
   r10k:
     image: puppet/r10k:latest@sha256:5b4035157e60fcd99c7a5785453bc81e3c12c1a54924b168768bbc5433bce93a
     depends_on:
@@ -187,5 +228,7 @@ configs:
         authorization_token: 'Bearer ${ADMIN_TOKEN:-forge-admin-token-local-change-me-32-bytes}'
 
 volumes:
+  grafana-data:
   postgres-data:
+  prometheus-data:
   minio-data:

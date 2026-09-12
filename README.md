@@ -544,7 +544,13 @@ Start the local stack:
 docker compose up --build
 ```
 
-The service is available at `http://localhost:8080`.
+The local stack exposes:
+
+- Puppet Forge at `http://localhost:8080`;
+- Prometheus at `http://localhost:9091`;
+- Grafana at `http://localhost:3001`, using `admin` / `admin` by default.
+
+Grafana starts with the Prometheus data source and Puppet Forge dashboard already provisioned. Override its port with `GRAFANA_PORT` and the local credentials with `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD`.
 
 Compose starts:
 
