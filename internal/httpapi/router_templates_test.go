@@ -71,6 +71,8 @@ func TestPublicTemplatesRenderContextBreadcrumbs(t *testing.T) {
 		`<details class="panel install-panel" id="install">`,
 		`<summary>Install</summary>`,
 		`if (installPanel) installPanel.open = true`,
+		`overflow-wrap: anywhere`,
+		`image.replaceWith(document.createTextNode(alternative))`,
 	} {
 		if !strings.Contains(module.String(), want) {
 			t.Fatalf("module page misses public navigation %q:\n%s", want, module.String())

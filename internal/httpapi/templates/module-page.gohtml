@@ -39,8 +39,10 @@
     }
     h1 {
       margin: 0 0 10px;
+      min-width: 0;
       font-size: 42px;
       line-height: 1.1;
+      overflow-wrap: anywhere;
     }
     .meta {
       color: var(--muted);
@@ -95,6 +97,10 @@
     }
     .readme p, .readme ul, .readme ol {
       margin: 0 0 1em;
+    }
+    .readme img {
+      max-width: 100%;
+      height: auto;
     }
     .readme code {
       font-family: "SFMono-Regular", Consolas, monospace;
@@ -238,6 +244,14 @@
     }
     .readme .code-window {
       margin: 0 0 1em;
+    }
+    @media (max-width: 620px) {
+      .hero {
+        padding: 24px 26px;
+      }
+      h1 {
+        font-size: 34px;
+      }
     }
   </style>
 </head>
@@ -386,6 +400,17 @@ mod "{{.ModuleInstallID}}", "{{.Release.Version}}"</code></pre>
         const text = code.textContent || '';
         setCopyStatus(button, await copyText(text) ? 'Copied' : 'Failed');
       });
+    });
+    document.querySelectorAll('.readme img').forEach((element) => {
+      const image = /** @type {HTMLImageElement} */ (element);
+      const replaceBrokenImage = () => {
+        if (image.naturalWidth !== 0) return;
+        const alternative = image.getAttribute('alt');
+        if (alternative) image.replaceWith(document.createTextNode(alternative));
+        else image.remove();
+      };
+      image.addEventListener('error', replaceBrokenImage, {once: true});
+      if (image.complete) replaceBrokenImage();
     });
   </script>
 </body>

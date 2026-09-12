@@ -70,3 +70,17 @@ test("overview lists paginate independently and page size survives reload", asyn
   await expect(modules.locator('select[name="modules_per_page"]')).toHaveValue("10");
   await expect(modules.locator(".item-list li")).toHaveCount(10);
 });
+
+test("module title stays inside its card on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/modules/teamname/module-00");
+
+  const title = await page.locator(".hero h1").boundingBox();
+  const hero = await page.locator(".hero").boundingBox();
+  const copyLink = await page.locator("#copy-version-link").boundingBox();
+  expect(title).not.toBeNull();
+  expect(hero).not.toBeNull();
+  expect(copyLink).not.toBeNull();
+  expect(title.x + title.width).toBeLessThanOrEqual(hero.x + hero.width);
+  expect(copyLink.x + copyLink.width).toBeLessThanOrEqual(390);
+});
