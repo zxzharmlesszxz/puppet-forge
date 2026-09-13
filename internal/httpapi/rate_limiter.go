@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -161,9 +162,9 @@ func clientAddress(req *http.Request, trustedProxies []netip.Prefix) string {
 		}
 		addresses = append(addresses, address)
 	}
-	for index := len(addresses) - 1; index >= 0; index-- {
-		if !addressInPrefixes(addresses[index], trustedProxies) {
-			return addresses[index].String()
+	for _, address := range slices.Backward(addresses) {
+		if !addressInPrefixes(address, trustedProxies) {
+			return address.String()
 		}
 	}
 	return addresses[0].String()

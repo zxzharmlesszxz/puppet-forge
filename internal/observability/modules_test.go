@@ -148,7 +148,7 @@ func TestModuleMetricsReportsLegacyReleaseConsumers(t *testing.T) {
 
 	now := time.Unix(1_700_000_000, 0).UTC()
 	collector := newModuleMetricsCollector(staticReleaseConsumerMetricsSource{
-		staticModuleMetricsSource: staticModuleMetricsSource{owners: map[string]int{}},
+		owners: map[string]int{},
 		consumers: []store.ReleaseConsumer{{
 			ConsumerTeam:  "platform",
 			ConsumerName:  "production",
@@ -189,8 +189,8 @@ func TestModuleMetricsReportsConsumerTruncation(t *testing.T) {
 	t.Parallel()
 
 	collector := newModuleMetricsCollector(staticReleaseConsumerMetricsSource{
-		staticModuleMetricsSource: staticModuleMetricsSource{owners: map[string]int{}},
-		total:                     11,
+		owners: map[string]int{},
+		total:  11,
 	}, 10, 10, time.Hour)
 	collector.refresh(context.Background())
 	registry := prometheus.NewRegistry()

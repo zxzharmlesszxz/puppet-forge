@@ -1252,7 +1252,7 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 	expectedMD5 := hex.EncodeToString(md5Sum[:])
 	sha256Sum := sha256.Sum256(archiveBody)
 	expectedSHA256 := hex.EncodeToString(sha256Sum[:])
-	artifacts := &countingDownloadStorage{fixedDownloadStorage: fixedDownloadStorage{body: archiveBody, contentType: "application/gzip"}}
+	artifacts := &countingDownloadStorage{body: archiveBody, contentType: "application/gzip"}
 	moduleSvc := service.NewModuleService(st, artifacts, "modules", nil)
 	authorizer := newAdminAuthorizer(t)
 
@@ -1389,7 +1389,7 @@ func TestReleaseDownloadHTTPRangeAndConditionalSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRelease() error = %v", err)
 	}
-	artifacts := &trackingRangeStorage{fixedDownloadStorage: fixedDownloadStorage{body: body, contentType: "application/gzip"}}
+	artifacts := &trackingRangeStorage{body: body, contentType: "application/gzip"}
 	moduleSvc := service.NewModuleService(st, artifacts, "modules", nil)
 	server := httptest.NewServer(newTestRouter(moduleSvc, http.NotFoundHandler(), "http://example.test", nil, nil, "", true, defaultActiveReleaseTTL))
 	t.Cleanup(server.Close)
@@ -1559,7 +1559,7 @@ func TestV3ReleaseChecksumsComeFromServedArchive(t *testing.T) {
 	sha := sha256.Sum256(body)
 	expectedSHA := hex.EncodeToString(sha[:])
 	artifacts := &countingDownloadStorage{
-		fixedDownloadStorage: fixedDownloadStorage{body: body, contentType: "application/gzip"},
+		body: body, contentType: "application/gzip",
 	}
 	moduleSvc := service.NewModuleService(st, artifacts, "modules", nil)
 	server := httptest.NewServer(newTestRouter(moduleSvc, http.NotFoundHandler(), "http://example.test", nil, nil, "", true, defaultActiveReleaseTTL))
