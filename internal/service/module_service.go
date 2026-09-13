@@ -846,10 +846,23 @@ func (s *ModuleService) restoreUpstreamRelease(ctx context.Context, owner, name,
 	slug := owner + "-" + name + "-" + version
 	upstreamRelease, err := s.upstream.FetchRelease(ctx, slug)
 	if err != nil {
-		if errors.Is(err, proxy.ErrUpstreamNotFound) {
-			return domain.Release{}, store.ErrNotFound
+		if !errors.Is(err, proxy.ErrUpstreamNotFound) {
+			return domain.Release{}, fmt.Errorf("%w: %w for %s: %w", ErrUpstreamHydration, ErrUpstreamRestore, slug, err)
 		}
-		return domain.Release{}, fmt.Errorf("%w: %w for %s: %w", ErrUpstreamHydration, ErrUpstreamRestore, slug, err)
+		fileName := slug + ".tar.gz"
+		fileURI := "/v3/files/" + fileName
+		if err := s.upstream.EnsureArtifact(ctx, fileURI); err != nil {
+			if errors.Is(err, proxy.ErrUpstreamNotFound) {
+				return domain.Release{}, store.ErrNotFound
+			}
+			return domain.Release{}, fmt.Errorf("%w: %w from artifact for %s: %w", ErrUpstreamHydration, ErrUpstreamRestore, slug, err)
+		}
+		upstreamRelease = proxy.UpstreamRelease{
+			Slug:     slug,
+			Version:  version,
+			FileURI:  fileURI,
+			FileName: fileName,
+		}
 	}
 	if upstreamRelease.Version == "" {
 		upstreamRelease.Version = version
@@ -973,8 +986,20 @@ func releaseArchivePath(release domain.Release) string {
 
 func (s *ModuleService) EnsureReleaseChecksums(ctx context.Context, release domain.Release) (domain.Release, error) {
 	checksumsComplete := release.MD5 != "" && release.SHA256 != "" && release.SizeBytes > 0
-	if checksumsComplete && (release.Source != "upstream" || release.StoragePath != "") {
-		return release, nil
+	if checksumsComplete {
+		if release.Source != "upstream" {
+			return release, nil
+		}
+		if release.StoragePath != "" {
+			exists, err := s.artifacts.Exists(ctx, release.StoragePath)
+			if err != nil {
+				return release, fmt.Errorf("%w: check cached upstream artifact: %w", ErrUpstreamHydration, err)
+			}
+			if exists {
+				return release, nil
+			}
+			release.StoragePath = ""
+		}
 	}
 	if release.Source == "upstream" {
 		if s.upstream == nil || release.UpstreamFileURI == "" {

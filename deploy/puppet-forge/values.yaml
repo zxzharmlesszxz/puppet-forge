@@ -159,7 +159,7 @@ config:
   OIDC_LOGOUT_URL: ""
   OIDC_SCOPES: "openid profile email"
   OIDC_SIGNING_ALGORITHMS: "RS256"
-  UPSTREAM_URL: https://forgeapi.puppetlabs.com
+  UPSTREAM_URL: https://forgeapi.puppet.com
   UPSTREAM_PROXY_JSON_CACHE_TTL: 5m
   UPSTREAM_PROXY_JSON_STALE_TTL: 1h
   FORGE_CACHE_MAX_BODY_BYTES: "1048576"

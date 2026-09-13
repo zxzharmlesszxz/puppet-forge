@@ -1511,6 +1511,43 @@ func TestGetReleaseDistinguishesMissingAndUnavailableUpstreamRestore(t *testing.
 	}
 }
 
+func TestGetReleaseRestoresFromArtifactWhenMetadataIsMissing(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.NewSQLiteStore("sqlite://:memory:")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(st.Close)
+
+	archive := []byte("ntp release archive")
+	artifacts := &testArtifactStorage{}
+	moduleService := newUpstreamModuleService(t, st, artifacts, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/v3/releases/puppetlabs-ntp-11.1.1":
+			http.NotFound(w, req)
+		case "/v3/files/puppetlabs-ntp-11.1.1.tar.gz":
+			w.Header().Set("Content-Type", "application/gzip")
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+
+	release, err := moduleService.GetRelease(ctx, "puppetlabs", "ntp", "11.1.1")
+	if err != nil {
+		t.Fatalf("GetRelease() error = %v", err)
+	}
+	verified, err := moduleService.EnsureReleaseChecksums(ctx, release)
+	if err != nil {
+		t.Fatalf("EnsureReleaseChecksums() error = %v", err)
+	}
+	if verified.FileName != "puppetlabs-ntp-11.1.1.tar.gz" || verified.MD5 == "" || verified.SHA256 == "" || verified.SizeBytes != int64(len(archive)) {
+		t.Fatalf("restored release = %#v", verified)
+	}
+}
+
 func TestEnsureReleaseChecksumsMaterializesColdUpstreamRelease(t *testing.T) {
 	t.Parallel()
 
@@ -1600,6 +1637,58 @@ func TestEnsureReleaseChecksumsMaterializesColdUpstreamRelease(t *testing.T) {
 	}
 	if releaseRequests.Load() != 1 || artifactRequests.Load() != 1 {
 		t.Fatalf("upstream requests = release:%d artifact:%d, want 1 each", releaseRequests.Load(), artifactRequests.Load())
+	}
+}
+
+func TestEnsureReleaseChecksumsRestoresMissingCachedArtifact(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.NewSQLiteStore("sqlite://:memory:")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(st.Close)
+
+	archive := []byte("restored upstream archive")
+	md5Sum := md5.Sum(archive) // #nosec G401 -- Puppet Forge compatibility checksum asserted in tests.
+	sha256Sum := sha256.Sum256(archive)
+	objectPath := "upstream-cache/v3/files/puppetlabs-stdlib-1.0.0.tar.gz"
+	artifacts := &testArtifactStorage{}
+	moduleService := newUpstreamModuleService(t, st, artifacts, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v3/files/puppetlabs-stdlib-1.0.0.tar.gz" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(archive)
+	}))
+
+	release := domain.Release{
+		ID:    "release-stdlib-1.0.0",
+		Owner: "puppetlabs", Name: "stdlib", Version: "1.0.0", Source: "upstream",
+		FileName: "puppetlabs-stdlib-1.0.0.tar.gz", ContentType: "application/gzip",
+		MD5: hex.EncodeToString(md5Sum[:]), SHA256: hex.EncodeToString(sha256Sum[:]), SizeBytes: int64(len(archive)),
+		StoragePath: objectPath, UpstreamFileURI: "/v3/files/puppetlabs-stdlib-1.0.0.tar.gz",
+	}
+	module, err := st.UpsertModule(ctx, release.Owner, release.Name)
+	if err != nil {
+		t.Fatalf("UpsertModule() error = %v", err)
+	}
+	release.ModuleID = module.ID
+	release, err = st.CreateRelease(ctx, release)
+	if err != nil {
+		t.Fatalf("CreateRelease() error = %v", err)
+	}
+	verified, err := moduleService.EnsureReleaseChecksums(ctx, release)
+	if err != nil {
+		t.Fatalf("EnsureReleaseChecksums() error = %v", err)
+	}
+	if verified.StoragePath != objectPath {
+		t.Fatalf("verified release storage path = %q, want %q", verified.StoragePath, objectPath)
+	}
+	if exists, err := artifacts.Exists(ctx, objectPath); err != nil || !exists {
+		t.Fatalf("restored artifact exists = %t, error = %v", exists, err)
 	}
 }
 

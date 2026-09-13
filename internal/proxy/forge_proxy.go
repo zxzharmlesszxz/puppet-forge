@@ -188,6 +188,9 @@ func (p *ForgeProxy) EnsureArtifact(ctx context.Context, fileURI string) error {
 	if err != nil {
 		return err
 	}
+	if loaded.statusCode == http.StatusNotFound {
+		return ErrUpstreamNotFound
+	}
 	if loaded.statusCode < 200 || loaded.statusCode >= 300 {
 		return fmt.Errorf("upstream artifact status %d", loaded.statusCode)
 	}

@@ -1958,7 +1958,10 @@ func TestV3ReleaseRequestMarksSelectedVersionActive(t *testing.T) {
 		}
 	}
 
-	moduleSvc := service.NewModuleService(st, testArtifactStorage{}, "modules", nil)
+	moduleSvc := service.NewModuleService(st, fixedDownloadStorage{
+		body:        []byte("upstream archive"),
+		contentType: "application/gzip",
+	}, "modules", nil)
 	server := newAdminServer(t, moduleSvc, http.NotFoundHandler())
 	resp := getV3Release(t, server)
 	_ = resp.Body.Close()

@@ -138,7 +138,7 @@ func loadArgs(args []string, output io.Writer) (Config, error) {
 		OIDCCookieSecret:          os.Getenv("OIDC_COOKIE_SECRET"),
 		OIDCScopes:                getEnv("OIDC_SCOPES", "openid profile email"),
 		OIDCSigningAlgorithms:     getEnv("OIDC_SIGNING_ALGORITHMS", "RS256"),
-		UpstreamURL:               getEnv("UPSTREAM_URL", "https://forgeapi.puppetlabs.com"),
+		UpstreamURL:               getEnv("UPSTREAM_URL", "https://forgeapi.puppet.com"),
 		ReadHeaderTimeout:         10 * time.Second,
 		IdleTimeout:               60 * time.Second,
 		HTTPMaxHeaderBytes:        1 << 20,

@@ -66,7 +66,7 @@ services:
       OIDC_COOKIE_SECRET: ${OIDC_COOKIE_SECRET:-}
       OIDC_SCOPES: ${OIDC_SCOPES:-openid profile email}
       OIDC_SIGNING_ALGORITHMS: ${OIDC_SIGNING_ALGORITHMS:-RS256}
-      UPSTREAM_URL: https://forgeapi.puppetlabs.com
+      UPSTREAM_URL: https://forgeapi.puppet.com
       UPSTREAM_PROXY_JSON_CACHE_TTL: 5m
       UPSTREAM_PROXY_JSON_STALE_TTL: 1h
       FORGE_CACHE_MAX_BODY_BYTES: 1048576
@@ -213,7 +213,7 @@ configs:
     content: |
       mod 'puppetlabs-apt', '11.3.1'
       mod 'puppet-archive', '8.1.0'
-      mod 'puppetlabs-ntp', '11.1.0'
+      mod 'puppetlabs-ntp', '11.1.1'
       mod 'saz-timezone', '7.0.0'
       mod 'stm-debconf', '7.0.1'
       mod 'LeLutin-smartd', '2.6.3'

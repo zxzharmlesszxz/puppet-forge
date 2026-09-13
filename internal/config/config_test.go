@@ -104,6 +104,9 @@ func TestLoadGCSConfigWithDefaults(t *testing.T) {
 	if cfg.OIDCSigningAlgorithms != "RS256" {
 		t.Fatalf("unexpected OIDC_SIGNING_ALGORITHMS default: %q", cfg.OIDCSigningAlgorithms)
 	}
+	if cfg.UpstreamURL != "https://forgeapi.puppet.com" {
+		t.Fatalf("unexpected UPSTREAM_URL default: %q", cfg.UpstreamURL)
+	}
 }
 
 func TestLoadReadsAdminToken(t *testing.T) {
