@@ -143,6 +143,18 @@ Manage UI використовує ті самі дані, щоб прихову
 Повторні спостереження об'єднуються до одного SQL-запису на реліз за хвилину на
 кожній репліці, тому counter рахує спроби запису до store, а не кожен HTTP-запит.
 
+### Споживачі релізів
+
+- `puppet_forge_release_consumer_last_seen_timestamp_seconds{consumer_team,consumer,consumer_role,owner,module,version,latest_version,status}` містить час останнього запиту конкретного архіву, який вдалося пов'язати з іменованим збереженим access-токеном.
+- `puppet_forge_release_consumer_observations{consumer_team,consumer,consumer_role,owner,module,version,latest_version,status}` показує збережені спостереження, об'єднані не частіше одного запису на хвилину на кожній репліці. Це gauge зі спільної SQL-бази, а не точний лічильник HTTP-запитів.
+- `puppet_forge_release_consumer_mark_total{result}` рахує спроби запису до SQL після throttle.
+- `puppet_forge_release_consumer_series_total` показує загальну кількість збережених записів до застосування ліміту експорту.
+- `puppet_forge_release_consumer_metrics_truncated` дорівнює `1`, якщо `METRICS_RELEASE_CONSUMER_LIMIT` не дозволив додати старіші записи до snapshot.
+
+Мітка `status` має значення `latest`, `legacy` або `unknown`, якщо останній реліз модуля вже невідомий. `consumer_team` означає команду-власника токена, `consumer` містить задану оператором назву токена, а `consumer_role` має значення `read` або `publish`. Значення токенів, хеші, префікси, OIDC subjects та email ніколи не експортуються. Анонімний public access, OIDC, bootstrap-admin, неіменовані й legacy plaintext credentials навмисно не отримують атрибуцію. Валідний іменований bearer-токен усе одно враховується, коли `PUBLIC_MODULE_ACCESS=true`; невалідний токен не блокує інакше публічний доступ. Записи зберігаються протягом `RELEASE_CONSUMER_TTL` (типово 180 днів); collector оновлює snapshot у пам'яті й не звертається до SQL під час Prometheus scrape.
+
+Вкладка Grafana `Legacy Usage` показує ці записи разом із використаною та latest-версіями. Ad hoc змінна `Filters` дозволяє фільтрувати за `consumer_team`, `consumer`, `consumer_role`, `owner`, `module` або `version`; унікальна назва токена дає його команді прямий покажчик на проєкт чи середовище без додавання окремої project identity до Forge.
+
 ### `puppet_forge_artifact_deletion_total`
 
 - Тип: counter
@@ -302,6 +314,9 @@ HTTP-запит уже може мати статус `200` або `206`, кол
 
 ## Примітки щодо кардинальності
 
-Метрики інвентарю агрегуються за обмеженими enum або власником модуля. Назви
-окремих модулів, версії релізів, користувачі, токени, request ID і тексти помилок
-ніколи не використовуються як мітки метрик.
+Більшість метрик інвентарю агрегуються за обмеженими enum або власником модуля.
+Метрики споживачів релізів є навмисним обмеженим винятком: вони використовують
+операторські назви токенів і версії модулів, обмежують cached export через
+`METRICS_RELEASE_CONSUMER_LIMIT`, явно показують truncation і зберігають SQL rows
+лише протягом `RELEASE_CONSUMER_TTL`. Raw credentials, token IDs/digests/prefixes,
+користувачі, request ID і тексти помилок ніколи не стають мітками метрик.

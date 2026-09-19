@@ -136,6 +136,18 @@ label to diagnose a stale or failing replica.
 
 Release usage marks are written when clients request a concrete release or download its archive through the API or compatible `/v3/releases/*` and `/v3/files/*` routes. Listing module metadata does not mark its latest release as active. Repeated observations are coalesced to at most one SQL write per release per minute on each replica. Therefore, the counter records attempted store writes rather than every matching HTTP request. The Manage UI uses the same shared release usage data to hide delete actions for in-use releases.
 
+### Release consumers
+
+- `puppet_forge_release_consumer_last_seen_timestamp_seconds{consumer_team,consumer,consumer_role,owner,module,version,latest_version,status}` records the latest concrete archive request attributed to a named stored access token.
+- `puppet_forge_release_consumer_observations{consumer_team,consumer,consumer_role,owner,module,version,latest_version,status}` exposes retained observations coalesced to at most one write per minute on each replica. It is a gauge backed by shared SQL, not an exact HTTP request counter.
+- `puppet_forge_release_consumer_mark_total{result}` counts SQL mark attempts made after throttling.
+- `puppet_forge_release_consumer_series_total` reports all retained consumer records before the export limit.
+- `puppet_forge_release_consumer_metrics_truncated` is `1` when `METRICS_RELEASE_CONSUMER_LIMIT` omits older records from the snapshot.
+
+`status` is `latest`, `legacy`, or `unknown` when the module no longer has a known latest release. `consumer_team` is the team owning the access token, `consumer` is its operator-assigned name, and `consumer_role` is `read` or `publish`. Raw token values, hashes, prefixes, OIDC subjects, and email addresses are never exported. Anonymous public access, OIDC, bootstrap-admin, unnamed, and legacy plaintext credentials are intentionally not attributed. A valid named bearer token is still attributed when `PUBLIC_MODULE_ACCESS=true`; an invalid token does not block otherwise public access. Rows are retained for `RELEASE_CONSUMER_TTL` (180 days by default), while the collector refreshes an in-memory snapshot and performs no SQL during Prometheus scrapes.
+
+The Grafana `Legacy Usage` tab lists these records with used and latest versions. Use the dashboard's ad hoc `Filters` variable for `consumer_team`, `consumer`, `consumer_role`, `owner`, `module`, or `version`; a uniquely named token gives its team the direct project/environment lookup without adding a separate project identity to Forge.
+
 ### `puppet_forge_artifact_deletion_total`
 
 - Type: counter
@@ -284,4 +296,4 @@ remain visible in the dashboard but do not page operators.
 
 ## Cardinality Notes
 
-Inventory metrics are aggregated by bounded enums or module owner. Per-module names, release versions, users, tokens, request IDs, and error text are never metric labels.
+Most inventory metrics are aggregated by bounded enums or module owner. Release-consumer metrics are the deliberate bounded exception: they label operator-visible token names and module versions, cap the cached export at `METRICS_RELEASE_CONSUMER_LIMIT`, expose truncation explicitly, and retain SQL rows only for `RELEASE_CONSUMER_TTL`. Raw credentials, token IDs/digests/prefixes, users, request IDs, and error text are never metric labels.

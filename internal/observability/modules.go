@@ -14,11 +14,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
 type moduleMetricsSource interface {
 	CountModulesByOwner(ctx context.Context, owners []string) (map[string]int, error)
 	ListReleaseMetricSummaries(ctx context.Context) ([]domain.ReleaseMetricSummary, error)
+}
+
+type releaseConsumerMetricsSource interface {
+	ListReleaseConsumers(ctx context.Context, since time.Time, limit int) ([]store.ReleaseConsumer, int, error)
 }
 
 const (
@@ -27,8 +32,10 @@ const (
 )
 
 type moduleMetricsCollector struct {
-	modules     moduleMetricsSource
-	moduleLimit int
+	modules       moduleMetricsSource
+	moduleLimit   int
+	consumerLimit int
+	consumerTTL   time.Duration
 
 	modulesByOwnerDesc       *prometheus.Desc
 	releaseSummaryDesc       *prometheus.Desc
@@ -38,22 +45,31 @@ type moduleMetricsCollector struct {
 	refreshErrorsDesc        *prometheus.Desc
 	ownersTotalDesc          *prometheus.Desc
 	truncatedDesc            *prometheus.Desc
+	consumerLastSeenDesc     *prometheus.Desc
+	consumerObservationsDesc *prometheus.Desc
+	consumerSeriesTotalDesc  *prometheus.Desc
+	consumerTruncatedDesc    *prometheus.Desc
 
-	mu            sync.RWMutex
-	cached        []prometheus.Metric
-	ready         bool
-	lastSuccess   time.Time
-	refreshErrors uint64
-	ownersTotal   int
-	truncated     bool
+	mu                  sync.RWMutex
+	cached              []prometheus.Metric
+	ready               bool
+	lastSuccess         time.Time
+	refreshErrors       uint64
+	ownersTotal         int
+	truncated           bool
+	consumerSeriesTotal int
+	consumerTruncated   bool
 }
 
-func RegisterModuleMetrics(ctx context.Context, modules moduleMetricsSource, moduleLimit int, refreshInterval time.Duration, registerer prometheus.Registerer) (func(), error) {
+func RegisterModuleMetrics(ctx context.Context, modules moduleMetricsSource, moduleLimit, consumerLimit int, consumerTTL, refreshInterval time.Duration, registerer prometheus.Registerer) (func(), error) {
 	if modules == nil {
 		return func() {}, nil
 	}
 	if moduleLimit <= 0 {
 		moduleLimit = 10000
+	}
+	if consumerLimit <= 0 {
+		consumerLimit = 10000
 	}
 	if refreshInterval <= 0 {
 		return nil, errors.New("module metrics refresh interval must be greater than zero")
@@ -62,7 +78,7 @@ func RegisterModuleMetrics(ctx context.Context, modules moduleMetricsSource, mod
 		registerer = prometheus.DefaultRegisterer
 	}
 
-	collector := newModuleMetricsCollector(modules, moduleLimit)
+	collector := newModuleMetricsCollector(modules, moduleLimit, consumerLimit, consumerTTL)
 	if err := registerer.Register(collector); err != nil {
 		return nil, err
 	}
@@ -72,10 +88,12 @@ func RegisterModuleMetrics(ctx context.Context, modules moduleMetricsSource, mod
 	return wg.Wait, nil
 }
 
-func newModuleMetricsCollector(modules moduleMetricsSource, moduleLimit int) *moduleMetricsCollector {
+func newModuleMetricsCollector(modules moduleMetricsSource, moduleLimit, consumerLimit int, consumerTTL time.Duration) *moduleMetricsCollector {
 	return &moduleMetricsCollector{
-		modules:     modules,
-		moduleLimit: moduleLimit,
+		modules:       modules,
+		moduleLimit:   moduleLimit,
+		consumerLimit: consumerLimit,
+		consumerTTL:   consumerTTL,
 		modulesByOwnerDesc: prometheus.NewDesc(
 			"puppet_forge_modules",
 			"Known Puppet modules indexed by the service, grouped by owner.",
@@ -121,6 +139,30 @@ func newModuleMetricsCollector(modules moduleMetricsSource, moduleLimit int) *mo
 		truncatedDesc: prometheus.NewDesc(
 			"puppet_forge_module_metrics_truncated",
 			"Whether owner-labelled module inventory metrics were truncated by METRICS_MODULE_LIMIT.",
+			nil,
+			nil,
+		),
+		consumerLastSeenDesc: prometheus.NewDesc(
+			"puppet_forge_release_consumer_last_seen_timestamp_seconds",
+			"Unix timestamp of the latest observed artifact download by a named access token.",
+			[]string{"consumer_team", "consumer", "consumer_role", "owner", "module", "version", "latest_version", "status"},
+			nil,
+		),
+		consumerObservationsDesc: prometheus.NewDesc(
+			"puppet_forge_release_consumer_observations",
+			"Retained coalesced artifact download observations for a named access token and module release.",
+			[]string{"consumer_team", "consumer", "consumer_role", "owner", "module", "version", "latest_version", "status"},
+			nil,
+		),
+		consumerSeriesTotalDesc: prometheus.NewDesc(
+			"puppet_forge_release_consumer_series_total",
+			"Release consumer records found during the last successful inventory refresh.",
+			nil,
+			nil,
+		),
+		consumerTruncatedDesc: prometheus.NewDesc(
+			"puppet_forge_release_consumer_metrics_truncated",
+			"Whether release consumer metrics were truncated by METRICS_RELEASE_CONSUMER_LIMIT.",
 			nil,
 			nil,
 		),
@@ -215,15 +257,51 @@ func (c *moduleMetricsCollector) refresh(parent context.Context) {
 		)
 	}
 
+	consumerSeriesTotal := 0
+	consumerTruncated := false
+	if source, ok := c.modules.(releaseConsumerMetricsSource); ok {
+		since := time.Time{}
+		if c.consumerTTL > 0 {
+			since = time.Now().UTC().Add(-c.consumerTTL)
+		}
+		consumers, total, err := source.ListReleaseConsumers(ctx, since, c.consumerLimit)
+		if err != nil {
+			c.recordRefreshError()
+			slog.Default().Error("collect release consumer metrics failed", "err", err)
+			return
+		}
+		consumerSeriesTotal = total
+		consumerTruncated = total > c.consumerLimit
+		for _, consumer := range consumers {
+			status := "legacy"
+			switch {
+			case consumer.LatestVersion == "":
+				status = "unknown"
+			case consumer.Version == consumer.LatestVersion:
+				status = "latest"
+			}
+			labels := []string{consumer.ConsumerTeam, consumer.ConsumerName, consumer.ConsumerRole, consumer.Owner, consumer.Name, consumer.Version, consumer.LatestVersion, status}
+			metrics = append(metrics,
+				prometheus.MustNewConstMetric(c.consumerLastSeenDesc, prometheus.GaugeValue, unixSeconds(consumer.LastSeenAt), labels...),
+				prometheus.MustNewConstMetric(c.consumerObservationsDesc, prometheus.GaugeValue, float64(consumer.Observations), labels...),
+			)
+		}
+	}
+
 	c.mu.Lock()
 	c.cached = metrics
 	c.ready = true
 	c.lastSuccess = time.Now()
 	c.ownersTotal = ownersTotal
 	c.truncated = truncated
+	c.consumerSeriesTotal = consumerSeriesTotal
+	c.consumerTruncated = consumerTruncated
 	c.mu.Unlock()
 	if truncated {
 		slog.Default().Warn("module owner metrics truncated", "owners", ownersTotal, "limit", c.moduleLimit)
+	}
+	if consumerTruncated {
+		slog.Default().Warn("release consumer metrics truncated", "series", consumerSeriesTotal, "limit", c.consumerLimit)
 	}
 }
 
@@ -242,6 +320,10 @@ func (c *moduleMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.refreshErrorsDesc
 	ch <- c.ownersTotalDesc
 	ch <- c.truncatedDesc
+	ch <- c.consumerLastSeenDesc
+	ch <- c.consumerObservationsDesc
+	ch <- c.consumerSeriesTotalDesc
+	ch <- c.consumerTruncatedDesc
 }
 
 func (c *moduleMetricsCollector) Collect(ch chan<- prometheus.Metric) {
@@ -252,6 +334,8 @@ func (c *moduleMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 	refreshErrors := c.refreshErrors
 	ownersTotal := c.ownersTotal
 	truncated := c.truncated
+	consumerSeriesTotal := c.consumerSeriesTotal
+	consumerTruncated := c.consumerTruncated
 	c.mu.RUnlock()
 
 	for _, m := range cached {
@@ -262,6 +346,8 @@ func (c *moduleMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.refreshErrorsDesc, prometheus.CounterValue, float64(refreshErrors))
 	ch <- prometheus.MustNewConstMetric(c.ownersTotalDesc, prometheus.GaugeValue, float64(ownersTotal))
 	ch <- prometheus.MustNewConstMetric(c.truncatedDesc, prometheus.GaugeValue, boolFloat(truncated))
+	ch <- prometheus.MustNewConstMetric(c.consumerSeriesTotalDesc, prometheus.GaugeValue, float64(consumerSeriesTotal))
+	ch <- prometheus.MustNewConstMetric(c.consumerTruncatedDesc, prometheus.GaugeValue, boolFloat(consumerTruncated))
 }
 
 func boolFloat(value bool) float64 {

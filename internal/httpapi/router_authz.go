@@ -23,6 +23,7 @@ func (r *Router) requireRead(next http.Handler) http.Handler {
 
 func (r *Router) requireReadAccess(w http.ResponseWriter, req *http.Request) bool {
 	if r.publicModuleAccess {
+		r.attachOptionalReadPrincipal(req)
 		slog.Debug("read access allowed", "request_id", observability.RequestID(req.Context()), "reason", "public_module_access")
 		return true
 	}
@@ -52,6 +53,28 @@ func (r *Router) requireReadAccess(w http.ResponseWriter, req *http.Request) boo
 	)
 	r.recordAccessTokenUsed(req.Context(), principal)
 	return true
+}
+
+func (r *Router) attachOptionalReadPrincipal(req *http.Request) {
+	if req.Header.Get("Authorization") == "" {
+		return
+	}
+	authorizer, err := r.currentAuthorizer(req.Context())
+	if err != nil || authorizer == nil {
+		return
+	}
+	principal, ok := authorizer.AuthenticateRequest(req)
+	if !ok || !principal.CanRead {
+		return
+	}
+	if principal.TokenID != "" {
+		active, err := r.modules.IsAccessTokenActive(req.Context(), principal.TokenID, time.Now())
+		if err != nil || !active {
+			return
+		}
+	}
+	*req = *req.WithContext(auth.ContextWithPrincipal(req.Context(), principal))
+	r.recordAccessTokenUsed(req.Context(), principal)
 }
 
 func (r *Router) requireActiveAccessToken(w http.ResponseWriter, req *http.Request, principal auth.Principal) bool {

@@ -24,6 +24,11 @@ var (
 		Help: "Total number of release usage mark attempts.",
 	}, []string{"result"}))
 
+	releaseConsumerMarkedTotal = RegisterCounterVec(prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "puppet_forge_release_consumer_mark_total",
+		Help: "Total number of named access-token release consumer mark attempts.",
+	}, []string{"result"}))
+
 	upstreamSyncTotal = RegisterCounterVec(prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "puppet_forge_upstream_sync_total",
 		Help: "Total number of upstream module sync attempts.",
@@ -135,6 +140,7 @@ func initOperationMetrics() {
 	for _, result := range []string{"success", "error"} {
 		publishTotal.WithLabelValues(result).Add(0)
 		releaseUsageMarkedTotal.WithLabelValues(result).Add(0)
+		releaseConsumerMarkedTotal.WithLabelValues(result).Add(0)
 		for _, kind := range []string{"module", "release"} {
 			deleteTotal.WithLabelValues(result, kind).Add(0)
 		}
@@ -186,6 +192,10 @@ func ObserveDelete(kind string, err error) {
 
 func ObserveReleaseUsageMark(err error) {
 	releaseUsageMarkedTotal.WithLabelValues(resultLabel(err)).Inc()
+}
+
+func ObserveReleaseConsumerMark(err error) {
+	releaseConsumerMarkedTotal.WithLabelValues(resultLabel(err)).Inc()
 }
 
 func ObserveUpstreamSync(trigger string, err error) {

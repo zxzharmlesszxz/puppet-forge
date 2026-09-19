@@ -6183,6 +6183,144 @@
             }
           }
         }
+      },
+      "panel-57": {
+        "kind": "Panel",
+        "spec": {
+          "id": 57,
+          "title": "Legacy Release Consumers",
+          "description": "Retained named-token observations whose requested module version is older than the current latest release. Last seen is the actual observation time.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${DS_PROMETHEUS}"
+                      },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "max by (consumer_team, consumer, consumer_role, owner, module, version, latest_version, status) (last_over_time(puppet_forge_release_consumer_last_seen_timestamp_seconds{job=~\"$job\",status=\"legacy\"}[$__range])) * 1000",
+                        "legendFormat": "",
+                        "range": false,
+                        "instant": true,
+                        "format": "table"
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [
+                {
+                  "kind": "Transformation",
+                  "group": "labelsToFields",
+                  "spec": {
+                    "options": {
+                      "mode": "columns"
+                    }
+                  }
+                },
+                {
+                  "kind": "Transformation",
+                  "group": "organize",
+                  "spec": {
+                    "options": {
+                      "excludeByName": {
+                        "Time": true,
+                        "__name__": true,
+                        "instance": true,
+                        "job": true,
+                        "status": true
+                      },
+                      "includeByName": {},
+                      "indexByName": {
+                        "consumer_team": 0,
+                        "consumer": 1,
+                        "consumer_role": 2,
+                        "owner": 3,
+                        "module": 4,
+                        "version": 5,
+                        "latest_version": 6,
+                        "Value": 7
+                      },
+                      "renameByName": {
+                        "consumer_team": "Team",
+                        "consumer": "Token",
+                        "consumer_role": "Role",
+                        "owner": "Module owner",
+                        "module": "Module",
+                        "version": "Used version",
+                        "latest_version": "Latest version",
+                        "Value": "Last seen"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "table",
+            "version": "13.0.1",
+            "spec": {
+              "options": {
+                "cellHeight": "sm",
+                "enablePagination": true,
+                "showHeader": true
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "align": "auto",
+                    "cellOptions": {
+                      "type": "auto"
+                    },
+                    "footer": {
+                      "reducers": []
+                    },
+                    "inspect": false,
+                    "filterable": true
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      }
+                    ]
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "Last seen"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "dateTimeAsIso"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
       }
     },
     "layout": {
@@ -7093,6 +7231,48 @@
                                   "element": {
                                     "kind": "ElementReference",
                                     "name": "panel-27"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "kind": "TabsLayoutTab",
+            "spec": {
+              "title": "Legacy Usage",
+              "layout": {
+                "kind": "RowsLayout",
+                "spec": {
+                  "rows": [
+                    {
+                      "kind": "RowsLayoutRow",
+                      "spec": {
+                        "title": "Legacy Consumers",
+                        "collapse": false,
+                        "hideHeader": false,
+                        "fillScreen": true,
+                        "layout": {
+                          "kind": "GridLayout",
+                          "spec": {
+                            "items": [
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
+                                  "x": 0,
+                                  "y": 0,
+                                  "width": 24,
+                                  "height": 18,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-57"
                                   }
                                 }
                               }

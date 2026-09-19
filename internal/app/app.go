@@ -38,6 +38,8 @@ const deletedReleaseCleanupLeaseName = "deleted-release-cleanup"
 const deletedReleaseCleanupInterval = 24 * time.Hour
 const releaseUsageCleanupLeaseName = "release-usage-cleanup"
 const releaseUsageCleanupInterval = 24 * time.Hour
+const releaseConsumerCleanupLeaseName = "release-consumer-cleanup"
+const releaseConsumerCleanupInterval = 24 * time.Hour
 const sessionStateCleanupLeaseName = "session-state-cleanup"
 const sessionStateCleanupInterval = 24 * time.Hour
 const sessionStateHistoryTTL = 24 * time.Hour
@@ -157,7 +159,7 @@ func NewContext(ctx context.Context, cfg config.Config) (*App, error) {
 	moduleSvc := service.NewModuleService(moduleStore, artifacts, cfg.ArtifactPrefix, forgeProxy)
 	backgroundCtx, cancel := context.WithCancel(ctx)
 	moduleRegistry := prometheus.NewRegistry()
-	waitMetrics, err := observability.RegisterModuleMetrics(backgroundCtx, moduleSvc, cfg.MetricsModuleLimit, cfg.MetricsRefreshInterval, moduleRegistry)
+	waitMetrics, err := observability.RegisterModuleMetrics(backgroundCtx, moduleSvc, cfg.MetricsModuleLimit, cfg.MetricsConsumerLimit, cfg.ReleaseConsumerTTL, cfg.MetricsRefreshInterval, moduleRegistry)
 	if err != nil {
 		cancel()
 		moduleStore.Close()
@@ -212,12 +214,26 @@ func NewContext(ctx context.Context, cfg config.Config) (*App, error) {
 	app.startAccessTokenHistoryCleanup(backgroundCtx, moduleSvc, cfg.AccessTokenHistoryTTL)
 	app.startDeletedReleaseCleanup(backgroundCtx, moduleSvc, cfg.DeletedReleaseTTL)
 	app.startReleaseUsageCleanup(backgroundCtx, moduleSvc, cfg.ActiveReleaseTTL)
+	app.startReleaseConsumerCleanup(backgroundCtx, moduleSvc, cfg.ReleaseConsumerTTL)
 	app.startSessionStateCleanup(backgroundCtx, moduleSvc)
 	app.startRateLimitCleanup(backgroundCtx, moduleSvc)
 	app.startArtifactDeletionCleanup(backgroundCtx, moduleSvc)
 	app.startUpstreamArtifactCacheCleanup(backgroundCtx, moduleSvc, cfg.UpstreamArtifactOrphanTTL)
 
 	return app, nil
+}
+
+func (a *App) startReleaseConsumerCleanup(ctx context.Context, moduleSvc *service.ModuleService, ttl time.Duration) {
+	if ttl <= 0 || moduleSvc == nil {
+		return
+	}
+	a.startRetentionCleanup(ctx, releaseConsumerCleanupLeaseName, releaseConsumerCleanupInterval, "release consumer", func(ctx context.Context) error {
+		deleted, err := moduleSvc.PurgeReleaseConsumers(ctx, time.Now().UTC().Add(-ttl))
+		if err == nil && deleted > 0 {
+			slog.Default().Info("purged stale release consumers", "deleted", deleted, "ttl", ttl)
+		}
+		return err
+	})
 }
 
 func (a *App) startUpstreamArtifactCacheCleanup(ctx context.Context, moduleSvc *service.ModuleService, ttl time.Duration) {

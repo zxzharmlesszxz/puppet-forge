@@ -23,6 +23,16 @@ type staticModuleMetricsSource struct {
 	err       error
 }
 
+type staticReleaseConsumerMetricsSource struct {
+	staticModuleMetricsSource
+	consumers []store.ReleaseConsumer
+	total     int
+}
+
+func (s staticReleaseConsumerMetricsSource) ListReleaseConsumers(context.Context, time.Time, int) ([]store.ReleaseConsumer, int, error) {
+	return s.consumers, s.total, nil
+}
+
 func (s staticModuleMetricsSource) CountModulesByOwner(context.Context, []string) (map[string]int, error) {
 	if s.err != nil {
 		return nil, s.err
@@ -72,7 +82,7 @@ func TestModuleMetricsCollectorExportsAggregatedReleaseMetrics(t *testing.T) {
 		t.Fatalf("IndexUpstreamModule() error = %v", err)
 	}
 
-	collector := newModuleMetricsCollector(modules, 10000)
+	collector := newModuleMetricsCollector(modules, 10000, 10000, 180*24*time.Hour)
 	collector.refresh(ctx)
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(collector)
@@ -103,7 +113,7 @@ func TestModuleMetricsCollectDoesNotAccessStorage(t *testing.T) {
 	t.Parallel()
 
 	registry := prometheus.NewRegistry()
-	registry.MustRegister(newModuleMetricsCollector(panicModuleMetricsSource{}, 10))
+	registry.MustRegister(newModuleMetricsCollector(panicModuleMetricsSource{}, 10, 10, time.Hour))
 
 	expected := `
 # HELP puppet_forge_module_metrics_last_success_timestamp_seconds Unix timestamp of the last successful module inventory metrics refresh.
@@ -121,8 +131,80 @@ puppet_forge_module_metrics_refresh_errors_total 0
 # HELP puppet_forge_module_metrics_truncated Whether owner-labelled module inventory metrics were truncated by METRICS_MODULE_LIMIT.
 # TYPE puppet_forge_module_metrics_truncated gauge
 puppet_forge_module_metrics_truncated 0
+# HELP puppet_forge_release_consumer_metrics_truncated Whether release consumer metrics were truncated by METRICS_RELEASE_CONSUMER_LIMIT.
+# TYPE puppet_forge_release_consumer_metrics_truncated gauge
+puppet_forge_release_consumer_metrics_truncated 0
+# HELP puppet_forge_release_consumer_series_total Release consumer records found during the last successful inventory refresh.
+# TYPE puppet_forge_release_consumer_series_total gauge
+puppet_forge_release_consumer_series_total 0
 `
 	if err := testutil.GatherAndCompare(registry, strings.NewReader(expected)); err != nil {
+		t.Fatalf("GatherAndCompare() error = %v", err)
+	}
+}
+
+func TestModuleMetricsReportsLegacyReleaseConsumers(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_700_000_000, 0).UTC()
+	collector := newModuleMetricsCollector(staticReleaseConsumerMetricsSource{
+		staticModuleMetricsSource: staticModuleMetricsSource{owners: map[string]int{}},
+		consumers: []store.ReleaseConsumer{{
+			ConsumerTeam:  "platform",
+			ConsumerName:  "production",
+			ConsumerRole:  "read",
+			Owner:         "puppetlabs",
+			Name:          "stdlib",
+			Version:       "8.0.0",
+			LatestVersion: "9.0.0",
+			LastSeenAt:    now,
+			Observations:  3,
+		}},
+		total: 1,
+	}, 10, 10, time.Hour)
+	collector.refresh(context.Background())
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(collector)
+
+	expected := `
+# HELP puppet_forge_release_consumer_last_seen_timestamp_seconds Unix timestamp of the latest observed artifact download by a named access token.
+# TYPE puppet_forge_release_consumer_last_seen_timestamp_seconds gauge
+puppet_forge_release_consumer_last_seen_timestamp_seconds{consumer="production",consumer_role="read",consumer_team="platform",latest_version="9.0.0",module="stdlib",owner="puppetlabs",status="legacy",version="8.0.0"} 1.7e+09
+# HELP puppet_forge_release_consumer_observations Retained coalesced artifact download observations for a named access token and module release.
+# TYPE puppet_forge_release_consumer_observations gauge
+puppet_forge_release_consumer_observations{consumer="production",consumer_role="read",consumer_team="platform",latest_version="9.0.0",module="stdlib",owner="puppetlabs",status="legacy",version="8.0.0"} 3
+# HELP puppet_forge_release_consumer_series_total Release consumer records found during the last successful inventory refresh.
+# TYPE puppet_forge_release_consumer_series_total gauge
+puppet_forge_release_consumer_series_total 1
+# HELP puppet_forge_release_consumer_metrics_truncated Whether release consumer metrics were truncated by METRICS_RELEASE_CONSUMER_LIMIT.
+# TYPE puppet_forge_release_consumer_metrics_truncated gauge
+puppet_forge_release_consumer_metrics_truncated 0
+`
+	if err := testutil.GatherAndCompare(registry, strings.NewReader(expected), "puppet_forge_release_consumer_last_seen_timestamp_seconds", "puppet_forge_release_consumer_observations", "puppet_forge_release_consumer_series_total", "puppet_forge_release_consumer_metrics_truncated"); err != nil {
+		t.Fatalf("GatherAndCompare() error = %v", err)
+	}
+}
+
+func TestModuleMetricsReportsConsumerTruncation(t *testing.T) {
+	t.Parallel()
+
+	collector := newModuleMetricsCollector(staticReleaseConsumerMetricsSource{
+		staticModuleMetricsSource: staticModuleMetricsSource{owners: map[string]int{}},
+		total:                     11,
+	}, 10, 10, time.Hour)
+	collector.refresh(context.Background())
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(collector)
+
+	expected := `
+# HELP puppet_forge_release_consumer_series_total Release consumer records found during the last successful inventory refresh.
+# TYPE puppet_forge_release_consumer_series_total gauge
+puppet_forge_release_consumer_series_total 11
+# HELP puppet_forge_release_consumer_metrics_truncated Whether release consumer metrics were truncated by METRICS_RELEASE_CONSUMER_LIMIT.
+# TYPE puppet_forge_release_consumer_metrics_truncated gauge
+puppet_forge_release_consumer_metrics_truncated 1
+`
+	if err := testutil.GatherAndCompare(registry, strings.NewReader(expected), "puppet_forge_release_consumer_series_total", "puppet_forge_release_consumer_metrics_truncated"); err != nil {
 		t.Fatalf("GatherAndCompare() error = %v", err)
 	}
 }
@@ -132,7 +214,7 @@ func TestModuleMetricsReportsOwnerTruncation(t *testing.T) {
 
 	collector := newModuleMetricsCollector(staticModuleMetricsSource{
 		owners: map[string]int{"alpha": 1, "beta": 2, "gamma": 3},
-	}, 2)
+	}, 2, 10, time.Hour)
 	collector.refresh(context.Background())
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(collector)
@@ -163,7 +245,7 @@ puppet_forge_module_metrics_truncated 1
 func TestModuleMetricsReportsRefreshFailure(t *testing.T) {
 	t.Parallel()
 
-	collector := newModuleMetricsCollector(staticModuleMetricsSource{err: errors.New("store unavailable")}, 10)
+	collector := newModuleMetricsCollector(staticModuleMetricsSource{err: errors.New("store unavailable")}, 10, 10, time.Hour)
 	collector.refresh(context.Background())
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(collector)
@@ -195,11 +277,11 @@ func TestModuleMetricsRegistrationsUseIndependentRegistries(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	source := staticModuleMetricsSource{owners: map[string]int{"teamname": 1}}
-	waitFirst, err := RegisterModuleMetrics(ctx, source, 10, time.Hour, prometheus.NewRegistry())
+	waitFirst, err := RegisterModuleMetrics(ctx, source, 10, 10, time.Hour, time.Hour, prometheus.NewRegistry())
 	if err != nil {
 		t.Fatalf("RegisterModuleMetrics(first) error = %v", err)
 	}
-	waitSecond, err := RegisterModuleMetrics(ctx, source, 10, time.Hour, prometheus.NewRegistry())
+	waitSecond, err := RegisterModuleMetrics(ctx, source, 10, 10, time.Hour, time.Hour, prometheus.NewRegistry())
 	if err != nil {
 		cancel()
 		waitFirst()

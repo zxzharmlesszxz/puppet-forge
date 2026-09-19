@@ -25,6 +25,49 @@ type parityStore interface {
 	ModuleReleaseBatchStore
 }
 
+func TestStoreParityReleaseConsumers(t *testing.T) {
+	for _, tc := range parityStoreCases(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			st := tc.open(t)
+			t.Cleanup(st.Close)
+			owner := "consumer" + tc.name
+			module, err := st.UpsertModule(ctx, owner, "stdlib")
+			if err != nil {
+				t.Fatalf("UpsertModule() error = %v", err)
+			}
+			for _, version := range []string{"1.0.0", "2.0.0"} {
+				if _, err := st.CreateRelease(ctx, NewRelease(module.ID, owner, "stdlib", version, "", "", owner+"-stdlib-"+version+".tar.gz", "application/gzip", "", "", "", 0, nil)); err != nil {
+					t.Fatalf("CreateRelease(%s) error = %v", version, err)
+				}
+			}
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			observation := ReleaseConsumerObservation{ConsumerTeam: "platform", ConsumerName: "production", ConsumerRole: "read", Owner: owner, Name: "stdlib", Version: "1.0.0", ObservedAt: now}
+			if err := st.RecordReleaseConsumer(ctx, observation); err != nil {
+				t.Fatalf("RecordReleaseConsumer() error = %v", err)
+			}
+			observation.ObservedAt = now.Add(time.Minute)
+			if err := st.RecordReleaseConsumer(ctx, observation); err != nil {
+				t.Fatalf("RecordReleaseConsumer(second) error = %v", err)
+			}
+			observation.ObservedAt = now.Add(-time.Minute)
+			if err := st.RecordReleaseConsumer(ctx, observation); err != nil {
+				t.Fatalf("RecordReleaseConsumer(out of order) error = %v", err)
+			}
+			consumers, total, err := st.ListReleaseConsumers(ctx, now.Add(-time.Minute), 10)
+			if err != nil {
+				t.Fatalf("ListReleaseConsumers() error = %v", err)
+			}
+			if total != 1 || len(consumers) != 1 || consumers[0].LatestVersion != "2.0.0" || consumers[0].Observations != 3 || !consumers[0].FirstSeenAt.Equal(now.Add(-time.Minute)) || !consumers[0].LastSeenAt.Equal(now.Add(time.Minute)) {
+				t.Fatalf("release consumers = %#v total=%d", consumers, total)
+			}
+			if deleted, err := st.PurgeReleaseConsumers(ctx, now.Add(2*time.Minute)); err != nil || deleted != 1 {
+				t.Fatalf("PurgeReleaseConsumers() = %d, %v", deleted, err)
+			}
+		})
+	}
+}
+
 func TestStoreParityNormalizesNilReleaseMetadata(t *testing.T) {
 	for _, tc := range parityStoreCases(t) {
 		t.Run(tc.name, func(t *testing.T) {

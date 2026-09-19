@@ -13,6 +13,7 @@ func TestOperationCounters(t *testing.T) {
 	ObservePublish(errors.New("boom"))
 	ObserveDelete("release", nil)
 	ObserveReleaseUsageMark(nil)
+	ObserveReleaseConsumerMark(nil)
 	ObserveUpstreamSync("single", errors.New("boom"))
 	ObserveUpstreamCache("json", "hit")
 	ObserveArtifactDeletion("deleted")
@@ -34,6 +35,9 @@ func TestOperationCounters(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(releaseUsageMarkedTotal.WithLabelValues("success")); got < 1 {
 		t.Fatalf("release usage counter = %f, want at least 1", got)
+	}
+	if got := testutil.ToFloat64(releaseConsumerMarkedTotal.WithLabelValues("success")); got < 1 {
+		t.Fatalf("release consumer counter = %f, want at least 1", got)
 	}
 	if got := testutil.ToFloat64(upstreamSyncTotal.WithLabelValues("error", "single")); got < 1 {
 		t.Fatalf("upstream sync error counter = %f, want at least 1", got)

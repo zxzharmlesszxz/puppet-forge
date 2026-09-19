@@ -53,6 +53,9 @@ func TestLoadGCSConfigWithDefaults(t *testing.T) {
 	if cfg.ActiveReleaseTTL != 30*24*time.Hour {
 		t.Fatalf("unexpected ACTIVE_RELEASE_TTL default: %s", cfg.ActiveReleaseTTL)
 	}
+	if cfg.ReleaseConsumerTTL != 180*24*time.Hour {
+		t.Fatalf("unexpected RELEASE_CONSUMER_TTL default: %s", cfg.ReleaseConsumerTTL)
+	}
 	if cfg.AccessTokenHistoryTTL != 90*24*time.Hour {
 		t.Fatalf("unexpected ACCESS_TOKEN_HISTORY_TTL default: %s", cfg.AccessTokenHistoryTTL)
 	}
@@ -79,6 +82,9 @@ func TestLoadGCSConfigWithDefaults(t *testing.T) {
 	}
 	if cfg.MetricsModuleLimit != 10000 {
 		t.Fatalf("unexpected METRICS_MODULE_LIMIT default: %d", cfg.MetricsModuleLimit)
+	}
+	if cfg.MetricsConsumerLimit != 10000 {
+		t.Fatalf("unexpected METRICS_RELEASE_CONSUMER_LIMIT default: %d", cfg.MetricsConsumerLimit)
 	}
 	if cfg.MetricsRefreshInterval != 30*time.Second {
 		t.Fatalf("unexpected METRICS_REFRESH_INTERVAL default: %s", cfg.MetricsRefreshInterval)
@@ -519,7 +525,9 @@ func TestLoadAcceptsS3Backend(t *testing.T) {
 	t.Setenv("UPSTREAM_ARTIFACT_MAX_BYTES", "4096")
 	t.Setenv("UPSTREAM_PROXY_JSON_STALE_TTL", "30m")
 	t.Setenv("METRICS_MODULE_LIMIT", "123")
+	t.Setenv("METRICS_RELEASE_CONSUMER_LIMIT", "456")
 	t.Setenv("METRICS_REFRESH_INTERVAL", "45s")
+	t.Setenv("RELEASE_CONSUMER_TTL", "2160h")
 
 	cfg, err := Load()
 	if err != nil {
@@ -553,8 +561,14 @@ func TestLoadAcceptsS3Backend(t *testing.T) {
 	if cfg.MetricsModuleLimit != 123 {
 		t.Fatalf("unexpected METRICS_MODULE_LIMIT: %d", cfg.MetricsModuleLimit)
 	}
+	if cfg.MetricsConsumerLimit != 456 {
+		t.Fatalf("unexpected METRICS_RELEASE_CONSUMER_LIMIT: %d", cfg.MetricsConsumerLimit)
+	}
 	if cfg.MetricsRefreshInterval != 45*time.Second {
 		t.Fatalf("unexpected METRICS_REFRESH_INTERVAL: %s", cfg.MetricsRefreshInterval)
+	}
+	if cfg.ReleaseConsumerTTL != 90*24*time.Hour {
+		t.Fatalf("unexpected RELEASE_CONSUMER_TTL: %s", cfg.ReleaseConsumerTTL)
 	}
 }
 
@@ -631,6 +645,8 @@ func TestLoadArgsOverridesEnvironment(t *testing.T) {
 		"--upstream-artifact-max-bytes", "16384",
 		"--upstream-proxy-json-stale-ttl", "10m",
 		"--metrics-module-limit", "321",
+		"--metrics-release-consumer-limit", "654",
+		"--release-consumer-ttl", "336h",
 		"--manage-session-secret", "flag-manage-session-secret-32-bytes",
 		"--access-token-pepper", "flag-access-token-pepper-32-bytes",
 		"--access-token-history-ttl", "720h",
@@ -693,6 +709,12 @@ func TestLoadArgsOverridesEnvironment(t *testing.T) {
 	if cfg.MetricsModuleLimit != 321 {
 		t.Fatalf("unexpected METRICS_MODULE_LIMIT: %d", cfg.MetricsModuleLimit)
 	}
+	if cfg.MetricsConsumerLimit != 654 {
+		t.Fatalf("unexpected METRICS_RELEASE_CONSUMER_LIMIT: %d", cfg.MetricsConsumerLimit)
+	}
+	if cfg.ReleaseConsumerTTL != 14*24*time.Hour {
+		t.Fatalf("unexpected RELEASE_CONSUMER_TTL: %s", cfg.ReleaseConsumerTTL)
+	}
 	if cfg.TrustedProxyCIDRs != "192.0.2.0/24" {
 		t.Fatalf("unexpected TRUSTED_PROXY_CIDRS: %q", cfg.TrustedProxyCIDRs)
 	}
@@ -740,6 +762,16 @@ func TestLoadRejectsInvalidSizeLimits(t *testing.T) {
 			name: "metrics-module-limit",
 			args: []string{"--metrics-module-limit", "0"},
 			want: "METRICS_MODULE_LIMIT",
+		},
+		{
+			name: "metrics-release-consumer-limit",
+			args: []string{"--metrics-release-consumer-limit", "0"},
+			want: "METRICS_RELEASE_CONSUMER_LIMIT",
+		},
+		{
+			name: "release-consumer-ttl",
+			args: []string{"--release-consumer-ttl", "-1s"},
+			want: "RELEASE_CONSUMER_TTL",
 		},
 		{
 			name: "upstream-sync-concurrency",
@@ -1015,6 +1047,7 @@ func clearConfigEnv(t *testing.T) {
 		"DELETED_RELEASE_TTL",
 		"PUBLIC_MODULE_ACCESS",
 		"ACTIVE_RELEASE_TTL",
+		"RELEASE_CONSUMER_TTL",
 		"ARTIFACT_BACKEND",
 		"ARTIFACT_ENDPOINT",
 		"ARTIFACT_BUCKET",
@@ -1051,6 +1084,7 @@ func clearConfigEnv(t *testing.T) {
 		"UPSTREAM_SYNC_LIMIT",
 		"UPSTREAM_SYNC_CONCURRENCY",
 		"METRICS_MODULE_LIMIT",
+		"METRICS_RELEASE_CONSUMER_LIMIT",
 		"METRICS_REFRESH_INTERVAL",
 		"RECONCILE_ARTIFACTS",
 		"RECONCILE_REPAIR",

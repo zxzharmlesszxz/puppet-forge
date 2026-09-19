@@ -35,15 +35,17 @@ import (
 const readinessCapabilityTTL = 5 * time.Minute
 
 const (
-	maxArchiveEntries             = 10000
-	maxArchiveEntrySize           = 128 << 20
-	maxArchiveExpandedSize        = 512 << 20
-	maxArchiveMetadataSize        = 1 << 20
-	maxArchiveReadmeSize          = 2 << 20
-	maxArchiveFileSize            = 16 << 20
-	defaultReleaseUsageMaxEntries = 10_000
-	releaseUsageRecordInterval    = time.Minute
-	upstreamRefreshAttemptTimeout = 5 * time.Second
+	maxArchiveEntries              = 10000
+	maxArchiveEntrySize            = 128 << 20
+	maxArchiveExpandedSize         = 512 << 20
+	maxArchiveMetadataSize         = 1 << 20
+	maxArchiveReadmeSize           = 2 << 20
+	maxArchiveFileSize             = 16 << 20
+	defaultReleaseUsageMaxEntries  = 10_000
+	defaultConsumerUsageMaxEntries = 10_000
+	releaseUsageRecordInterval     = time.Minute
+	consumerUsageRecordInterval    = time.Minute
+	upstreamRefreshAttemptTimeout  = 5 * time.Second
 )
 
 var ErrProtectedDelete = errors.New("protected delete")
@@ -84,15 +86,16 @@ func (e protectedDeleteError) Unwrap() error {
 }
 
 type ModuleService struct {
-	modules              store.ModuleStore
-	access               store.AccessStore
-	rateLimits           store.RateLimitStore
-	artifacts            storage.ArtifactStorage
-	prefix               string
-	upstream             *proxy.ForgeProxy
-	releaseUsageThrottle *throttle.ExpirySet
-	readinessMu          sync.Mutex
-	readinessCheckedAt   time.Time
+	modules               store.ModuleStore
+	access                store.AccessStore
+	rateLimits            store.RateLimitStore
+	artifacts             storage.ArtifactStorage
+	prefix                string
+	upstream              *proxy.ForgeProxy
+	releaseUsageThrottle  *throttle.ExpirySet
+	consumerUsageThrottle *throttle.ExpirySet
+	readinessMu           sync.Mutex
+	readinessCheckedAt    time.Time
 }
 
 func NewModuleService(modules store.ModuleStore, artifacts storage.ArtifactStorage, prefix string, upstream *proxy.ForgeProxy) *ModuleService {
@@ -108,6 +111,10 @@ func NewModuleService(modules store.ModuleStore, artifacts storage.ArtifactStora
 		releaseUsageThrottle: throttle.NewExpirySet(
 			defaultReleaseUsageMaxEntries,
 			releaseUsageRecordInterval,
+		),
+		consumerUsageThrottle: throttle.NewExpirySet(
+			defaultConsumerUsageMaxEntries,
+			consumerUsageRecordInterval,
 		),
 	}
 }
@@ -666,6 +673,51 @@ func (s *ModuleService) MarkReleaseUsed(ctx context.Context, owner, name, versio
 		s.releaseUsageThrottle.Forget(key)
 	}
 	return err
+}
+
+func (s *ModuleService) MarkReleaseConsumerUsed(ctx context.Context, principal auth.Principal, owner, name, version string) error {
+	consumerStore, ok := s.modules.(store.ReleaseConsumerStore)
+	consumerTeam := strings.TrimSpace(principal.Team)
+	consumerName := strings.TrimSpace(principal.TokenName)
+	consumerRole := strings.TrimSpace(principal.TokenRole)
+	if !ok || principal.TokenID == "" || consumerTeam == "" || consumerName == "" || (consumerRole != "read" && consumerRole != "publish") {
+		return nil
+	}
+	key := consumerTeam + "\x00" + consumerName + "\x00" + consumerRole + "\x00" + owner + "\x00" + name + "\x00" + version
+	now := time.Now().UTC()
+	if !s.consumerUsageThrottle.Record(key, now) {
+		return nil
+	}
+	err := consumerStore.RecordReleaseConsumer(ctx, store.ReleaseConsumerObservation{
+		ConsumerTeam: consumerTeam,
+		ConsumerName: consumerName,
+		ConsumerRole: consumerRole,
+		Owner:        owner,
+		Name:         name,
+		Version:      version,
+		ObservedAt:   now,
+	})
+	metrics.ObserveReleaseConsumerMark(err)
+	if err != nil {
+		s.consumerUsageThrottle.Forget(key)
+	}
+	return err
+}
+
+func (s *ModuleService) ListReleaseConsumers(ctx context.Context, since time.Time, limit int) ([]store.ReleaseConsumer, int, error) {
+	consumerStore, ok := s.modules.(store.ReleaseConsumerStore)
+	if !ok {
+		return nil, 0, nil
+	}
+	return consumerStore.ListReleaseConsumers(ctx, since, limit)
+}
+
+func (s *ModuleService) PurgeReleaseConsumers(ctx context.Context, before time.Time) (int64, error) {
+	consumerStore, ok := s.modules.(store.ReleaseConsumerStore)
+	if !ok {
+		return 0, nil
+	}
+	return consumerStore.PurgeReleaseConsumers(ctx, before)
 }
 
 func (s *ModuleService) IsReleaseActive(ctx context.Context, owner, name, version string, since time.Time) (bool, error) {

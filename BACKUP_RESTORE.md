@@ -13,7 +13,9 @@ Back up the metadata database and artifact bucket as one recovery set. Also back
 1. Pause module publishing and deletion, or take storage/database snapshots that represent the same point in time.
 2. Back up PostgreSQL with the platform snapshot mechanism or `pg_dump --format=custom`. For SQLite, stop the only writer and copy the database file, or use SQLite's online backup API.
    The database backup includes the durable `artifact_deletions` outbox. Pending
-   object cleanup therefore resumes automatically after restore and startup.
+   object cleanup therefore resumes automatically after restore and startup. It
+   also includes retained `release_consumers` history used by the Grafana legacy
+   usage view; normal `RELEASE_CONSUMER_TTL` cleanup resumes after startup.
 3. Snapshot or version-copy the complete configured bucket. At minimum, include both the local-release namespace below `ARTIFACT_PREFIX` and the independent `upstream-cache/` namespace referenced by indexed upstream releases.
 4. Export the effective non-secret configuration and store the required secrets in the organization's secret backup system.
 5. Record the application version and verify that both database and object backups completed.

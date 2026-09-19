@@ -73,7 +73,10 @@
 2. SQL store повертає records модуля й релізу.
 3. Для локальних релізів URL завантаження будується з налаштованого artifact
    backend.
-4. Для upstream-релізів сервіс може доповнити відсутні поля через upstream
+4. `GET` конкретного архіву з іменованим збереженим access-токеном записує у
+   shared SQL команду токена, його операторську назву й роль, а також запитану
+   версію модуля. Metadata- та `HEAD`-запити не створюють таких спостережень.
+5. Для upstream-релізів сервіс може доповнити відсутні поля через upstream
    proxy integration.
 
 ### Upstream proxy
@@ -294,4 +297,6 @@ strict cluster-wide quota.
 ## Спостережуваність
 
 Сервіс експортує structured HTTP logs, Prometheus HTTP/operation/inventory
-metrics. Канонічний контракт метрик описано в [METRICS.uk.md](METRICS.uk.md).
+metrics і збережені метрики споживачів версій за іменованими токенами для
+пошуку користувачів legacy-модулів. Канонічний контракт метрик описано в
+[METRICS.uk.md](METRICS.uk.md).

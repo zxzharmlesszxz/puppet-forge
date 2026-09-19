@@ -54,6 +54,9 @@ groups:
       - record: job:puppet_forge_release_usage_mark_errors:rate5m
         expr: sum by (job) (rate(puppet_forge_release_usage_mark_total{result="error"}[5m]))
 
+      - record: job:puppet_forge_release_consumer_mark_errors:rate5m
+        expr: sum by (job) (rate(puppet_forge_release_consumer_mark_total{result="error"}[5m]))
+
       - record: job_trigger:puppet_forge_upstream_sync_errors:rate5m
         expr: sum by (job, trigger) (rate(puppet_forge_upstream_sync_total{result="error"}[5m]))
 
@@ -240,6 +243,24 @@ groups:
         annotations:
           summary: "Puppet Forge release usage tracking errors on {{ $labels.job }}"
           description: "Release usage marks have been failing for at least 10 minutes, so active release protection may become stale."
+
+      - alert: PuppetForgeReleaseConsumerMarkErrors
+        expr: job:puppet_forge_release_consumer_mark_errors:rate5m > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge release consumer tracking errors on {{ $labels.job }}"
+          description: "Named token usage observations have been failing for at least 10 minutes, so the legacy usage dashboard may be incomplete."
+
+      - alert: PuppetForgeReleaseConsumerMetricsTruncated
+        expr: max by (job) (puppet_forge_release_consumer_metrics_truncated) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Puppet Forge release consumer metrics truncated on {{ $labels.job }}"
+          description: "METRICS_RELEASE_CONSUMER_LIMIT is lower than the retained token/module/version record count."
 
       - alert: PuppetForgeUpstreamSingleSyncErrors
         expr: job_trigger:puppet_forge_upstream_sync_errors:rate5m{trigger="single"} > 0

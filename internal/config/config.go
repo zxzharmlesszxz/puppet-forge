@@ -38,6 +38,7 @@ type Config struct {
 	ManageSessionSecret       string
 	PublicModuleAccess        bool
 	ActiveReleaseTTL          time.Duration
+	ReleaseConsumerTTL        time.Duration
 	ArtifactBackend           string
 	ArtifactEndpoint          string
 	ArtifactBucket            string
@@ -74,6 +75,7 @@ type Config struct {
 	UpstreamSyncLimit         int
 	UpstreamSyncConcurrency   int
 	MetricsModuleLimit        int
+	MetricsConsumerLimit      int
 	MetricsRefreshInterval    time.Duration
 	ReconcileArtifacts        bool
 	ReconcileRepair           bool
@@ -110,6 +112,7 @@ func loadArgs(args []string, output io.Writer) (Config, error) {
 		ManageSessionSecret:       os.Getenv("MANAGE_SESSION_SECRET"),
 		PublicModuleAccess:        false,
 		ActiveReleaseTTL:          30 * 24 * time.Hour,
+		ReleaseConsumerTTL:        180 * 24 * time.Hour,
 		ArtifactBackend:           getEnv("ARTIFACT_BACKEND", "gcs"),
 		ArtifactEndpoint:          getEnv("ARTIFACT_ENDPOINT", "https://storage.googleapis.com"),
 		ArtifactBucket:            os.Getenv("ARTIFACT_BUCKET"),
@@ -149,6 +152,7 @@ func loadArgs(args []string, output io.Writer) (Config, error) {
 		UpstreamSyncLimit:         1000,
 		UpstreamSyncConcurrency:   8,
 		MetricsModuleLimit:        10000,
+		MetricsConsumerLimit:      10000,
 		MetricsRefreshInterval:    30 * time.Second,
 		ReconcileArtifacts:        false,
 		ReconcileRepair:           false,
@@ -213,6 +217,7 @@ func applyFlags(cfg *Config, args []string, output io.Writer) error {
 	flags.StringVar(&cfg.ManageSessionSecret, "manage-session-secret", cfg.ManageSessionSecret, "shared secret for encrypted manage token sessions")
 	flags.BoolVar(&cfg.PublicModuleAccess, "public-module-access", cfg.PublicModuleAccess, "allow unauthenticated module read/download access")
 	flags.DurationVar(&cfg.ActiveReleaseTTL, "active-release-ttl", cfg.ActiveReleaseTTL, "active release protection TTL")
+	flags.DurationVar(&cfg.ReleaseConsumerTTL, "release-consumer-ttl", cfg.ReleaseConsumerTTL, "retention period for release consumer observations; zero disables cleanup")
 	flags.StringVar(&cfg.ArtifactBackend, "artifact-backend", cfg.ArtifactBackend, "artifact storage backend: gcs or s3")
 	flags.StringVar(&cfg.ArtifactEndpoint, "artifact-endpoint", cfg.ArtifactEndpoint, "artifact storage endpoint")
 	flags.StringVar(&cfg.ArtifactBucket, "artifact-bucket", cfg.ArtifactBucket, "artifact storage bucket")
@@ -249,6 +254,7 @@ func applyFlags(cfg *Config, args []string, output io.Writer) error {
 	flags.IntVar(&cfg.UpstreamSyncLimit, "upstream-sync-limit", cfg.UpstreamSyncLimit, "maximum upstream modules refreshed per cycle")
 	flags.IntVar(&cfg.UpstreamSyncConcurrency, "upstream-sync-concurrency", cfg.UpstreamSyncConcurrency, "maximum concurrent upstream module refreshes")
 	flags.IntVar(&cfg.MetricsModuleLimit, "metrics-module-limit", cfg.MetricsModuleLimit, "maximum owner series exported by inventory metrics")
+	flags.IntVar(&cfg.MetricsConsumerLimit, "metrics-release-consumer-limit", cfg.MetricsConsumerLimit, "maximum release consumer series exported by inventory metrics")
 	flags.DurationVar(&cfg.MetricsRefreshInterval, "metrics-refresh-interval", cfg.MetricsRefreshInterval, "module inventory metrics refresh interval")
 	flags.BoolVar(&cfg.ReconcileArtifacts, "reconcile-artifacts", cfg.ReconcileArtifacts, "report SQL/object-storage artifact inconsistencies and exit")
 	flags.BoolVar(&cfg.ReconcileRepair, "reconcile-repair", cfg.ReconcileRepair, "delete orphan objects found by artifact reconciliation")
@@ -396,6 +402,12 @@ func validate(cfg Config) error {
 	if cfg.ActiveReleaseTTL <= 0 {
 		return errors.New("ACTIVE_RELEASE_TTL must be greater than 0")
 	}
+	if cfg.ReleaseConsumerTTL < 0 {
+		return errors.New("RELEASE_CONSUMER_TTL must not be negative")
+	}
+	if cfg.MetricsConsumerLimit <= 0 {
+		return errors.New("METRICS_RELEASE_CONSUMER_LIMIT must be greater than 0")
+	}
 	if cfg.HTTPMaxHeaderBytes < 4096 || cfg.HTTPMaxHeaderBytes > 16<<20 {
 		return errors.New("HTTP_MAX_HEADER_BYTES must be between 4096 and 16777216")
 	}
@@ -489,6 +501,7 @@ func applyTypedEnv(cfg *Config) error {
 		{"ACCESS_TOKEN_HISTORY_TTL", &cfg.AccessTokenHistoryTTL},
 		{"DELETED_RELEASE_TTL", &cfg.DeletedReleaseTTL},
 		{"ACTIVE_RELEASE_TTL", &cfg.ActiveReleaseTTL},
+		{"RELEASE_CONSUMER_TTL", &cfg.ReleaseConsumerTTL},
 		{"READ_HEADER_TIMEOUT", &cfg.ReadHeaderTimeout},
 		{"READ_TIMEOUT", &cfg.ReadTimeout},
 		{"WRITE_TIMEOUT", &cfg.WriteTimeout},
@@ -516,6 +529,7 @@ func applyTypedEnv(cfg *Config) error {
 		{"UPSTREAM_SYNC_LIMIT", &cfg.UpstreamSyncLimit},
 		{"UPSTREAM_SYNC_CONCURRENCY", &cfg.UpstreamSyncConcurrency},
 		{"METRICS_MODULE_LIMIT", &cfg.MetricsModuleLimit},
+		{"METRICS_RELEASE_CONSUMER_LIMIT", &cfg.MetricsConsumerLimit},
 		{"DATABASE_MAX_CONNS", &cfg.DatabaseMaxConns},
 		{"DATABASE_MIN_CONNS", &cfg.DatabaseMinConns},
 	}

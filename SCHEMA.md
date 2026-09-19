@@ -333,6 +333,9 @@ sequenceDiagram
     O-->>B: bytes
     B-->>R: streamed artifact with checksum-consistent bytes
     B->>DB: mark release usage
+    opt GET authenticated by a named stored token
+        B->>DB: upsert token, module, version observation
+    end
 ```
 
 The first response must contain `file_md5`; it is calculated from the same bytes
@@ -351,6 +354,14 @@ bounds a stalled observer.
 JSON cache hits still mark the current release as used but skip repeated module
 and release indexing. A later cache miss or periodic refresh reconciles fresh
 upstream metadata.
+
+Consumer attribution is deliberately narrower than release activity. Only a
+concrete archive `GET` made with a named stored read or publish token updates
+`release_consumers`; metadata requests, `HEAD`, anonymous public access, OIDC
+sessions, bootstrap credentials, and legacy unnamed tokens do not. A valid
+named bearer token remains attributable in public mode. SQL is shared across
+replicas, while each replica coalesces the same consumer/module/version tuple
+for one minute before writing again.
 
 ## Browser Authentication Across Replicas
 
@@ -513,6 +524,17 @@ erDiagram
         string version
         timestamp last_used_at
     }
+    RELEASE_CONSUMERS {
+        string consumer_team PK
+        string consumer_name PK
+        string consumer_role PK
+        string owner PK
+        string name PK
+        string version PK
+        timestamp first_seen_at
+        timestamp last_seen_at
+        int request_count
+    }
     DELETED_RELEASES {
         string module_id FK
         string version
@@ -587,6 +609,7 @@ binary refuses to run against a schema version newer than it understands.
 | modules, releases, latest version            | SQL                                 | shared                     | transactional and constraint-protected                                                                                                                |
 | release bytes                                | object storage                      | shared                     | immutable create-only object, verified by SHA-256 and size                                                                                            |
 | release usage                                | SQL                                 | shared                     | active window uses `ACTIVE_RELEASE_TTL`; replicas coalesce writes through bounded throttles, while one lease-elected worker prunes expired rows daily |
+| named-token release consumers                | SQL                                 | shared                     | archive GET observations retained for `RELEASE_CONSUMER_TTL`; per-replica throttles bound writes and a lease-elected worker prunes expired rows       |
 | deleted upstream release tombstones          | SQL                                 | shared                     | background refresh is suppressed until TTL cleanup; an exact client request can deliberately restore a version on demand                              |
 | teams, token metadata, OIDC mappings, spaces | SQL                                 | shared                     | serialized replacement; authorizer cache refresh up to about two seconds                                                                              |
 | token and OIDC browser sessions              | SQL plus opaque cookie              | shared                     | eight-hour TTL, explicit revocation, checked on each request                                                                                          |
@@ -647,6 +670,7 @@ emit debug diagnostics without credentials or session values.
 | `READY-1`   | readiness fails when SQL or object-storage create/read/delete capability is unavailable   | `/readyz` changes from `200` to `503`; successful storage probes are cached for 5m  | readiness tests and Kubernetes probe                |
 | `RECON-1`   | repair never deletes SQL metadata or corrupt/missing records                              | JSON reconciliation report and orphan-only deletion                                 | reconciliation tests                                |
 | `OBS-1`     | all replicas are scraped                                                                  | Prometheus targets show one target per pod                                          | `make check` plus deployed target inspection        |
+| `OBS-2`     | named token archive GET identifies its module version consumer                            | Legacy Release Consumers shows team, token name/role, used version, and latest      | auth, route, store parity, and collector tests      |
 
 ## Manual Multi-Replica Verification Playbook
 

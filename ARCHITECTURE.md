@@ -59,7 +59,8 @@ The service separates:
 1. Client requests module or release metadata through `/api/v1/modules/...` or the HTML UI.
 2. SQL store returns module and release records.
 3. For local releases, download URLs are built from the configured artifact backend.
-4. For upstream-indexed releases, the service may enrich missing fields by querying the upstream proxy integration.
+4. A concrete archive `GET` authenticated by a named stored access token records the token team, operator-facing token name and role, and requested module version in shared SQL. Metadata and `HEAD` requests do not create consumer observations.
+5. For upstream-indexed releases, the service may enrich missing fields by querying the upstream proxy integration.
 
 ### Upstream Proxy Flow
 
@@ -198,5 +199,6 @@ The service exposes:
 - structured HTTP request logs
 - Prometheus HTTP metrics
 - module inventory metrics
+- retained named-token release-consumer metrics for identifying legacy module users
 
 The canonical metric contract is documented in [METRICS.md](METRICS.md).

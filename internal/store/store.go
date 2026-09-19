@@ -17,6 +17,29 @@ type ReleaseSummary struct {
 	CreatedAt time.Time
 }
 
+type ReleaseConsumer struct {
+	ConsumerTeam  string
+	ConsumerName  string
+	ConsumerRole  string
+	Owner         string
+	Name          string
+	Version       string
+	LatestVersion string
+	FirstSeenAt   time.Time
+	LastSeenAt    time.Time
+	Observations  int64
+}
+
+type ReleaseConsumerObservation struct {
+	ConsumerTeam string
+	ConsumerName string
+	ConsumerRole string
+	Owner        string
+	Name         string
+	Version      string
+	ObservedAt   time.Time
+}
+
 type ModuleReleaseSummary struct {
 	Owner     string
 	Name      string
@@ -81,6 +104,7 @@ type Store interface {
 	OIDCSessionStore
 	SessionMaintenanceStore
 	RateLimitStore
+	ReleaseConsumerStore
 	AcquireLease(ctx context.Context, name, holder string, duration time.Duration) (bool, error)
 	ReleaseLease(ctx context.Context, name, holder string) error
 	Close()
@@ -89,6 +113,12 @@ type Store interface {
 type RateLimitStore interface {
 	ConsumeRateLimit(ctx context.Context, key string, limit int, window time.Duration, now time.Time) (bool, error)
 	PurgeRateLimits(ctx context.Context, before time.Time) (int64, error)
+}
+
+type ReleaseConsumerStore interface {
+	RecordReleaseConsumer(ctx context.Context, observation ReleaseConsumerObservation) error
+	ListReleaseConsumers(ctx context.Context, since time.Time, limit int) ([]ReleaseConsumer, int, error)
+	PurgeReleaseConsumers(ctx context.Context, before time.Time) (int64, error)
 }
 
 type SessionMaintenanceStore interface {

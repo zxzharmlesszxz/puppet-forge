@@ -2313,6 +2313,76 @@ func TestModuleFileRouteRequiresReadAccessWhenPrivate(t *testing.T) {
 	}
 }
 
+func TestArchiveGETTracksNamedTokenConsumer(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	st := newHTTPAPITestStore(t)
+	createModuleRelease(t, st, "teamname", "apache", "1.2.3")
+	tokenHasher := httpAPITestTokenHasher()
+	rawToken := "named-read-token"
+	record, err := tokenHasher.Record(rawToken, auth.AccessTokenRecord{
+		ID:          "consumer-token-id",
+		Prefix:      "named-read",
+		Description: "production-control-repo",
+		CreatedAt:   time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("Record() error = %v", err)
+	}
+	configs := []auth.TeamConfig{{Team: "teamname", ReadTokenRecords: []auth.AccessTokenRecord{record}}}
+	if err := st.ReplaceTeamConfigs(ctx, configs); err != nil {
+		t.Fatalf("ReplaceTeamConfigs() error = %v", err)
+	}
+	authorizer, err := auth.NewAuthorizerWithTokenHasher(configs, tokenHasher)
+	if err != nil {
+		t.Fatalf("NewAuthorizerWithTokenHasher() error = %v", err)
+	}
+	moduleService := service.NewModuleService(st, fixedDownloadStorage{body: []byte("archive"), contentType: "application/gzip"}, "modules", nil)
+	server := httptest.NewServer(newTestRouter(moduleService, nil, "http://example.test", authorizer, nil, "", true, defaultActiveReleaseTTL))
+	t.Cleanup(server.Close)
+
+	request := func(method, path, token string) {
+		t.Helper()
+		req, err := http.NewRequestWithContext(ctx, method, server.URL+path, nil)
+		if err != nil {
+			t.Fatalf("NewRequestWithContext() error = %v", err)
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("%s %s error = %v", method, path, err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		closeErr := resp.Body.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			t.Fatalf("read %s %s response: %v", method, path, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s %s status = %d, want 200; body=%s", method, path, resp.StatusCode, body)
+		}
+	}
+	assertConsumerCount := func(want int) {
+		t.Helper()
+		consumers, total, err := st.ListReleaseConsumers(ctx, time.Time{}, 10)
+		if err != nil {
+			t.Fatalf("ListReleaseConsumers() error = %v", err)
+		}
+		if total != want || len(consumers) != want {
+			t.Fatalf("release consumers = %#v total=%d, want %d", consumers, total, want)
+		}
+	}
+
+	request(http.MethodHead, "/api/v1/modules/teamname/apache/versions/1.2.3/download", rawToken)
+	request(http.MethodGet, "/api/v1/modules/teamname/apache/versions/1.2.3", rawToken)
+	request(http.MethodGet, "/api/v1/modules/teamname/apache/versions/1.2.3/download", "invalid-token")
+	assertConsumerCount(0)
+	request(http.MethodGet, "/api/v1/modules/teamname/apache/versions/1.2.3/download", rawToken)
+	assertConsumerCount(1)
+}
+
 func TestCanDeleteInSpaceAllowsOnlyAdminsAndTeamAdmins(t *testing.T) {
 	t.Parallel()
 

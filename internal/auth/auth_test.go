@@ -7,7 +7,37 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestAuthenticateStoredTokenIncludesConsumerIdentity(t *testing.T) {
+	t.Parallel()
+
+	hasher, err := NewTokenHasher(strings.Repeat("consumer-pepper-", 2))
+	if err != nil {
+		t.Fatalf("NewTokenHasher() error = %v", err)
+	}
+	raw := "named-read-token"
+	authorizer, err := NewAuthorizerWithTokenHasher([]TeamConfig{{
+		Team: "teamname",
+		ReadTokenRecords: []AccessTokenRecord{{
+			ID:          "token-id",
+			Digest:      hasher.Digest(raw),
+			Description: "production-control-repo",
+			CreatedAt:   time.Now(),
+		}},
+	}}, hasher)
+	if err != nil {
+		t.Fatalf("NewAuthorizerWithTokenHasher() error = %v", err)
+	}
+	principal, ok := authorizer.AuthenticateToken(raw)
+	if !ok {
+		t.Fatal("stored token was not accepted")
+	}
+	if principal.Team != "teamname" || principal.TokenID != "token-id" || principal.TokenName != "production-control-repo" || principal.TokenRole != "read" {
+		t.Fatalf("consumer identity = %#v", principal)
+	}
+}
 
 func TestRequirePublishUsesTeamAsDefaultOwner(t *testing.T) {
 	t.Parallel()

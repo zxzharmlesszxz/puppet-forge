@@ -370,12 +370,25 @@ func (r *Router) serveDownload(w http.ResponseWriter, req *http.Request, owner, 
 		return
 	}
 
+	if req.Method == http.MethodGet {
+		r.markReleaseConsumerUsed(req.Context(), owner, name, version)
+	}
 	r.writeReleaseArchive(w, req, release)
 }
 
 func (r *Router) markReleaseUsed(ctx context.Context, owner, name, version string) {
 	if err := r.modules.MarkReleaseUsed(ctx, owner, name, version); err != nil {
 		slog.Warn("mark release used failed", "err", err, "owner", owner, "name", name, "version", version)
+	}
+}
+
+func (r *Router) markReleaseConsumerUsed(ctx context.Context, owner, name, version string) {
+	principal, ok := auth.PrincipalFromContext(ctx)
+	if !ok {
+		return
+	}
+	if err := r.modules.MarkReleaseConsumerUsed(ctx, principal, owner, name, version); err != nil {
+		slog.Warn("mark release consumer used failed", "err", err, "consumer_team", principal.Team, "consumer", principal.TokenName, "consumer_role", principal.TokenRole, "owner", owner, "name", name, "version", version)
 	}
 }
 

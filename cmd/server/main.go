@@ -117,6 +117,7 @@ func run() (runErr error) {
 		"trusted_proxy_cidrs", cfg.TrustedProxyCIDRs,
 		"public_module_access", cfg.PublicModuleAccess,
 		"active_release_ttl", cfg.ActiveReleaseTTL,
+		"release_consumer_ttl", cfg.ReleaseConsumerTTL,
 		"access_token_history_ttl", cfg.AccessTokenHistoryTTL,
 		"deleted_release_ttl", cfg.DeletedReleaseTTL,
 		"security_hsts_enabled", cfg.SecurityHSTSEnabled,
@@ -131,6 +132,7 @@ func run() (runErr error) {
 		"upstream_sync_limit", cfg.UpstreamSyncLimit,
 		"upstream_sync_concurrency", cfg.UpstreamSyncConcurrency,
 		"metrics_module_limit", cfg.MetricsModuleLimit,
+		"metrics_release_consumer_limit", cfg.MetricsConsumerLimit,
 		"metrics_refresh_interval", cfg.MetricsRefreshInterval,
 	)
 

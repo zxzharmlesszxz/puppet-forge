@@ -56,6 +56,8 @@ func (cfg *TeamConfig) UnmarshalJSON(data []byte) error {
 
 type Principal struct {
 	TokenID       string
+	TokenName     string
+	TokenRole     string
 	Team          string
 	CanRead       bool
 	CanPublish    bool
@@ -152,7 +154,7 @@ func newAuthorizer(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer,
 		}
 		return registerTokenKey(token, source, principal)
 	}
-	registerTokenRecords := func(records []AccessTokenRecord, source string, principal Principal) error {
+	registerTokenRecords := func(records []AccessTokenRecord, role, source string, principal Principal) error {
 		now := time.Now()
 		for _, record := range records {
 			if !record.Active(now) {
@@ -160,6 +162,8 @@ func newAuthorizer(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer,
 			}
 			tokenPrincipal := principal
 			tokenPrincipal.TokenID = record.ID
+			tokenPrincipal.TokenName = strings.TrimSpace(record.Description)
+			tokenPrincipal.TokenRole = role
 			if err := registerTokenKey(record.Digest, source, tokenPrincipal); err != nil {
 				return err
 			}
@@ -209,7 +213,7 @@ func newAuthorizer(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer,
 				return nil, err
 			}
 		}
-		if err := registerTokenRecords(cfg.ReadTokenRecords, cfg.Team+" read access", Principal{
+		if err := registerTokenRecords(cfg.ReadTokenRecords, "read", cfg.Team+" read access", Principal{
 			Team:          cfg.Team,
 			CanRead:       true,
 			PublishOwners: ownerSet,
@@ -229,7 +233,7 @@ func newAuthorizer(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer,
 				return nil, err
 			}
 		}
-		if err := registerTokenRecords(cfg.PublishTokenRecords, cfg.Team+" publish access", Principal{
+		if err := registerTokenRecords(cfg.PublishTokenRecords, "publish", cfg.Team+" publish access", Principal{
 			Team:          cfg.Team,
 			CanRead:       true,
 			CanPublish:    true,
@@ -515,18 +519,26 @@ func (a *Authorizer) RequireDelete(w http.ResponseWriter, req *http.Request, own
 }
 
 func (a *Authorizer) authenticate(req *http.Request) (Principal, bool) {
+	principal, ok := a.AuthenticateRequest(req)
+	if !ok {
+		return Principal{}, false
+	}
+
+	*req = *req.WithContext(ContextWithPrincipal(req.Context(), principal))
+	return principal, true
+}
+
+func (a *Authorizer) AuthenticateRequest(req *http.Request) (Principal, bool) {
 	token := bearerToken(req.Header.Get("Authorization"))
 	if token == "" {
 		return Principal{}, false
 	}
 
-	principal, ok := a.AuthenticateToken(token)
-	if !ok {
-		return Principal{}, false
-	}
+	return a.AuthenticateToken(token)
+}
 
-	*req = *req.WithContext(context.WithValue(req.Context(), principalKey, principal))
-	return principal, true
+func ContextWithPrincipal(ctx context.Context, principal Principal) context.Context {
+	return context.WithValue(ctx, principalKey, principal)
 }
 
 func PrincipalFromContext(ctx context.Context) (Principal, bool) {

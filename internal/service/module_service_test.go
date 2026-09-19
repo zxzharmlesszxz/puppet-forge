@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/proxy"
 	artifactstorage "github.com/zxzharmlesszxz/puppet-forge/internal/storage"
@@ -1846,6 +1847,51 @@ func TestMarkReleaseUsedRetriesAfterStoreError(t *testing.T) {
 	}
 	if got := countingStore.markCalls.Load(); got != 2 {
 		t.Fatalf("store MarkReleaseUsed() calls = %d, want 2 after failed first attempt", got)
+	}
+}
+
+func TestMarkReleaseConsumerUsedScopesThrottleByTokenRole(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	st, err := store.NewSQLiteStore("sqlite://:memory:")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(st.Close)
+	module, err := st.UpsertModule(ctx, "puppetlabs", "stdlib")
+	if err != nil {
+		t.Fatalf("UpsertModule() error = %v", err)
+	}
+	if _, err := st.CreateRelease(ctx, store.NewRelease(module.ID, "puppetlabs", "stdlib", "1.0.0", "", "", "puppetlabs-stdlib-1.0.0.tar.gz", "application/gzip", "", "", "", 0, nil)); err != nil {
+		t.Fatalf("CreateRelease() error = %v", err)
+	}
+	moduleService := NewModuleService(st, &testArtifactStorage{}, "modules", nil)
+	for _, principal := range []auth.Principal{
+		{Team: "platform", CanRead: true},
+		{TokenID: "unnamed", TokenRole: "read", Team: "platform"},
+		{TokenID: "invalid-role", TokenName: "production", TokenRole: "admin", Team: "platform"},
+	} {
+		if err := moduleService.MarkReleaseConsumerUsed(ctx, principal, "puppetlabs", "stdlib", "1.0.0"); err != nil {
+			t.Fatalf("MarkReleaseConsumerUsed(ignored principal) error = %v", err)
+		}
+	}
+	first := auth.Principal{TokenID: "first", TokenName: "production", TokenRole: "read", Team: "platform"}
+	second := auth.Principal{TokenID: "second", TokenName: "production", TokenRole: "publish", Team: "platform"}
+	for range 2 {
+		if err := moduleService.MarkReleaseConsumerUsed(ctx, first, "puppetlabs", "stdlib", "1.0.0"); err != nil {
+			t.Fatalf("MarkReleaseConsumerUsed(first) error = %v", err)
+		}
+	}
+	if err := moduleService.MarkReleaseConsumerUsed(ctx, second, "puppetlabs", "stdlib", "1.0.0"); err != nil {
+		t.Fatalf("MarkReleaseConsumerUsed(second) error = %v", err)
+	}
+	consumers, total, err := moduleService.ListReleaseConsumers(ctx, time.Time{}, 10)
+	if err != nil {
+		t.Fatalf("ListReleaseConsumers() error = %v", err)
+	}
+	if total != 2 || len(consumers) != 2 {
+		t.Fatalf("release consumers = %#v total=%d, want separate read and publish consumers", consumers, total)
 	}
 }
 

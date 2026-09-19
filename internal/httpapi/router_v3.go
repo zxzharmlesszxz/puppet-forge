@@ -155,10 +155,16 @@ func (r *Router) serveLocalV3File(w http.ResponseWriter, req *http.Request, file
 	}
 	if release.Source == "upstream" && (release.MD5 == "" || release.SHA256 == "" || release.SizeBytes <= 0 || release.StoragePath == "") {
 		r.markReleaseUsed(req.Context(), release.Owner, release.Name, release.Version)
+		if req.Method == http.MethodGet {
+			r.markReleaseConsumerUsed(req.Context(), release.Owner, release.Name, release.Version)
+		}
 		return false
 	}
 
 	r.markReleaseUsed(req.Context(), release.Owner, release.Name, release.Version)
+	if req.Method == http.MethodGet {
+		r.markReleaseConsumerUsed(req.Context(), release.Owner, release.Name, release.Version)
+	}
 	r.writeReleaseArchive(w, req, release)
 	return true
 }

@@ -294,6 +294,9 @@ sequenceDiagram
     B->>O: open exact object або range
     B-->>R: checksum-consistent bytes
     B->>DB: mark usage
+    opt GET з іменованим збереженим токеном
+        B->>DB: upsert token, module, version observation
+    end
 ```
 
 Перший response уже повинен містити `file_md5`, обчислений із тих самих bytes,
@@ -312,6 +315,15 @@ client cancellation не скасовує indexing, а незалежний time
 JSON cache hit продовжує позначати current release як used, але не повторює
 index module/releases. Fresh metadata узгоджується під час наступного cache miss
 або periodic refresh.
+
+Атрибуція споживача навмисно вужча за release activity. Лише `GET` конкретного
+архіву з іменованим збереженим read або publish токеном оновлює
+`release_consumers`; metadata-запити, `HEAD`, анонімний public access, OIDC
+sessions, bootstrap credentials і legacy unnamed tokens не враховуються.
+Валідний іменований bearer-токен лишається доступним для атрибуції у public
+mode. SQL є спільною
+для реплік, а кожна репліка об'єднує однакову комбінацію
+consumer/module/version протягом однієї хвилини перед наступним записом.
 
 ## Browser auth між репліками
 
@@ -455,6 +467,17 @@ erDiagram
         string version
         timestamp last_used_at
     }
+    RELEASE_CONSUMERS {
+        string consumer_team PK
+        string consumer_name PK
+        string consumer_role PK
+        string owner PK
+        string name PK
+        string version PK
+        timestamp first_seen_at
+        timestamp last_seen_at
+        int request_count
+    }
     DELETED_RELEASES {
         string module_id FK
         string version
@@ -529,6 +552,7 @@ PostgreSQL schema bootstrap серіалізований global advisory lock. B
 | modules/releases/latest  | SQL                    | shared      | transaction + constraints                                                                                                                                     |
 | release bytes            | object storage         | shared      | immutable create-only + SHA/size                                                                                                                              |
 | usage/tombstones         | SQL                    | shared      | activity TTL; replicas об'єднують usage-записи через bounded throttle, lease-elected worker щодня чистить прострочені rows; exact-запит може відновити версію |
+| named-token consumers    | SQL                    | shared      | archive GET observations зберігаються за `RELEASE_CONSUMER_TTL`; per-replica throttle обмежує записи, lease-elected worker виконує cleanup                    |
 | teams/tokens/OIDC/spaces | SQL                    | shared      | serialized replace; cache до 2s                                                                                                                               |
 | browser sessions         | SQL + opaque cookie    | shared      | TTL 8h, revocation, кожен request перевіряє SQL                                                                                                               |
 | OIDC state               | SQL + encrypted cookie | shared      | TTL 5m, single-use                                                                                                                                            |
@@ -566,28 +590,29 @@ Prometheus має scrape кожен metrics endpoint.
 
 ## Матриця точкових перевірок
 
-| Вузол       | Інваріант                                                                          | Evidence                                                                           | Automated check             |
-|-------------|------------------------------------------------------------------------------------|------------------------------------------------------------------------------------|-----------------------------|
-| `HTTP-1`    | API/metrics listeners незалежні                                                    | startup addresses, обидва targets                                                  | `make http-smoke`           |
-| `SEC-1`     | untrusted forwarded headers не змінюють origin                                     | warning + `400`/`421`                                                              | boundary unit/fuzz          |
-| `AUTH-1`    | global/team roles адитивні                                                         | обидва UI/API capability sets                                                      | combined-role tests         |
-| `AUTH-2`    | public обходить лише read                                                          | anonymous GET, publish/delete fail                                                 | public-access tests         |
-| `AUTH-3`    | backend перевіряє space                                                            | tampered space `403`                                                               | publish auth tests          |
-| `AUTH-4`    | mutation має session CSRF                                                          | mismatch `403`                                                                     | CSRF tests                  |
-| `SESSION-1` | session portable між pods                                                          | alternate direct pod requests                                                      | shared-session tests        |
-| `OIDC-1`    | single-use state, nonce, PKCE                                                      | replay fails, cross-pod succeeds                                                   | OIDC flow tests             |
-| `SVC-1`     | metadata owner = space                                                             | mismatch validation error                                                          | archive tests               |
-| `LOCK-1`    | concurrent publish deterministic                                                   | один release/object                                                                | concurrent publish/parity   |
-| `LOCK-2`    | access updates serialized                                                          | normalized config без lost update                                                  | parity lock test            |
-| `OBJ-1`     | SQL checksum = served bytes                                                        | clean reconcile                                                                    | storage/reconcile tests     |
-| `PROXY-1`   | cold response already has `file_md5`                                               | first r10k succeeds                                                                | cold checksum test          |
-| `LEASE-1`   | один refresh leader                                                                | acquired vs skipped logs                                                           | lease tests                 |
-| `LEASE-2`   | один upstream fetch на object                                                      | concurrent replicas complete                                                       | proxy coalescing test       |
-| `LEASE-3`   | history cleanup singleton і repeatable                                             | один purge на цикл; active tokens не видаляються                                   | cleanup store/service tests |
-| `LEASE-4`   | artifact cleanup singleton, retryable і republish-safe                             | pending gauge зменшується; error counter припиняє рости; referenced paths canceled | outbox parity/service tests |
-| `READY-1`   | недоступна SQL або create/read/delete capability object storage робить pod unready | `/readyz` `503`; успішна storage probe кешується 5 хвилин                          | readiness tests             |
-| `RECON-1`   | repair deletes only orphans                                                        | JSON report                                                                        | reconcile tests             |
-| `OBS-1`     | scrape всіх replicas                                                               | target per pod                                                                     | deployed target check       |
+| Вузол         | Інваріант                                                                            | Evidence                                                                             | Automated check               |
+| ------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ | ----------------------------- |
+| `HTTP-1`      | API/metrics listeners незалежні                                                      | startup addresses, обидва targets                                                    | `make http-smoke`             |
+| `SEC-1`       | untrusted forwarded headers не змінюють origin                                       | warning + `400`/`421`                                                                | boundary unit/fuzz            |
+| `AUTH-1`      | global/team roles адитивні                                                           | обидва UI/API capability sets                                                        | combined-role tests           |
+| `AUTH-2`      | public обходить лише read                                                            | anonymous GET, publish/delete fail                                                   | public-access tests           |
+| `AUTH-3`      | backend перевіряє space                                                              | tampered space `403`                                                                 | publish auth tests            |
+| `AUTH-4`      | mutation має session CSRF                                                            | mismatch `403`                                                                       | CSRF tests                    |
+| `SESSION-1`   | session portable між pods                                                            | alternate direct pod requests                                                        | shared-session tests          |
+| `OIDC-1`      | single-use state, nonce, PKCE                                                        | replay fails, cross-pod succeeds                                                     | OIDC flow tests               |
+| `SVC-1`       | metadata owner = space                                                               | mismatch validation error                                                            | archive tests                 |
+| `LOCK-1`      | concurrent publish deterministic                                                     | один release/object                                                                  | concurrent publish/parity     |
+| `LOCK-2`      | access updates serialized                                                            | normalized config без lost update                                                    | parity lock test              |
+| `OBJ-1`       | SQL checksum = served bytes                                                          | clean reconcile                                                                      | storage/reconcile tests       |
+| `PROXY-1`     | cold response already has `file_md5`                                                 | first r10k succeeds                                                                  | cold checksum test            |
+| `LEASE-1`     | один refresh leader                                                                  | acquired vs skipped logs                                                             | lease tests                   |
+| `LEASE-2`     | один upstream fetch на object                                                        | concurrent replicas complete                                                         | proxy coalescing test         |
+| `LEASE-3`     | history cleanup singleton і repeatable                                               | один purge на цикл; active tokens не видаляються                                     | cleanup store/service tests   |
+| `LEASE-4`     | artifact cleanup singleton, retryable і republish-safe                               | pending gauge зменшується; error counter припиняє рости; referenced paths canceled   | outbox parity/service tests   |
+| `READY-1`     | недоступна SQL або create/read/delete capability object storage робить pod unready   | `/readyz` `503`; успішна storage probe кешується 5 хвилин                            | readiness tests               |
+| `RECON-1`     | repair deletes only orphans                                                          | JSON report                                                                          | reconcile tests               |
+| `OBS-1`       | scrape всіх replicas                                                                 | target per pod                                                                       | deployed target check         |
+| `OBS-2`       | archive GET з іменованим токеном визначає споживача версії                           | Legacy Release Consumers показує team, token name/role, used і latest version        | auth/route/store/metrics      |
 
 ## Manual multi-replica playbook
 
