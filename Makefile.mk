@@ -6,8 +6,8 @@ GOSEC_VERSION ?= v2.28.0
 DOCKER ?= docker
 DOCKER_COMPOSE ?= $(DOCKER) compose
 HELM ?= helm
-PROMTOOL_IMAGE ?= prom/prometheus:v3.13.2@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
-PLAYWRIGHT_IMAGE ?= mcr.microsoft.com/playwright:v1.62.0-noble@sha256:baed2032d533817f3dbe6425de795788430ba345e819a1201337009ba17c9d07
+PROMTOOL_IMAGE ?= prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
+PLAYWRIGHT_IMAGE ?= mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
 CURL ?= curl
 PYTHON ?= python3
 

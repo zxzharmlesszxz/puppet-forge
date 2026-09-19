@@ -1,6 +1,6 @@
 include Makefile.mk
 
-.PHONY: help fmt fmt-check tidy mod-download build release-archives release-checksums release vet lint govulncheck gosec security-go test test-postgres test-s3-storage test-gcs-storage test-object-storage test-race test-browser coverage coverage-check docker-build docker-smoke docker-buildx docker-buildx-push docker-push compose compose-up compose-down compose-logs compose-ps compose-config compose-smoke r10k r10k-logs http-smoke oidc-preflight prometheus-rules-check helm-lint helm-template-check helm-package check ci clean size
+.PHONY: help fmt fmt-check tidy mod-download deps-update build release-archives release-checksums release vet lint govulncheck gosec security-go test test-postgres test-s3-storage test-gcs-storage test-object-storage test-race test-browser coverage coverage-check docker-build docker-smoke docker-buildx docker-buildx-push docker-push compose compose-up compose-down compose-logs compose-ps compose-config compose-smoke r10k r10k-logs http-smoke oidc-preflight prometheus-rules-check helm-lint helm-template-check helm-package check ci clean size
 .SILENT: compose compose-config compose-down compose-logs compose-ps compose-up r10k r10k-logs size
 
 help: ## Show available make targets.
@@ -18,6 +18,10 @@ tidy: ## Run go mod tidy.
 
 mod-download: ## Download Go modules.
 	$(GO) mod download
+
+deps-update: ## Update Go module dependencies and tidy module files.
+	$(GO) get -u ./...
+	$(GO) mod tidy
 
 build: ## Build the server binary into dist/.
 	mkdir -p $(DIST_DIR)

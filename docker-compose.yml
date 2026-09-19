@@ -88,7 +88,7 @@ services:
       start_period: 10s
 
   postgres:
-    image: postgres:18-alpine
+    image: postgres:18.6-alpine
     environment:
       POSTGRES_DB: forge
       POSTGRES_USER: forge
@@ -104,7 +104,7 @@ services:
       - postgres-data:/var/lib/postgresql
 
   gcs:
-    image: fsouza/fake-gcs-server:1.55.1
+    image: fsouza/fake-gcs-server:1.56.1
     command:
       - -scheme
       - http
@@ -116,7 +116,7 @@ services:
       - "4443:4443"
 
   minio:
-    image: minio/minio:RELEASE.2025-06-13T11-33-47Z
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     command:
       - server
       - /data
@@ -137,7 +137,7 @@ services:
       - minio-data:/data
 
   minio-init:
-    image: minio/mc:RELEASE.2025-03-12T17-29-24Z
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     depends_on:
       minio:
         condition: service_healthy
@@ -150,7 +150,7 @@ services:
         mc mb --ignore-existing local/puppet-forge-artifacts
 
   prometheus:
-    image: prom/prometheus:v3.13.2@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
+    image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
     depends_on:
       app:
         condition: service_healthy
@@ -166,7 +166,7 @@ services:
       - prometheus-data:/prometheus
 
   grafana:
-    image: grafana/grafana:13.0.1
+    image: grafana/grafana:13.2.2
     depends_on:
       - prometheus
     entrypoint:

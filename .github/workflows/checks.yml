@@ -7,7 +7,7 @@ on:
     inputs:
       go-version:
         type: string
-        default: "1.27.0"
+        default: "1.27.1"
       release-platforms:
         type: string
         default: "linux/amd64 linux/arm64 darwin/amd64 darwin/arm64"
@@ -151,7 +151,7 @@ jobs:
       - go-check
     services:
       postgres:
-        image: postgres:18-alpine
+        image: postgres:18.6-alpine
         env:
           POSTGRES_DB: forge
           POSTGRES_USER: forge
@@ -199,7 +199,7 @@ jobs:
             --publish 9000:9000 \
             --env MINIO_ROOT_USER=minioadmin \
             --env MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:RELEASE.2025-06-13T11-33-47Z@sha256:064117214caceaa8d8a90ef7caa58f2b2aeb316b5156afe9ee8da5b4d83e12c8 server /data
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
           for _ in {1..30}; do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
               exit 0
@@ -213,7 +213,7 @@ jobs:
         run: |
           docker run --detach --name fake-gcs \
             --publish 4443:4443 \
-            fsouza/fake-gcs-server:1.55.1@sha256:91afded49de804aa61b5f3eb6c7cd65205acf9e5c5e047cf0ba7d9507af806c8 \
+            fsouza/fake-gcs-server:1.56.1@sha256:797ce226d62f947c009dc40246b30cfb456b8473d8241407f9d6f2c04e4d69ef \
             -scheme http -backend memory -public-host 127.0.0.1:4443
           for _ in {1..30}; do
             if curl --fail --silent http://127.0.0.1:4443/storage/v1/b >/dev/null; then
@@ -243,7 +243,7 @@ jobs:
           fetch-tags: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Docker Compose Config
         if: inputs.check-compose
