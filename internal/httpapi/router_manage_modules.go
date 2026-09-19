@@ -275,23 +275,29 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 	}
 	defer cleanup()
 	input.Replace = req.FormValue("replace") == "true"
-	if !principal.CanPublishOwner(input.Owner) {
-		r.audit(req, principal, "publish_module", "failure", "forbidden", "space", input.Owner)
-		respondManageMutationHTTPError(w, req, http.StatusForbidden, errors.New("token is not allowed to publish to this space"))
-		return
-	}
-	if input.Replace && !canDeleteInSpace(principal, input.Owner) {
-		r.audit(req, principal, "replace_module_release", "failure", "forbidden", "space", input.Owner)
-		respondManageMutationHTTPError(w, req, http.StatusForbidden, errors.New("team administrator access is required to replace a release"))
-		return
-	}
 	action, message := "publish_module", "module published"
 	if input.Replace {
 		action, message = "replace_module_release", "module release replaced"
 	}
-	release, err := r.modules.Publish(req.Context(), input)
+	requestedSpace := input.Owner
+	var authorizationErr error
+	release, err := r.modules.PublishAuthorized(req.Context(), input, func(space string) error {
+		requestedSpace = space
+		switch {
+		case !principal.CanPublishOwner(space):
+			authorizationErr = errPublishSpaceForbidden
+		case input.Replace && !canDeleteInSpace(principal, space):
+			authorizationErr = errors.New("team administrator access is required to replace a release")
+		}
+		return authorizationErr
+	})
 	if err != nil {
-		r.audit(req, principal, action, "failure", auditReason(err), "space", input.Owner)
+		if authorizationErr != nil {
+			r.audit(req, principal, action, "failure", "forbidden", "space", requestedSpace)
+			respondManageMutationHTTPError(w, req, http.StatusForbidden, authorizationErr)
+			return
+		}
+		r.audit(req, principal, action, "failure", auditReason(err), "space", requestedSpace)
 		respondManageMutationServiceError(w, req, err)
 		return
 	}

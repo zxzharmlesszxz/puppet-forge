@@ -221,7 +221,7 @@ listed with the methods used by their normal clients.
 | `POST`        | `/manage/access/add`                                         | compatibility team creation                                       | global administrator, CSRF, config lock                                                                                              |
 | `POST`        | `/manage/access/token`                                       | create, rotate, or revoke a team token                            | global admin or that team administrator, CSRF, config lock                                                                           |
 | `GET`         | `/api/v1/modules`                                            | list and search modules                                           | read capability; local search rate limit                                                                                             |
-| `POST`        | `/api/v1/modules`                                            | publish multipart `space` plus `file`                             | publish capability for selected space; archive metadata is authoritative                                                             |
+| `POST`        | `/api/v1/modules`                                            | publish multipart `file` with optional `space`                    | publish capability for metadata owner; supplied space must match                                                                     |
 | `GET`         | `/api/v1/manage/publish-spaces`                              | list caller's effective publish spaces                            | publish-capable principal                                                                                                            |
 | `GET`         | `/api/v1/modules/{owner}/{name}`                             | module metadata                                                   | read capability                                                                                                                      |
 | `DELETE`      | `/api/v1/modules/{owner}/{name}`                             | delete module                                                     | global or primary-team delete capability; protected-release checks                                                                   |
@@ -264,14 +264,16 @@ sequenceDiagram
     participant DB as Shared PostgreSQL
     participant O as Shared object storage
 
-    C->>H: POST space + archive
-    H->>A: authenticate and CanPublish(space)
+    C->>H: POST archive + optional space
+    H->>A: authenticate publish-capable principal
     A->>DB: load current access config or token
     DB-->>A: additive effective capabilities
-    A-->>H: allowed space set
-    H->>S: Publish(stream)
+    A-->>H: effective allowed space set
+    H->>S: PublishAuthorized(stream)
     S->>S: inspect bounded archive and metadata.json
-    S->>S: verify metadata owner equals selected space
+    S->>H: authorize metadata owner before writes
+    H-->>S: allowed or forbidden
+    S->>S: verify optional space equals metadata owner
     S->>S: calculate MD5, SHA-256, and size
     S->>DB: acquire module advisory lock
     S->>DB: check immutable owner/name/version
@@ -292,10 +294,11 @@ sequenceDiagram
 
 Publish invariants:
 
-1. Only `space` and `file` are accepted; caller-provided identity overrides are
-   rejected.
+1. `file` is required and `space` is optional; caller-provided identity
+   overrides are rejected.
 2. `metadata.json` is the identity source of truth.
-3. The archive owner must equal the selected authorized space.
+3. The archive owner must be authorized for the token and must equal `space`
+   when that field is supplied.
 4. One module/version maps to one immutable byte sequence.
 5. The object path is content-addressed and the write operation is create-only.
 6. Retrying the same bytes is idempotent; different bytes return a conflict.
@@ -654,11 +657,11 @@ emit debug diagnostics without credentials or session values.
 | `SEC-2`     | Manage/auth responses are non-cacheable; framing and unapproved inline content are denied | response security headers with a per-request CSP nonce                              | router response tests                               |
 | `AUTH-1`    | combined global and team roles are additive                                               | same user sees global and every matching team capability                            | authorizer and router combined-role tests           |
 | `AUTH-2`    | public mode bypasses read only                                                            | anonymous GET succeeds; publish/delete still fail                                   | router public-access tests                          |
-| `AUTH-3`    | selected publish space is checked on backend                                              | tampered space returns `403`                                                        | publish authorization tests                         |
+| `AUTH-3`    | metadata publish owner is checked on backend                                              | unauthorized archive owner returns `403`                                           | publish authorization tests                         |
 | `AUTH-4`    | Manage mutation requires valid same-session CSRF                                          | missing/mismatched token returns `403`; debug source reason                         | CSRF and cross-origin tests                         |
 | `SESSION-1` | session created on one replica works on another                                           | alternate requests between pod endpoints                                            | shared-session tests                                |
 | `OIDC-1`    | state is single-use and PKCE/nonce bound                                                  | replay callback fails; valid callback across replicas succeeds                      | OIDC flow tests                                     |
-| `SVC-1`     | metadata identity equals selected space                                                   | mismatched archive returns validation error                                         | archive consistency tests                           |
+| `SVC-1`     | explicit space equals metadata identity                                                  | mismatched explicit space returns validation error                                  | archive consistency tests                           |
 | `LOCK-1`    | concurrent same-version publish is deterministic                                          | one immutable release and one object                                                | concurrent publish test and PostgreSQL parity test  |
 | `LOCK-2`    | concurrent access updates do not lose fields                                              | serialized final normalized config                                                  | access-config lock parity test                      |
 | `OBJ-1`     | SQL checksum matches exact served bytes                                                   | reconcile report is clean; download SHA-256 matches SQL                             | object-storage integration and reconciliation tests |

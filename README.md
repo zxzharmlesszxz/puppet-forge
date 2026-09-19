@@ -61,9 +61,9 @@ Not implemented:
 
 Publishing flow:
 
-1. A client sends a multipart request containing the selected `space` and a `.tar.gz` module artifact.
-2. The service verifies that the authenticated principal may publish to that space.
-3. The service reads identity and metadata from the archive and requires its namespace to match the selected space.
+1. A client sends a multipart request containing a `.tar.gz` module artifact and, optionally, an explicit `space`.
+2. The service authenticates the principal and reads identity and metadata from the archive.
+3. The service verifies that the principal may publish to the metadata owner. An explicit `space` must match that owner.
 4. MD5, SHA-256, and size are calculated once. The archive is created without overwrite at `modules/<owner>/<name>/<version>/<sha256>.tar.gz`.
 5. Bearer-token publishing keeps local release identity immutable: retrying identical bytes is idempotent, while different bytes for an existing module/version return `409 Conflict`. A global or owning team administrator may explicitly select **Replace existing release** in the management UI to correct a bad archive without disabling active-release protection.
 6. Release metadata is created in the selected SQL backend and returned to the client. Definite persistence failures compensate the uncommitted object.
@@ -372,7 +372,7 @@ Minimum module requirements:
 - `metadata.json.name` uses the `<owner>-<name>` format, for example `teamname-apache`;
 - `owner` uses ASCII letters in either case and digits; the short module `name` uses lowercase ASCII letters, digits, and underscores; hyphens are reserved as the unambiguous separator between those two parts;
 - `metadata.json.version` is present;
-- the namespace in `metadata.json.name` matches the selected `space`;
+- when the optional `space` field is supplied, the namespace in `metadata.json.name` matches it;
 - putting `README.md` in the module is recommended because it is rendered on the HTML module page.
 
 Example layout:
@@ -405,7 +405,7 @@ puppet module build
 
 Puppet usually writes the artifact to `pkg/teamname-apache-1.2.3.tar.gz`.
 
-Publishing accepts only the target space and archive:
+Publishing requires the archive and optionally accepts an explicit target space:
 
 ```bash
 export FORGE_URL="https://forge.example.com"
@@ -419,12 +419,20 @@ curl -X POST "${FORGE_URL}/api/v1/modules" \
 
 Important details:
 
-- publishing requires only the `space` and `file` fields;
+- publishing requires `file`; `space` is optional;
 - owner, module name, version, summary, description, and stored metadata are read exclusively from `metadata.json`;
 - manual identity or metadata override fields are rejected;
-- the archive namespace must equal the selected space;
-- the token must have the `publish` role and access to the target publishing space. In the structured UI, the space named after `Team` is added automatically, and global administrators assign additional spaces under `/manage/admin/spaces`.
+- when `space` is supplied, the archive namespace must equal it;
+- authorization always checks the archive namespace from `metadata.json`; the token must have the `publish` role and access to that publishing space. In the structured UI, the space named after `Team` is added automatically, and global administrators assign additional spaces under `/manage/admin/spaces`.
 - multipart uploads, checksum calculation, object-storage writes, and release downloads are streamed; large archives are not copied into a single in-memory buffer.
+
+PDK can publish without a separate `space` field because the service derives it from `metadata.json` before authorization:
+
+```bash
+pdk release publish \
+  --forge-token "${PUBLISH_TOKEN}" \
+  --forge-upload-url "${FORGE_URL}/api/v1/modules"
+```
 
 List the spaces available to a token with the `publish` role:
 

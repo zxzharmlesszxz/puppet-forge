@@ -22,6 +22,8 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
+var errPublishSpaceForbidden = errors.New("token is not allowed to publish to this space")
+
 func (r *Router) modulesCollection(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case http.MethodGet:
@@ -431,14 +433,21 @@ func (r *Router) publishModule(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer cleanup()
-	if authorizer.Enabled() && !principal.CanPublishOwner(input.Owner) {
-		r.audit(req, principal, "publish_module", "failure", "forbidden", "space", input.Owner)
-		writeError(w, http.StatusForbidden, errors.New("token is not allowed to publish to this space"))
-		return
-	}
-	release, err := r.modules.Publish(req.Context(), input)
+	requestedSpace := input.Owner
+	release, err := r.modules.PublishAuthorized(req.Context(), input, func(space string) error {
+		requestedSpace = space
+		if authorizer.Enabled() && !principal.CanPublishOwner(space) {
+			return errPublishSpaceForbidden
+		}
+		return nil
+	})
 	if err != nil {
-		r.audit(req, principal, "publish_module", "failure", auditReason(err), "space", input.Owner)
+		if errors.Is(err, errPublishSpaceForbidden) {
+			r.audit(req, principal, "publish_module", "failure", "forbidden", "space", requestedSpace)
+			writeError(w, http.StatusForbidden, err)
+			return
+		}
+		r.audit(req, principal, "publish_module", "failure", auditReason(err), "space", requestedSpace)
 		writeServiceError(w, err)
 		return
 	}
@@ -520,10 +529,6 @@ func readPublishInput(w http.ResponseWriter, req *http.Request, maxBytes int64) 
 		}
 	}
 	space := strings.TrimSpace(req.FormValue("space"))
-	if space == "" {
-		removeForm()
-		return domain.PublishModuleInput{}, nil, errors.New("space is required")
-	}
 
 	file, header, err := req.FormFile("file")
 	if err != nil {

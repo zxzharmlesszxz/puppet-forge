@@ -42,14 +42,15 @@
 
 ### Публікація модуля
 
-1. Клієнт надсилає `POST /api/v1/modules` із multipart-полями `space` і `file`.
-2. `internal/httpapi` автентифікує principal і перевіряє право публікації у
-   вибраний space.
+1. Клієнт надсилає `POST /api/v1/modules` з обов'язковим multipart-полем `file`
+   і необов'язковим полем `space`.
+2. `internal/httpapi` автентифікує principal до приймання завантаження.
 3. `internal/service` перевіряє єдиний canonical root модуля, безпечні regular
    entries, обмежений розпакований розмір і рівно один `metadata.json` у root,
    після чого читає owner, name, version, description, README і metadata.
-4. Сервіс перевіряє відповідність namespace/root архіву вибраному space та
-   отриманій identity.
+4. До запису у storage або БД `internal/httpapi` перевіряє право публікації для
+   owner із metadata. Якщо `space` передано, сервіс також вимагає його збігу з
+   namespace архіву.
 5. Multipart input, checksum, upload і відповіді з артефактами використовують
    streaming readers, тому розмір архіву не стає heap-витратами одного запиту.
 6. Сервіс обчислює MD5, SHA-256 і розмір, а потім серіалізує публікацію цієї

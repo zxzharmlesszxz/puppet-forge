@@ -142,6 +142,14 @@ type archiveModuleMetadata struct {
 }
 
 func (s *ModuleService) Publish(ctx context.Context, input domain.PublishModuleInput) (domain.Release, error) {
+	return s.publish(ctx, input, nil)
+}
+
+func (s *ModuleService) PublishAuthorized(ctx context.Context, input domain.PublishModuleInput, authorize func(string) error) (domain.Release, error) {
+	return s.publish(ctx, input, authorize)
+}
+
+func (s *ModuleService) publish(ctx context.Context, input domain.PublishModuleInput, authorize func(string) error) (domain.Release, error) {
 	input, err := s.normalizePublishInput(ctx, input)
 	if err != nil {
 		metrics.ObservePublish(err)
@@ -174,6 +182,12 @@ func (s *ModuleService) Publish(ctx context.Context, input domain.PublishModuleI
 		return domain.Release{}, err
 	}
 	input.FileName = releaseArchiveFileName(input.Owner, input.Name, input.Version)
+	if authorize != nil {
+		if err := authorize(input.Owner); err != nil {
+			metrics.ObservePublish(err)
+			return domain.Release{}, err
+		}
+	}
 
 	md5Hash := md5.New() // #nosec G401 -- compatibility checksum only; SHA-256 is computed by the same stream.
 	shaHash := sha256.New()
@@ -330,9 +344,6 @@ func (s *ModuleService) NormalizePublishInput(input domain.PublishModuleInput) (
 
 func (s *ModuleService) normalizePublishInput(ctx context.Context, input domain.PublishModuleInput) (domain.PublishModuleInput, error) {
 	input.Owner = strings.TrimSpace(input.Owner)
-	if input.Owner == "" {
-		return input, invalidInput("space is required")
-	}
 	if input.File == nil && len(input.FileBytes) > 0 {
 		input.File = bytes.NewReader(input.FileBytes)
 		input.SizeBytes = int64(len(input.FileBytes))
@@ -370,7 +381,9 @@ func (s *ModuleService) normalizePublishInput(ctx context.Context, input domain.
 	if !domain.ValidModuleVersion(archiveInfo.Version) {
 		return input, invalidInput("metadata.json version must be a valid MAJOR.MINOR.PATCH semantic version")
 	}
-	if archiveInfo.Owner != input.Owner {
+	if input.Owner == "" {
+		input.Owner = archiveInfo.Owner
+	} else if archiveInfo.Owner != input.Owner {
 		return input, invalidInputError(fmt.Errorf("module namespace %q does not match selected space %q", archiveInfo.Owner, input.Owner))
 	}
 	input.Name = archiveInfo.Name

@@ -43,10 +43,10 @@ The service separates:
 
 ### Module Publishing Flow
 
-1. Client sends `POST /api/v1/modules` with multipart `space` and `file` fields.
-2. `internal/httpapi` authenticates the principal and verifies publish permission for the selected space.
+1. Client sends `POST /api/v1/modules` with the multipart `file` field and an optional `space` field.
+2. `internal/httpapi` authenticates the principal before accepting the upload.
 3. `internal/service` validates one canonical module root, safe regular archive entries, bounded expanded size, and exactly one root-level `metadata.json`, then reads owner, name, version, description, README, and metadata from the archive.
-4. The service verifies that the archive namespace and root match the selected space and resulting identity.
+4. Before any storage or database write, `internal/httpapi` verifies publish permission for the metadata owner. When `space` is supplied, the service also requires it to match the archive namespace.
 5. Multipart input, checksums, object-storage upload, and artifact responses use streaming readers so archive size does not become per-request heap usage.
 6. The service calculates MD5, SHA-256, and size, then serializes publication for the module identity across replicas.
 7. Artifact storage creates `<prefix>/<owner>/<name>/<version>/<sha256>.tar.gz` with a backend precondition that prevents overwriting an existing object.

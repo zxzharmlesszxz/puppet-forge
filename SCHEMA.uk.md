@@ -198,7 +198,7 @@ Request ID та observability охоплюють також запити, від
 | `GET`, `POST`   | `/manage/access/add`                                         | compatibility Add Team             | global admin, CSRF on POST                                                        |
 | `POST`          | `/manage/access/token`                                       | create/rotate/revoke token         | global/matching team admin, CSRF, lock                                            |
 | `GET`           | `/api/v1/modules`                                            | list/search                        | read capability, local rate limit                                                 |
-| `POST`          | `/api/v1/modules`                                            | publish `space` + `file`           | selected-space permission, metadata identity                                      |
+| `POST`          | `/api/v1/modules`                                            | publish `file`, optional `space`    | metadata-owner permission; supplied space must match                               |
 | `GET`           | `/api/v1/manage/publish-spaces`                              | effective spaces                   | publish-capable principal                                                         |
 | `GET`, `DELETE` | `/api/v1/modules/{owner}/{name}`                             | get/delete module                  | read або delete capability                                                        |
 | `GET`, `DELETE` | `/api/v1/modules/{owner}/{name}/versions/{version}`          | get/delete release                 | read/delete; cold checksum hydration                                              |
@@ -237,13 +237,15 @@ sequenceDiagram
     participant S as Module service
     participant DB as Shared PostgreSQL
     participant O as Shared object storage
-    C->>H: POST space + archive
-    H->>A: authenticate + CanPublish space
+    C->>H: POST archive + optional space
+    H->>A: authenticate publish-capable principal
     A->>DB: current access/token
     DB-->>A: additive capabilities
-    H->>S: Publish stream
+    H->>S: PublishAuthorized stream
     S->>S: inspect bounded archive + metadata
-    S->>S: verify owner equals selected space
+    S->>H: authorize metadata owner before writes
+    H-->>S: allowed or forbidden
+    S->>S: verify optional space equals metadata owner
     S->>S: calculate MD5, SHA-256, size
     S->>DB: acquire module advisory lock
     S->>DB: check immutable identity
@@ -259,9 +261,10 @@ sequenceDiagram
     S->>DB: release module lock
 ```
 
-Інваріанти: приймаються лише `space` і `file`; `metadata.json` — source of truth;
-owner дорівнює authorized space; module/version immutable; object path
-content-addressed і create-only; повтор тих самих bytes ідемпотентний.
+Інваріанти: `file` обов'язковий, а `space` необов'язковий; `metadata.json` —
+source of truth; metadata owner має бути дозволеним для токена й збігатися з
+переданим `space`; module/version immutable; object path content-addressed і
+create-only; повтор тих самих bytes ідемпотентний.
 
 ## Cold upstream release та r10k
 

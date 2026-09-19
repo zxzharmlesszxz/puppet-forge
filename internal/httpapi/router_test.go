@@ -2562,6 +2562,64 @@ func TestHTTPAPIAccessMatrix(t *testing.T) {
 	})
 }
 
+func TestPublishWithoutSpaceUsesMetadataNamespaceForAuthorization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		metadataOwner string
+		wantStatus    int
+	}{
+		{name: "allowed extra space", metadataOwner: "shared", wantStatus: http.StatusCreated},
+		{name: "forbidden space", metadataOwner: "alpha", wantStatus: http.StatusForbidden},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			st := newHTTPAPITestStore(t)
+			authorizer := newAdminAuthorizer(t, auth.TeamConfig{
+				Team:          "teamname",
+				PublishTokens: []string{"publish-token"},
+				PublishOwners: []string{"shared"},
+			})
+			server := httptest.NewServer(newTestRouter(service.NewModuleService(st, testArtifactStorage{}, "modules", nil), nil, "http://example.test", authorizer, nil, "admin-token", false, defaultActiveReleaseTTL))
+			t.Cleanup(server.Close)
+
+			archive, err := testutil.BuildTarGz(map[string]string{
+				testCase.metadataOwner + "-pdk-1.0.0/metadata.json": `{"name":"` + testCase.metadataOwner + `-pdk","version":"1.0.0"}`,
+			})
+			if err != nil {
+				t.Fatalf("testutil.BuildTarGz() error = %v", err)
+			}
+			body, contentType := buildPublishMultipart(t, "", "pdk", "1.0.0", archive, "")
+			req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/modules", body)
+			if err != nil {
+				t.Fatalf("NewRequest(publish) error = %v", err)
+			}
+			req.Header.Set("Content-Type", contentType)
+			req.Header.Set("Authorization", "Bearer publish-token")
+
+			resp, err := server.Client().Do(req)
+			if err != nil {
+				t.Fatalf("POST publish without space error = %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != testCase.wantStatus {
+				responseBody, _ := io.ReadAll(resp.Body)
+				t.Fatalf("publish without space status = %d, want %d: %s", resp.StatusCode, testCase.wantStatus, string(responseBody))
+			}
+			if testCase.wantStatus == http.StatusCreated {
+				if _, err := st.GetModule(context.Background(), testCase.metadataOwner, "pdk"); err != nil {
+					t.Fatalf("GetModule(metadata owner) error = %v", err)
+				}
+			} else if _, err := st.GetModule(context.Background(), testCase.metadataOwner, "pdk"); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("forbidden publish changed module store: %v", err)
+			}
+		})
+	}
+}
+
 func TestManageActionsEnforceRoleBoundary(t *testing.T) {
 	t.Parallel()
 
@@ -5376,8 +5434,9 @@ func buildPublishMultipart(t *testing.T, owner, name, version string, archive []
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	fields := map[string]string{
-		"space": owner,
+	fields := make(map[string]string)
+	if owner != "" {
+		fields["space"] = owner
 	}
 	if csrfToken != "" {
 		fields["csrf_token"] = csrfToken
@@ -5394,7 +5453,8 @@ func buildPublishMultipart(t *testing.T, owner, name, version string, archive []
 			t.Fatalf("WriteField(%s) error = %v", key, err)
 		}
 	}
-	part, err := writer.CreateFormFile("file", owner+"-"+name+"-"+version+".tar.gz")
+	fileName := strings.TrimPrefix(owner+"-"+name+"-"+version+".tar.gz", "-")
+	part, err := writer.CreateFormFile("file", fileName)
 	if err != nil {
 		t.Fatalf("CreateFormFile() error = %v", err)
 	}
