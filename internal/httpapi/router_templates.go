@@ -171,6 +171,28 @@ type managePublishSpacesData struct {
 	CSRFToken   string
 }
 
+type manageLegacyUsageData struct {
+	Navigation manageNavigationData
+	Title      string
+	Consumers  []manageLegacyConsumerRow
+	Query      string
+	Filter     listFilterData
+	Pagination paginationData
+}
+
+type manageLegacyConsumerRow struct {
+	ConsumerTeam string
+	ConsumerName string
+	ConsumerRole string
+	Module       string
+	ModuleURL    string
+	Version      string
+	Latest       string
+	FirstSeen    string
+	LastSeen     string
+	Observations int64
+}
+
 type managePublishSpaceAssignment struct {
 	Team        string
 	TeamURL     string
@@ -246,11 +268,13 @@ type manageNavigationData struct {
 	TeamAccessActive    bool
 	TeamTokensActive    bool
 	TeamModulesActive   bool
+	TeamLegacyActive    bool
 	ModulesActive       bool
 	TeamsActive         bool
 	AddTeamActive       bool
 	PublishSpacesActive bool
 	GlobalAccessActive  bool
+	LegacyUsageActive   bool
 	Breadcrumbs         []manageBreadcrumb
 }
 
@@ -275,7 +299,7 @@ func newManageNavigation(principal auth.Principal, csrfToken, page, team string)
 	case "teams":
 		navigation.TeamsActive = true
 		navigation.Breadcrumbs = []manageBreadcrumb{{Label: "Overview", URL: "/manage"}, {Label: "Teams"}}
-	case "team-access", "team-tokens", "team-modules":
+	case "team-access", "team-tokens", "team-modules", "team-legacy":
 		navigation.TeamsActive = true
 		navigation.TeamPage = true
 		navigation.TeamURL = "/manage/teams/" + url.PathEscape(team)
@@ -283,6 +307,7 @@ func newManageNavigation(principal auth.Principal, csrfToken, page, team string)
 		navigation.TeamAccessActive = section == "access"
 		navigation.TeamTokensActive = section == "tokens"
 		navigation.TeamModulesActive = section == "modules"
+		navigation.TeamLegacyActive = section == "legacy"
 		navigation.Breadcrumbs = []manageBreadcrumb{
 			{Label: "Overview", URL: "/manage"},
 			{Label: "Teams", URL: "/manage/teams"},
@@ -299,6 +324,9 @@ func newManageNavigation(principal auth.Principal, csrfToken, page, team string)
 	case "publish-spaces":
 		navigation.PublishSpacesActive = true
 		navigation.Breadcrumbs = []manageBreadcrumb{{Label: "Overview", URL: "/manage"}, {Label: "Administration"}, {Label: "Publish spaces"}}
+	case "legacy-usage":
+		navigation.LegacyUsageActive = true
+		navigation.Breadcrumbs = []manageBreadcrumb{{Label: "Overview", URL: "/manage"}, {Label: "Administration"}, {Label: "Legacy usage"}}
 	case "token":
 		navigation.TeamsActive = true
 		navigation.TeamPage = true
@@ -470,6 +498,8 @@ var manageAccessTemplate = mustParseCSRFTemplate("manage-access.gohtml")
 var manageAccessAddTeamTemplate = mustParseCSRFTemplate("manage-access-add-team.gohtml")
 
 var managePublishSpacesTemplate = mustParseCSRFTemplate("manage-publish-spaces.gohtml")
+
+var manageLegacyUsageTemplate = mustParseCSRFTemplate("manage-legacy-usage.gohtml")
 
 var manageTokenCreatedTemplate = mustParseCSRFTemplate("manage-token-created.gohtml")
 

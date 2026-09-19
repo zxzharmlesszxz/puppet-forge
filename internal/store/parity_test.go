@@ -54,14 +54,41 @@ func TestStoreParityReleaseConsumers(t *testing.T) {
 			if err := st.RecordReleaseConsumer(ctx, observation); err != nil {
 				t.Fatalf("RecordReleaseConsumer(out of order) error = %v", err)
 			}
+			otherTeamObservation := observation
+			otherTeamObservation.ConsumerTeam = "anotherteam"
+			otherTeamObservation.ObservedAt = now
+			if err := st.RecordReleaseConsumer(ctx, otherTeamObservation); err != nil {
+				t.Fatalf("RecordReleaseConsumer(other team) error = %v", err)
+			}
 			consumers, total, err := st.ListReleaseConsumers(ctx, now.Add(-time.Minute), 10)
 			if err != nil {
 				t.Fatalf("ListReleaseConsumers() error = %v", err)
 			}
-			if total != 1 || len(consumers) != 1 || consumers[0].LatestVersion != "2.0.0" || consumers[0].Observations != 3 || !consumers[0].FirstSeenAt.Equal(now.Add(-time.Minute)) || !consumers[0].LastSeenAt.Equal(now.Add(time.Minute)) {
+			if total != 2 || len(consumers) != 2 || consumers[0].LatestVersion != "2.0.0" || consumers[0].Observations != 3 || !consumers[0].FirstSeenAt.Equal(now.Add(-time.Minute)) || !consumers[0].LastSeenAt.Equal(now.Add(time.Minute)) {
 				t.Fatalf("release consumers = %#v total=%d", consumers, total)
 			}
-			if deleted, err := st.PurgeReleaseConsumers(ctx, now.Add(2*time.Minute)); err != nil || deleted != 1 {
+			legacy, total, err := st.ListLegacyReleaseConsumers(ctx, "platform", "PRODUCTION", 10, 0)
+			if err != nil {
+				t.Fatalf("ListLegacyReleaseConsumers() error = %v", err)
+			}
+			if total != 1 || len(legacy) != 1 || legacy[0].Version != "1.0.0" || legacy[0].LatestVersion != "2.0.0" {
+				t.Fatalf("legacy release consumers = %#v total=%d", legacy, total)
+			}
+			latestObservation := observation
+			latestObservation.ConsumerName = "current"
+			latestObservation.Version = "2.0.0"
+			latestObservation.ObservedAt = now
+			if err := st.RecordReleaseConsumer(ctx, latestObservation); err != nil {
+				t.Fatalf("RecordReleaseConsumer(latest) error = %v", err)
+			}
+			legacy, total, err = st.ListLegacyReleaseConsumers(ctx, "", "", 1, 2)
+			if err != nil {
+				t.Fatalf("ListLegacyReleaseConsumers(paginated) error = %v", err)
+			}
+			if total != 2 || len(legacy) != 0 {
+				t.Fatalf("paginated legacy release consumers = %#v total=%d", legacy, total)
+			}
+			if deleted, err := st.PurgeReleaseConsumers(ctx, now.Add(2*time.Minute)); err != nil || deleted != 3 {
 				t.Fatalf("PurgeReleaseConsumers() = %d, %v", deleted, err)
 			}
 		})

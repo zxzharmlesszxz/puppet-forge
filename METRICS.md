@@ -148,6 +148,8 @@ Release usage marks are written when clients request a concrete release or downl
 
 The Grafana `Legacy Usage` tab lists these records with used and latest versions. Use the dashboard's ad hoc `Filters` variable for `consumer_team`, `consumer`, `consumer_role`, `owner`, `module`, or `version`; a uniquely named token gives its team the direct project/environment lookup without adding a separate project identity to Forge.
 
+Global administrators can inspect all retained SQL records at `/manage/admin/legacy`. Team administrators have the same view scoped to tokens owned by their team at `/manage/teams/<team>/legacy`. These views use server-side filtering and pagination and are not constrained by `METRICS_RELEASE_CONSUMER_LIMIT`, which only bounds the Prometheus snapshot.
+
 ### `puppet_forge_artifact_deletion_total`
 
 - Type: counter

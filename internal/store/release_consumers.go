@@ -51,6 +51,40 @@ func (s *PostgresStore) ListReleaseConsumers(ctx context.Context, since time.Tim
 	return consumers, total, rows.Err()
 }
 
+func (s *PostgresStore) ListLegacyReleaseConsumers(ctx context.Context, consumerTeam, query string, limit, offset int) ([]ReleaseConsumer, int, error) {
+	const filter = `
+		m.latest_version is not null and m.latest_version <> '' and c.version <> m.latest_version
+		and ($1 = '' or c.consumer_team = $1)
+		and ($2 = '' or position(lower($2) in lower(concat_ws(' ', c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version, m.latest_version))) > 0)
+	`
+	var total int
+	if err := s.pool.QueryRow(ctx, `select count(*) from release_consumers c join modules m on m.owner = c.owner and m.name = c.name where `+filter, consumerTeam, query).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count legacy release consumers: %w", err)
+	}
+	rows, err := s.pool.Query(ctx, `
+		select c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version,
+			m.latest_version, c.first_seen_at, c.last_seen_at, c.request_count
+		from release_consumers c
+		join modules m on m.owner = c.owner and m.name = c.name
+		where `+filter+`
+		order by c.last_seen_at desc, c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version
+		limit $3 offset $4
+	`, consumerTeam, query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list legacy release consumers: %w", err)
+	}
+	defer rows.Close()
+	consumers := make([]ReleaseConsumer, 0, min(total, limit))
+	for rows.Next() {
+		var consumer ReleaseConsumer
+		if err := rows.Scan(&consumer.ConsumerTeam, &consumer.ConsumerName, &consumer.ConsumerRole, &consumer.Owner, &consumer.Name, &consumer.Version, &consumer.LatestVersion, &consumer.FirstSeenAt, &consumer.LastSeenAt, &consumer.Observations); err != nil {
+			return nil, 0, fmt.Errorf("scan legacy release consumer: %w", err)
+		}
+		consumers = append(consumers, consumer)
+	}
+	return consumers, total, rows.Err()
+}
+
 func (s *PostgresStore) PurgeReleaseConsumers(ctx context.Context, before time.Time) (int64, error) {
 	result, err := s.pool.Exec(ctx, `delete from release_consumers where last_seen_at < $1`, before.UTC())
 	if err != nil {
@@ -99,6 +133,43 @@ func (s *SQLiteStore) ListReleaseConsumers(ctx context.Context, since time.Time,
 		var firstSeenAt, lastSeenAt sqliteTimestamp
 		if err := rows.Scan(&consumer.ConsumerTeam, &consumer.ConsumerName, &consumer.ConsumerRole, &consumer.Owner, &consumer.Name, &consumer.Version, &consumer.LatestVersion, &firstSeenAt, &lastSeenAt, &consumer.Observations); err != nil {
 			return nil, 0, fmt.Errorf("scan release consumer: %w", err)
+		}
+		consumer.FirstSeenAt = firstSeenAt.Time
+		consumer.LastSeenAt = lastSeenAt.Time
+		consumers = append(consumers, consumer)
+	}
+	return consumers, total, rows.Err()
+}
+
+func (s *SQLiteStore) ListLegacyReleaseConsumers(ctx context.Context, consumerTeam, query string, limit, offset int) ([]ReleaseConsumer, int, error) {
+	const filter = `
+		m.latest_version is not null and m.latest_version <> '' and c.version <> m.latest_version
+		and (? = '' or c.consumer_team = ?)
+		and (? = '' or instr(lower(c.consumer_team || ' ' || c.consumer_name || ' ' || c.consumer_role || ' ' || c.owner || ' ' || c.name || ' ' || c.version || ' ' || m.latest_version), lower(?)) > 0)
+	`
+	var total int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from release_consumers c join modules m on m.owner = c.owner and m.name = c.name where `+filter, consumerTeam, consumerTeam, query, query).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count legacy release consumers: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		select c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version,
+			m.latest_version, c.first_seen_at, c.last_seen_at, c.request_count
+		from release_consumers c
+		join modules m on m.owner = c.owner and m.name = c.name
+		where `+filter+`
+		order by c.last_seen_at desc, c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version
+		limit ? offset ?
+	`, consumerTeam, consumerTeam, query, query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list legacy release consumers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	consumers := make([]ReleaseConsumer, 0, min(total, limit))
+	for rows.Next() {
+		var consumer ReleaseConsumer
+		var firstSeenAt, lastSeenAt sqliteTimestamp
+		if err := rows.Scan(&consumer.ConsumerTeam, &consumer.ConsumerName, &consumer.ConsumerRole, &consumer.Owner, &consumer.Name, &consumer.Version, &consumer.LatestVersion, &firstSeenAt, &lastSeenAt, &consumer.Observations); err != nil {
+			return nil, 0, fmt.Errorf("scan legacy release consumer: %w", err)
 		}
 		consumer.FirstSeenAt = firstSeenAt.Time
 		consumer.LastSeenAt = lastSeenAt.Time

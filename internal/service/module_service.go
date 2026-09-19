@@ -712,6 +712,14 @@ func (s *ModuleService) ListReleaseConsumers(ctx context.Context, since time.Tim
 	return consumerStore.ListReleaseConsumers(ctx, since, limit)
 }
 
+func (s *ModuleService) ListLegacyReleaseConsumers(ctx context.Context, consumerTeam, query string, limit, offset int) ([]store.ReleaseConsumer, int, error) {
+	consumerStore, ok := s.modules.(store.ReleaseConsumerStore)
+	if !ok {
+		return nil, 0, nil
+	}
+	return consumerStore.ListLegacyReleaseConsumers(ctx, consumerTeam, query, limit, offset)
+}
+
 func (s *ModuleService) PurgeReleaseConsumers(ctx context.Context, before time.Time) (int64, error) {
 	consumerStore, ok := s.modules.(store.ReleaseConsumerStore)
 	if !ok {

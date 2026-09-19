@@ -155,6 +155,8 @@ Manage UI використовує ті самі дані, щоб прихову
 
 Вкладка Grafana `Legacy Usage` показує ці записи разом із використаною та latest-версіями. Ad hoc змінна `Filters` дозволяє фільтрувати за `consumer_team`, `consumer`, `consumer_role`, `owner`, `module` або `version`; унікальна назва токена дає його команді прямий покажчик на проєкт чи середовище без додавання окремої project identity до Forge.
 
+Глобальні адміністратори можуть переглядати всі збережені SQL-записи на сторінці `/manage/admin/legacy`. Адміністратори команд мають аналогічну сторінку `/manage/teams/<team>/legacy`, обмежену токенами їхньої команди. Ці сторінки використовують серверну фільтрацію та пагінацію і не обмежуються значенням `METRICS_RELEASE_CONSUMER_LIMIT`, яке визначає лише максимальний розмір Prometheus snapshot.
+
 ### `puppet_forge_artifact_deletion_total`
 
 - Тип: counter

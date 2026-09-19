@@ -22,6 +22,7 @@ const (
 	manageTeamAccessSection  manageTeamSection = "access"
 	manageTeamTokensSection  manageTeamSection = "tokens"
 	manageTeamModulesSection manageTeamSection = "modules"
+	manageTeamLegacySection  manageTeamSection = "legacy"
 )
 
 func (r *Router) manageTeamsPage(w http.ResponseWriter, req *http.Request) {
@@ -155,6 +156,10 @@ func (r *Router) manageTeamPage(w http.ResponseWriter, req *http.Request) {
 		http.Redirect(w, req, target, http.StatusFound)
 		return
 	}
+	if section == manageTeamLegacySection {
+		r.renderManageLegacyUsage(w, req, principal, team, teamBasePath+"/legacy", "team-legacy", "Legacy usage: "+team)
+		return
+	}
 	formRows := accessTeamFormRows([]auth.TeamConfig{*cfg}, principal)
 	if len(formRows) != 1 {
 		writeError(w, http.StatusForbidden, errors.New("team admin access required"))
@@ -220,7 +225,7 @@ func parseManageTeamPath(path string) (string, manageTeamSection, bool, bool) {
 	}
 	section := manageTeamSection(parts[1])
 	switch section {
-	case manageTeamAccessSection, manageTeamTokensSection, manageTeamModulesSection:
+	case manageTeamAccessSection, manageTeamTokensSection, manageTeamModulesSection, manageTeamLegacySection:
 		return parts[0], section, true, true
 	default:
 		return "", "", false, false

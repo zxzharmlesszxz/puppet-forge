@@ -4701,12 +4701,62 @@ func TestManageAccessNavLinks(t *testing.T) {
 		`<details class="administration-menu active">`,
 		`<summary>Administration</summary>`,
 		`<a href="/manage/admin/spaces">Publish spaces</a>`,
+		`<a href="/manage/admin/legacy">Legacy usage</a>`,
 		`<a href="/manage/admin/access" aria-current="page">Global access</a>`,
 		`<form method="post" action="/manage/logout">`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("manage access page missing nav item %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestGlobalAdminViewsLegacyModuleUsage(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	createModuleRelease(t, st, "teamname", "apache", "1.0.0")
+	createModuleRelease(t, st, "teamname", "apache", "2.0.0")
+	for _, observation := range []store.ReleaseConsumerObservation{
+		{ConsumerTeam: "platform", ConsumerName: "production", ConsumerRole: "read", Owner: "teamname", Name: "apache", Version: "1.0.0", ObservedAt: time.Now().UTC()},
+		{ConsumerTeam: "platform", ConsumerName: "current", ConsumerRole: "read", Owner: "teamname", Name: "apache", Version: "2.0.0", ObservedAt: time.Now().UTC()},
+		{ConsumerTeam: "anotherteam", ConsumerName: "staging", ConsumerRole: "read", Owner: "teamname", Name: "apache", Version: "1.0.0", ObservedAt: time.Now().UTC()},
+	} {
+		if err := st.RecordReleaseConsumer(ctx, observation); err != nil {
+			t.Fatalf("RecordReleaseConsumer() error = %v", err)
+		}
+	}
+	adminClient, serverURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{Team: "platform"}})
+
+	body := getBody(t, adminClient, serverURL+"/manage/admin/legacy?q=PRODUCTION")
+	for _, want := range []string{
+		`<a href="/manage/admin/legacy" aria-current="page">Legacy usage</a>`,
+		`platform / production`,
+		`href="/modules/teamname/apache?version=1.0.0"`,
+		`<td class="version legacy-version">1.0.0</td>`,
+		`<td class="version">2.0.0</td>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("legacy usage page misses %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `platform / current`) {
+		t.Fatalf("legacy usage page includes a consumer of the latest release:\n%s", body)
+	}
+
+	teamBody := getBody(t, adminClient, serverURL+"/manage/teams/platform/legacy")
+	for _, want := range []string{
+		`<h1>Legacy usage: platform</h1>`,
+		`href="/manage/teams/platform/legacy" aria-current="page">Legacy usage</a>`,
+		`platform / production`,
+	} {
+		if !strings.Contains(teamBody, want) {
+			t.Fatalf("team legacy usage page misses %q:\n%s", want, teamBody)
+		}
+	}
+	if strings.Contains(teamBody, `anotherteam / staging`) {
+		t.Fatalf("team legacy usage page exposes another team's consumer:\n%s", teamBody)
 	}
 }
 

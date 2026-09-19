@@ -366,10 +366,11 @@
         <a href="/manage"{{if .OverviewActive}} aria-current="page"{{end}}>Overview</a>
         <a href="/manage/modules"{{if .ModulesActive}} aria-current="page"{{end}}>Modules</a>
         {{if .CanTeams}}<a href="/manage/teams"{{if .TeamsActive}} aria-current="page"{{end}}>Teams</a>{{end}}
-        {{if .CanAdmin}}<details class="administration-menu{{if or .PublishSpacesActive .GlobalAccessActive}} active{{end}}">
+        {{if .CanAdmin}}<details class="administration-menu{{if or .PublishSpacesActive .GlobalAccessActive .LegacyUsageActive}} active{{end}}">
           <summary>Administration</summary>
           <span class="administration-dropdown">
             <a href="/manage/admin/spaces"{{if .PublishSpacesActive}} aria-current="page"{{end}}>Publish spaces</a>
+            <a href="/manage/admin/legacy"{{if .LegacyUsageActive}} aria-current="page"{{end}}>Legacy usage</a>
             <a href="/manage/admin/access"{{if .GlobalAccessActive}} aria-current="page"{{end}}>Global access</a>
           </span>
         </details>{{end}}
@@ -383,7 +384,7 @@
       {{if .TeamsActive}}
       <nav class="context-navigation" aria-label="Management context navigation">
         <span class="team-navigation">
-          {{if .TeamPage}}<a href="{{.TeamURL}}/access"{{if .TeamAccessActive}} aria-current="page"{{end}}>Access</a><a href="{{.TeamURL}}/tokens"{{if .TeamTokensActive}} aria-current="page"{{end}}>Tokens</a><a href="{{.TeamURL}}/modules"{{if .TeamModulesActive}} aria-current="page"{{end}}>Modules</a>{{else if .CanAdmin}}<a href="/manage/teams/new"{{if .AddTeamActive}} aria-current="page"{{end}}>Add team</a>{{end}}
+          {{if .TeamPage}}<a href="{{.TeamURL}}/access"{{if .TeamAccessActive}} aria-current="page"{{end}}>Access</a><a href="{{.TeamURL}}/tokens"{{if .TeamTokensActive}} aria-current="page"{{end}}>Tokens</a><a href="{{.TeamURL}}/modules"{{if .TeamModulesActive}} aria-current="page"{{end}}>Modules</a><a href="{{.TeamURL}}/legacy"{{if .TeamLegacyActive}} aria-current="page"{{end}}>Legacy usage</a>{{else if .CanAdmin}}<a href="/manage/teams/new"{{if .AddTeamActive}} aria-current="page"{{end}}>Add team</a>{{end}}
         </span>
       </nav>
       {{end}}

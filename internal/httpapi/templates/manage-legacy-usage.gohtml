@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <style nonce="{{.Navigation.CSPNonce}}">
+    :root { color-scheme: light; --bg: #f3f0ea; --panel: #fff; --ink: #1f2428; --muted: #66717a; --accent: #2f6f73; --line: #d9e0e2; --legacy: #8a4b16; }
+    {{template "manage-navigation-styles" .Navigation}}
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+    main { max-width: 1280px; margin: 0 auto; padding: 32px 20px 56px; }
+    header { margin-bottom: 20px; }
+    h1 { margin: 0; font-size: 32px; }
+    .subtitle { max-width: 850px; margin-top: 8px; color: var(--muted); line-height: 1.5; }
+    .panel { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th, td { padding: 12px 15px; vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; text-transform: uppercase; white-space: nowrap; }
+    tbody tr { border-top: 1px solid var(--line); }
+    tbody tr:hover { background: #faf7f2; }
+    a { color: var(--accent); text-decoration: none; font-weight: 700; }
+    a:hover, a:focus-visible { text-decoration: underline; }
+    .consumer { min-width: 180px; }
+    .consumer strong, .consumer span { display: block; }
+    .consumer span { margin-top: 3px; color: var(--muted); font-size: 12px; }
+    .version { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .legacy-version { color: var(--legacy); font-weight: 700; }
+    time { white-space: nowrap; color: var(--muted); font-size: 13px; }
+    .observations { text-align: right; font-variant-numeric: tabular-nums; }
+    .empty { padding: 32px 20px; color: var(--muted); text-align: center; }
+    @media (max-width: 760px) { main { padding-inline: 12px; } h1 { font-size: 27px; } th, td { padding-inline: 11px; } }
+  </style>
+</head>
+<body>
+  <main>
+    {{template "manage-navigation" .Navigation}}
+    <header>
+      <h1>{{.Title}}</h1>
+      <div class="subtitle">Named tokens that downloaded a module version older than its current latest release. Entries remain visible until release-consumer retention removes them.</div>
+    </header>
+
+    <section class="panel" id="legacy-usage-list" data-async-list aria-label="Legacy module consumers">
+      {{template "list-filter" .Filter}}
+      {{if .Consumers}}<div class="table-wrap"><table>
+        <thead><tr><th scope="col">Team / token</th><th scope="col">Module</th><th scope="col">Used</th><th scope="col">Latest</th><th scope="col">First seen</th><th scope="col">Last seen</th><th scope="col">Observations</th></tr></thead>
+        <tbody>{{range .Consumers}}<tr>
+          <td class="consumer"><strong>{{.ConsumerTeam}} / {{.ConsumerName}}</strong><span>{{.ConsumerRole}} token</span></td>
+          <td><a href="{{.ModuleURL}}">{{.Module}}</a></td>
+          <td class="version legacy-version">{{.Version}}</td>
+          <td class="version">{{.Latest}}</td>
+          <td><time datetime="{{.FirstSeen}}">{{.FirstSeen}}</time></td>
+          <td><time datetime="{{.LastSeen}}">{{.LastSeen}}</time></td>
+          <td class="observations">{{.Observations}}</td>
+        </tr>{{end}}</tbody>
+      </table></div>{{else}}<div class="empty">{{if .Query}}No legacy usage matches this filter.{{else}}No retained legacy module usage detected.{{end}}</div>{{end}}
+      {{if .Pagination.Total}}<nav class="list-pagination" aria-label="Legacy usage pages">
+        <span>{{.Pagination.Total}} consumers &middot; page {{.Pagination.Page}} of {{.Pagination.TotalPages}}</span>
+        {{template "page-size-control" .Pagination}}
+        <span class="list-pagination-links">
+          {{if .Pagination.HasPrev}}<a href="{{.Pagination.PrevURL}}">Previous</a>{{else}}<span class="list-pagination-disabled">Previous</span>{{end}}
+          {{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">Next</a>{{else}}<span class="list-pagination-disabled">Next</span>{{end}}
+        </span>
+      </nav>{{end}}
+    </section>
+  </main>
+</body>
+</html>

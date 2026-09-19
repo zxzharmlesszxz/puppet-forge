@@ -193,6 +193,10 @@ func TestPaginatedViewsUseSharedAsyncListContract(t *testing.T) {
 			Navigation: navigation, Principal: auth.Principal{CanAdmin: true}, Team: accessTeamFormRow{Team: "teamname"}, ShowModules: true,
 			Modules: []manageModuleRow{{Module: domain.Module{Owner: "teamname", Name: "apache"}}},
 		}), []string{"module-list"}},
+		{render(manageLegacyUsageTemplate, manageLegacyUsageData{
+			Navigation: navigation,
+			Consumers:  []manageLegacyConsumerRow{{ConsumerTeam: "platform", ConsumerName: "production", Module: "teamname/apache"}},
+		}), []string{"legacy-usage-list"}},
 	}
 	for _, page := range pages {
 		for _, target := range page.targets {
@@ -253,14 +257,14 @@ func TestManageNavigationRoleMatrix(t *testing.T) {
 			},
 			page:    "team-tokens",
 			team:    "teamname",
-			present: []string{`href="/manage/teams" aria-current="page">Teams</a>`, `aria-label="Management context navigation"`, `href="/manage/teams/teamname/tokens" aria-current="page">Tokens</a>`, `<span aria-current="page">Tokens</span>`},
-			absent:  []string{`>Add team</a>`, `>Publish spaces</a>`, `>Global access</a>`},
+			present: []string{`href="/manage/teams" aria-current="page">Teams</a>`, `aria-label="Management context navigation"`, `href="/manage/teams/teamname/tokens" aria-current="page">Tokens</a>`, `href="/manage/teams/teamname/legacy">Legacy usage</a>`, `<span aria-current="page">Tokens</span>`},
+			absent:  []string{`>Add team</a>`, `>Publish spaces</a>`, `href="/manage/admin/legacy"`, `>Global access</a>`},
 		},
 		{
 			name:      "global admin",
 			principal: auth.Principal{CanAdmin: true},
 			page:      "teams",
-			present:   []string{`href="/manage/teams" aria-current="page">Teams</a>`, `href="/manage/teams/new">Add team</a>`, `<details class="administration-menu">`, `<summary>Administration</summary>`, `href="/manage/admin/spaces">Publish spaces</a>`, `href="/manage/admin/access">Global access</a>`},
+			present:   []string{`href="/manage/teams" aria-current="page">Teams</a>`, `href="/manage/teams/new">Add team</a>`, `<details class="administration-menu">`, `<summary>Administration</summary>`, `href="/manage/admin/spaces">Publish spaces</a>`, `href="/manage/admin/legacy">Legacy usage</a>`, `href="/manage/admin/access">Global access</a>`},
 		},
 		{
 			name: "combined global and team admin",
@@ -273,7 +277,7 @@ func TestManageNavigationRoleMatrix(t *testing.T) {
 			},
 			page:    "team-modules",
 			team:    "teamname",
-			present: []string{`href="/manage/teams" aria-current="page">Teams</a>`, `<details class="administration-menu">`, `<summary>Administration</summary>`, `href="/manage/admin/spaces">Publish spaces</a>`, `href="/manage/admin/access">Global access</a>`, `href="/manage/teams/teamname/modules" aria-current="page">Modules</a>`, `<span aria-current="page">Modules</span>`},
+			present: []string{`href="/manage/teams" aria-current="page">Teams</a>`, `<details class="administration-menu">`, `<summary>Administration</summary>`, `href="/manage/admin/spaces">Publish spaces</a>`, `href="/manage/admin/legacy">Legacy usage</a>`, `href="/manage/admin/access">Global access</a>`, `href="/manage/teams/teamname/modules" aria-current="page">Modules</a>`, `href="/manage/teams/teamname/legacy">Legacy usage</a>`, `<span aria-current="page">Modules</span>`},
 		},
 	}
 
@@ -310,7 +314,7 @@ func TestManageAdministrationDropdownMarksCurrentSection(t *testing.T) {
 
 	var page bytes.Buffer
 	err := manageTeamsTemplate.Execute(&page, manageTeamsData{
-		Navigation: newManageNavigation(auth.Principal{CanAdmin: true}, "csrf", "publish-spaces", ""),
+		Navigation: newManageNavigation(auth.Principal{CanAdmin: true}, "csrf", "legacy-usage", ""),
 		Principal:  auth.Principal{CanAdmin: true},
 		CSRFToken:  "csrf",
 	})
@@ -321,7 +325,7 @@ func TestManageAdministrationDropdownMarksCurrentSection(t *testing.T) {
 	for _, want := range []string{
 		`<details class="administration-menu active">`,
 		`<summary>Administration</summary>`,
-		`href="/manage/admin/spaces" aria-current="page">Publish spaces</a>`,
+		`href="/manage/admin/legacy" aria-current="page">Legacy usage</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("administration dropdown misses %q:\n%s", want, body)
@@ -662,6 +666,7 @@ func TestParseManageTeamPathSeparatesTeamPages(t *testing.T) {
 		{path: "/manage/teams/teamname/access", team: "teamname", section: manageTeamAccessSection, canonical: true, ok: true},
 		{path: "/manage/teams/teamname/tokens", team: "teamname", section: manageTeamTokensSection, canonical: true, ok: true},
 		{path: "/manage/teams/teamname/modules", team: "teamname", section: manageTeamModulesSection, canonical: true, ok: true},
+		{path: "/manage/teams/teamname/legacy", team: "teamname", section: manageTeamLegacySection, canonical: true, ok: true},
 		{path: "/manage/teams/teamname/unknown"},
 		{path: "/manage/teams/teamname/modules/extra"},
 	} {

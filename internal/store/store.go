@@ -118,6 +118,7 @@ type RateLimitStore interface {
 type ReleaseConsumerStore interface {
 	RecordReleaseConsumer(ctx context.Context, observation ReleaseConsumerObservation) error
 	ListReleaseConsumers(ctx context.Context, since time.Time, limit int) ([]ReleaseConsumer, int, error)
+	ListLegacyReleaseConsumers(ctx context.Context, consumerTeam, query string, limit, offset int) ([]ReleaseConsumer, int, error)
 	PurgeReleaseConsumers(ctx context.Context, before time.Time) (int64, error)
 }
 
