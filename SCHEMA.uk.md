@@ -170,7 +170,7 @@ Request ID та observability охоплюють також запити, від
 ## Інвентар HTTP-методів і дій
 
 | Метод           | Шлях                                                         | Дія                                | Право або запобіжник                                                              |
-| --------------- | ------------------------------------------------------------ | ---------------------------------- | --------------------------------------------------------------------------------- |
+|-----------------|--------------------------------------------------------------|------------------------------------|-----------------------------------------------------------------------------------|
 | `GET`           | `/healthz`                                                   | liveness процесу                   | без dependencies                                                                  |
 | `GET`           | `/readyz`                                                    | SQL та object-storage readiness    | dependency deadline 2s                                                            |
 | `GET`           | `/`                                                          | каталог і filter                   | завжди public information                                                         |
@@ -198,7 +198,7 @@ Request ID та observability охоплюють також запити, від
 | `GET`, `POST`   | `/manage/access/add`                                         | compatibility Add Team             | global admin, CSRF on POST                                                        |
 | `POST`          | `/manage/access/token`                                       | create/rotate/revoke token         | global/matching team admin, CSRF, lock                                            |
 | `GET`           | `/api/v1/modules`                                            | list/search                        | read capability, local rate limit                                                 |
-| `POST`          | `/api/v1/modules`                                            | publish `file`, optional `space`    | metadata-owner permission; supplied space must match                               |
+| `POST`          | `/api/v1/modules`                                            | publish `file`, optional `space`   | metadata-owner permission; supplied space must match                              |
 | `GET`           | `/api/v1/manage/publish-spaces`                              | effective spaces                   | publish-capable principal                                                         |
 | `GET`, `DELETE` | `/api/v1/modules/{owner}/{name}`                             | get/delete module                  | read або delete capability                                                        |
 | `GET`, `DELETE` | `/api/v1/modules/{owner}/{name}/versions/{version}`          | get/delete release                 | read/delete; cold checksum hydration                                              |
