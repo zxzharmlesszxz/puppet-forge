@@ -21,7 +21,7 @@ require (
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.23.0
 	google.golang.org/api v0.298.0
-	google.golang.org/grpc v1.84.0
+	google.golang.org/grpc v1.83.2
 	modernc.org/sqlite v1.59.0
 )
 
