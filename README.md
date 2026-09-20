@@ -688,6 +688,18 @@ The workflow first creates a draft GitHub Release, publishes and signs the immut
 
 All publication steps are safe to retry for the same tag: the GitHub Release is edited in place, the versioned image remains content-addressed, and chart-releaser skips an existing chart package. If only the final metadata push fails, rerun the failed workflow job or update `deploy/puppet-forge/Chart.yaml` on the default branch to the released chart version and `appVersion`; do not recreate the tag or rebuild different artifacts under the same version.
 
+Run the complete local release gate with an explicit canonical version before publishing:
+
+```bash
+make release-preflight VERSION=v1.2.3
+```
+
+After it succeeds, the guarded release target requires a clean `main` worktree, rejects existing local or remote tags, pushes `main`, verifies the remote commit, creates an annotated tag, and pushes it to start the Release workflow:
+
+```bash
+make push-release VERSION=v1.2.3
+```
+
 For the Helm repository, create or allow the `gh-pages` branch and configure GitHub Pages to serve it. After a release:
 
 ```bash

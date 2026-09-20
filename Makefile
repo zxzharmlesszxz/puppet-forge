@@ -1,6 +1,6 @@
 include Makefile.mk
 
-.PHONY: help fmt fmt-check tidy mod-download deps-update build release-archives release-checksums release vet lint govulncheck gosec security-go test test-postgres test-s3-storage test-gcs-storage test-object-storage test-race test-browser coverage coverage-check docker-build docker-smoke docker-buildx docker-buildx-push docker-push compose compose-up compose-down compose-logs compose-ps compose-config compose-smoke r10k r10k-logs http-smoke oidc-preflight prometheus-rules-check helm-lint helm-template-check helm-package check ci clean size
+.PHONY: help fmt fmt-check tidy mod-download deps-update build release-archives release-checksums release release-smoke release-preflight release-version-check release-worktree-check release-tag-check push-release vet lint govulncheck gosec security-go trivy-filesystem trivy-image test test-postgres test-s3-storage test-gcs-storage test-object-storage test-race test-browser coverage coverage-check docker-build docker-smoke docker-buildx docker-buildx-push docker-push compose compose-up compose-down compose-logs compose-ps compose-config compose-smoke r10k r10k-logs http-smoke oidc-preflight prometheus-rules-check helm-lint helm-template-check helm-package check ci clean size
 .SILENT: compose compose-config compose-down compose-logs compose-ps compose-up r10k r10k-logs size
 
 help: ## Show available make targets.
@@ -76,6 +76,41 @@ release-smoke: release ## Build release archives and smoke-test the native archi
 	"$$binary" --help 2>&1 | grep -F "Usage of $(PROJECT_NAME):" >/dev/null; \
 	"$$binary" --version 2>&1 | grep -F "$(VERSION)" >/dev/null
 
+release-preflight: release-version-check full-check security-go test-browser test-race trivy-filesystem trivy-image ## Run all local checks required before pushing a release tag. Set VERSION=vX.Y.Z.
+
+release-version-check: ## Validate VERSION for release targets.
+	@printf '%s\n' "$(VERSION)" | grep -Eq '^v(0|1)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$' || { \
+		echo "VERSION must use canonical vMAJOR.MINOR.PATCH syntax; v2+ requires a /v2 module path" >&2; \
+		exit 2; \
+	}
+
+release-worktree-check: ## Verify the worktree is clean before release.
+	@test -z "$$(git status --porcelain)" || { echo "worktree has uncommitted changes; commit or stash before release" >&2; exit 2; }
+
+release-tag-check: release-version-check ## Verify the release tag does not already exist locally or remotely.
+	@if git rev-parse -q --verify "refs/tags/$(VERSION)" >/dev/null; then \
+		echo "local tag already exists: $(VERSION)" >&2; \
+		exit 2; \
+	fi
+	@remote_tags="$$(git ls-remote --tags origin "refs/tags/$(VERSION)" "refs/tags/$(VERSION)^{}")" || { \
+		echo "failed to query release tags from origin" >&2; \
+		exit 2; \
+	}; \
+	test -z "$$remote_tags" || { echo "remote tag already exists: $(VERSION)" >&2; exit 2; }
+
+push-release: release-worktree-check release-tag-check release-preflight ## Run release preflight, push main, and push an annotated release tag. Set VERSION=vX.Y.Z.
+	@set -eu; \
+	current_branch="$$(git branch --show-current)"; \
+	if [ "$$current_branch" != "main" ]; then \
+		echo "push-release must run from main, got $$current_branch" >&2; \
+		exit 2; \
+	fi; \
+	git push origin HEAD:main; \
+	remote_head="$$(git ls-remote --heads origin refs/heads/main | awk '{print $$1}')"; \
+	test "$$remote_head" = "$$(git rev-parse HEAD)" || { echo "origin/main does not match local HEAD after push" >&2; exit 2; }; \
+	git tag -a "$(VERSION)" -m "Release $(VERSION)"; \
+	git push origin "$(VERSION)"
+
 vet: ## Run go vet.
 	$(GO) vet ./...
 
@@ -89,6 +124,24 @@ gosec: ## Run Go security static analysis.
 	$(GO) run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) -exclude-generated ./...
 
 security-go: govulncheck gosec ## Run Go vulnerability and security scans.
+
+trivy-filesystem: ## Scan dependencies, secrets, licenses, and repository configuration with Trivy.
+	$(DOCKER) run --rm \
+		-v $(TRIVY_CACHE_VOLUME):/root/.cache/trivy \
+		-v "$(CURDIR):/work:ro" \
+		-w /work \
+		$(TRIVY_IMAGE) fs --scanners vuln,secret,license --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .
+	$(DOCKER) run --rm \
+		-v $(TRIVY_CACHE_VOLUME):/root/.cache/trivy \
+		-v "$(CURDIR):/work:ro" \
+		-w /work \
+		$(TRIVY_IMAGE) fs --config .trivy-misconfig.yaml --scanners misconfig .
+
+trivy-image: docker-smoke ## Scan the locally built Docker image with Trivy.
+	$(DOCKER) run --rm \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-v $(TRIVY_CACHE_VOLUME):/root/.cache/trivy \
+		$(TRIVY_IMAGE) image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $(DOCKER_IMAGE)
 
 test: ## Run Go tests.
 	$(GO) test -buildvcs=false ./...

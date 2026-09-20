@@ -27,6 +27,9 @@ on:
 permissions:
   contents: read
 
+env:
+  TRIVY_VERSION: v0.74.0
+
 jobs:
   go-check:
     name: Go Check
@@ -81,6 +84,7 @@ jobs:
       - name: Filesystem Vulnerability, Secret, And License Scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: ${{ env.TRIVY_VERSION }}
           scan-type: fs
           scan-ref: .
           scanners: vuln,secret,license
@@ -91,6 +95,7 @@ jobs:
       - name: Filesystem Misconfiguration Scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: ${{ env.TRIVY_VERSION }}
           scan-type: fs
           scan-ref: .
           scanners: misconfig
@@ -266,6 +271,7 @@ jobs:
       - name: Docker Image Scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: ${{ env.TRIVY_VERSION }}
           image-ref: puppet-forge:ci
           severity: HIGH,CRITICAL
           ignore-unfixed: true

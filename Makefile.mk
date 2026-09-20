@@ -8,6 +8,8 @@ DOCKER_COMPOSE ?= $(DOCKER) compose
 HELM ?= helm
 PROMTOOL_IMAGE ?= prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
 PLAYWRIGHT_IMAGE ?= mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+TRIVY_IMAGE ?= aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
+TRIVY_CACHE_VOLUME ?= puppet-forge-trivy-cache
 CURL ?= curl
 PYTHON ?= python3
 
