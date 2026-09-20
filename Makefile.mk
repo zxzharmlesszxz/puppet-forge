@@ -34,7 +34,14 @@ PLATFORMS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
 COVERAGE_PROFILE ?= coverage.out
 COVERAGE_REPORT ?= coverage.txt
-COVERAGE_THRESHOLD ?= 60.0
+COVERAGE_UNIT_PROFILE ?= coverage-unit.out
+COVERAGE_POSTGRES_PROFILE ?= coverage-postgres.out
+COVERAGE_S3_PROFILE ?= coverage-s3.out
+COVERAGE_GCS_PROFILE ?= coverage-gcs.out
+COVERAGE_PROFILES ?= $(COVERAGE_UNIT_PROFILE) $(COVERAGE_POSTGRES_PROFILE) $(COVERAGE_S3_PROFILE) $(COVERAGE_GCS_PROFILE)
+COVERAGE_UNIT_THRESHOLD ?= 65.0
+COVERAGE_THRESHOLD ?= 70.0
+COVERAGE_PACKAGE_THRESHOLDS ?= internal/auth=80.0 internal/config=90.0 internal/domain=85.0 internal/httpapi=75.0 internal/httputil=90.0 internal/metrics=70.0 internal/observability=80.0 internal/proxy=70.0 internal/service=65.0 internal/throttle=90.0 internal/webauth=75.0
 GO_FILES ?= $(shell find . -name '*.go' -not -path './vendor/*' -not -path './dist/*')
 
 COMPOSE_ARGS ?= up --build

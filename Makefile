@@ -1,6 +1,6 @@
 include Makefile.mk
 
-.PHONY: help fmt fmt-check tidy mod-download deps-update build release-archives release-checksums release release-smoke release-preflight release-version-check release-worktree-check release-tag-check push-release vet lint govulncheck gosec security-go trivy-filesystem trivy-image test test-postgres test-s3-storage test-gcs-storage test-object-storage test-race test-browser coverage coverage-check docker-build docker-smoke docker-buildx docker-buildx-push docker-push compose compose-up compose-down compose-logs compose-ps compose-config compose-smoke r10k r10k-logs http-smoke oidc-preflight prometheus-rules-check helm-lint helm-template-check helm-package check ci clean size
+.PHONY: help fmt fmt-check tidy mod-download deps-update build release-archives release-checksums release release-smoke release-preflight release-version-check release-worktree-check release-tag-check push-release vet lint govulncheck gosec security-go trivy-filesystem trivy-image test test-postgres test-s3-storage test-gcs-storage test-object-storage test-race test-browser coverage-unit coverage-postgres coverage-s3 coverage-gcs coverage coverage-check coverage-integration coverage-integration-check coverage-merge-check docker-build docker-smoke docker-buildx docker-buildx-push docker-push compose compose-up compose-down compose-logs compose-ps compose-config compose-smoke r10k r10k-logs http-smoke oidc-preflight prometheus-rules-check helm-lint helm-template-check helm-package check ci clean-dist clean size
 .SILENT: compose compose-config compose-down compose-logs compose-ps compose-up r10k r10k-logs size
 
 help: ## Show available make targets.
@@ -57,7 +57,7 @@ release-checksums: release-archives ## Write SHA256 checksums for release archiv
 	fi; \
 	cat checksums.txt
 
-release: clean release-checksums ## Build release archives and checksums.
+release: clean-dist release-checksums ## Build release archives and checksums.
 
 release-smoke: release ## Build release archives and smoke-test the native archive.
 	@set -e; \
@@ -76,7 +76,7 @@ release-smoke: release ## Build release archives and smoke-test the native archi
 	"$$binary" --help 2>&1 | grep -F "Usage of $(PROJECT_NAME):" >/dev/null; \
 	"$$binary" --version 2>&1 | grep -F "$(VERSION)" >/dev/null
 
-release-preflight: release-version-check full-check security-go test-browser test-race trivy-filesystem trivy-image ## Run all local checks required before pushing a release tag. Set VERSION=vX.Y.Z.
+release-preflight: release-version-check full-check coverage-integration-check security-go test-browser test-race trivy-filesystem trivy-image ## Run all local checks required before pushing a release tag. Set VERSION=vX.Y.Z.
 
 release-version-check: ## Validate VERSION for release targets.
 	@printf '%s\n' "$(VERSION)" | grep -Eq '^v(0|1)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$' || { \
@@ -170,19 +170,46 @@ test-race: ## Run Go tests with the race detector.
 test-browser: ## Run browser interaction regressions with Playwright.
 	PLAYWRIGHT_IMAGE="$(PLAYWRIGHT_IMAGE)" DOCKER="$(DOCKER)" GO="$(GO)" CURL="$(CURL)" bash scripts/browser-tests.sh
 
-coverage: ## Run tests with coverage and write coverage reports.
-	$(GO) test -buildvcs=false -ldflags "$(LDFLAGS)" -covermode=atomic -coverprofile=$(COVERAGE_PROFILE) ./...
+coverage-unit: ## Run unit tests and write their coverage profile.
+	$(GO) test -buildvcs=false -ldflags "$(LDFLAGS)" -covermode=atomic -coverprofile=$(COVERAGE_UNIT_PROFILE) ./...
+
+coverage-postgres: ## Run PostgreSQL integration tests and write their coverage profile.
+	@test -n "$(PUPPET_FORGE_TEST_POSTGRES_DSN)" || (echo "PUPPET_FORGE_TEST_POSTGRES_DSN is required"; exit 1)
+	PUPPET_FORGE_TEST_POSTGRES_DSN="$(PUPPET_FORGE_TEST_POSTGRES_DSN)" $(GO) test -buildvcs=false -covermode=atomic -coverprofile=$(COVERAGE_POSTGRES_PROFILE) ./internal/store -run 'TestStoreParity|TestPostgresStoreConcurrentSchemaSetup'
+
+coverage-s3: ## Run S3 integration tests and write their coverage profile.
+	@test -n "$(PUPPET_FORGE_TEST_S3_ENDPOINT)" || (echo "PUPPET_FORGE_TEST_S3_ENDPOINT is required"; exit 1)
+	PUPPET_FORGE_TEST_S3_ENDPOINT="$(PUPPET_FORGE_TEST_S3_ENDPOINT)" \
+	PUPPET_FORGE_TEST_S3_ACCESS_KEY_ID="$(PUPPET_FORGE_TEST_S3_ACCESS_KEY_ID)" \
+	PUPPET_FORGE_TEST_S3_SECRET_ACCESS_KEY="$(PUPPET_FORGE_TEST_S3_SECRET_ACCESS_KEY)" \
+	$(GO) test -buildvcs=false -covermode=atomic -coverprofile=$(COVERAGE_S3_PROFILE) ./internal/storage -run 'TestS3StorageIntegration'
+
+coverage-gcs: ## Run GCS integration tests and write their coverage profile.
+	@test -n "$(PUPPET_FORGE_TEST_GCS_ENDPOINT)" || (echo "PUPPET_FORGE_TEST_GCS_ENDPOINT is required"; exit 1)
+	PUPPET_FORGE_TEST_GCS_ENDPOINT="$(PUPPET_FORGE_TEST_GCS_ENDPOINT)" \
+	$(GO) test -buildvcs=false -covermode=atomic -coverprofile=$(COVERAGE_GCS_PROFILE) ./internal/storage -run 'TestGCSStorageIntegration'
+
+coverage: coverage-unit ## Merge unit coverage and write the default report.
+	bash scripts/merge-coverage.sh $(COVERAGE_PROFILE) $(COVERAGE_UNIT_PROFILE)
 	$(GO) tool cover -func=$(COVERAGE_PROFILE) | tee $(COVERAGE_REPORT)
 
 coverage-check: coverage ## Enforce the coverage threshold.
-	@coverage="$$(awk '/^total:/ {gsub(/%/, "", $$3); print $$3}' $(COVERAGE_REPORT))"; \
-	awk -v coverage="$$coverage" -v threshold="$(COVERAGE_THRESHOLD)" 'BEGIN { \
-		if (coverage + 0 < threshold + 0) { \
-			printf "coverage %.1f%% is below %.1f%%\n", coverage, threshold; \
-			exit 1; \
-		} \
-		printf "coverage %.1f%% meets threshold %.1f%%\n", coverage, threshold; \
-	}'
+	bash scripts/check-coverage.sh $(COVERAGE_REPORT) $(COVERAGE_UNIT_THRESHOLD)
+	bash scripts/check-package-coverage.sh $(COVERAGE_PROFILE) $(COVERAGE_PACKAGE_THRESHOLDS)
+
+coverage-integration: coverage-unit coverage-postgres coverage-s3 coverage-gcs ## Merge unit, PostgreSQL, S3, and GCS coverage.
+	bash scripts/merge-coverage.sh $(COVERAGE_PROFILE) $(COVERAGE_PROFILES)
+	$(GO) tool cover -func=$(COVERAGE_PROFILE) | tee $(COVERAGE_REPORT)
+
+coverage-integration-check: coverage-integration ## Enforce the merged integration coverage threshold.
+	bash scripts/check-coverage.sh $(COVERAGE_REPORT) $(COVERAGE_THRESHOLD)
+	bash scripts/check-package-coverage.sh $(COVERAGE_PROFILE) $(COVERAGE_PACKAGE_THRESHOLDS)
+
+coverage-merge-check: ## Merge prebuilt profiles from COVERAGE_PROFILES and enforce the threshold.
+	bash scripts/merge-coverage.sh $(COVERAGE_PROFILE) $(COVERAGE_PROFILES)
+	$(GO) tool cover -func=$(COVERAGE_PROFILE) | tee $(COVERAGE_REPORT)
+	bash scripts/check-coverage.sh $(COVERAGE_REPORT) $(COVERAGE_THRESHOLD)
+	bash scripts/check-package-coverage.sh $(COVERAGE_PROFILE) $(COVERAGE_PACKAGE_THRESHOLDS)
 
 docker-build: ## Build the Docker image.
 	$(DOCKER) build \
@@ -319,9 +346,11 @@ full-check: check release-smoke size ## Run all local checks and release smoke.
 
 ci: check test-race docker-smoke ## Run extended checks.
 
-clean: ## Remove generated local artifacts.
+clean-dist: ## Remove generated release artifacts.
 	rm -rf $(DIST_DIR)
-	rm -f $(COVERAGE_PROFILE) $(COVERAGE_REPORT)
+
+clean: clean-dist ## Remove all generated local artifacts.
+	rm -f $(COVERAGE_PROFILE) $(COVERAGE_REPORT) $(COVERAGE_UNIT_PROFILE) $(COVERAGE_POSTGRES_PROFILE) $(COVERAGE_S3_PROFILE) $(COVERAGE_GCS_PROFILE)
 
 size:
 	@du -h $(BUILD_OUTPUT)* 2>/dev/null || true

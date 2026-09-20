@@ -547,6 +547,8 @@ make test-object-storage
 
 The combined target runs the S3 and GCS storage contracts. They cover immutable create-only uploads, streamed full/range reads, listing, and idempotent deletion; the S3 contract additionally verifies concurrent same-key writes and cancellation cleanup. Use `make test-s3-storage` or `make test-gcs-storage` to run one backend, and override the corresponding `PUPPET_FORGE_TEST_*_ENDPOINT` variables for other isolated emulators.
 
+`make coverage-check` enforces 65% total unit coverage plus package-specific floors for critical business logic. With PostgreSQL, MinIO, and fake-gcs-server available, `make coverage-integration-check` runs the unit and integration suites, merges their atomic coverage profiles without duplicating statements, and requires 70% total coverage while retaining the package-specific floors. CI produces these profiles in isolated jobs and checks their merged result.
+
 ## Docker Compose
 
 Start the local stack:
@@ -612,6 +614,8 @@ make check
 make test-browser
 make test-postgres
 make test-object-storage
+make coverage-check
+make coverage-integration-check
 make compose-up
 make http-smoke
 make docker-smoke
@@ -690,7 +694,7 @@ The workflow first creates a draft GitHub Release, publishes and signs the immut
 
 All publication steps are safe to retry for the same tag: the GitHub Release is edited in place, the versioned image remains content-addressed, and chart-releaser skips an existing chart package. If only the final metadata push fails, rerun the failed workflow job or update `deploy/puppet-forge/Chart.yaml` on the default branch to the released chart version and `appVersion`; do not recreate the tag or rebuild different artifacts under the same version.
 
-Run the complete local release gate with an explicit canonical version before publishing:
+Run the complete local release gate with an explicit canonical version before publishing. PostgreSQL, MinIO, and fake-gcs-server must be available because the gate includes combined integration coverage:
 
 ```bash
 make release-preflight VERSION=v1.2.3

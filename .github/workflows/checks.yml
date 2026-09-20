@@ -60,8 +60,16 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
 
-      - name: Coverage Check
-        run: make coverage-check
+      - name: Unit Coverage
+        run: make coverage-unit
+
+      - name: Upload Unit Coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-unit
+          path: coverage-unit.out
+          if-no-files-found: error
+          retention-days: 1
 
   security:
     name: Security
@@ -189,10 +197,18 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Run PostgreSQL Parity Tests
+      - name: Run PostgreSQL Parity Coverage
         env:
           PUPPET_FORGE_TEST_POSTGRES_DSN: postgres://forge:forge@postgres:5432/forge?sslmode=disable
-        run: make test-postgres
+        run: make coverage-postgres
+
+      - name: Upload PostgreSQL Coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-postgres
+          path: coverage-postgres.out
+          if-no-files-found: error
+          retention-days: 1
 
   object-storage:
     name: Object Storage Integration
@@ -240,10 +256,47 @@ jobs:
           docker logs fake-gcs
           exit 1
 
-      - name: Run Object Storage Integration Tests
+      - name: Run Object Storage Coverage
         env:
           PUPPET_FORGE_TEST_GCS_ENDPOINT: http://127.0.0.1:4443
-        run: make test-object-storage
+        run: make coverage-s3 coverage-gcs
+
+      - name: Upload Object Storage Coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-object-storage
+          path: |
+            coverage-s3.out
+            coverage-gcs.out
+          if-no-files-found: error
+          retention-days: 1
+
+  coverage:
+    name: Combined Coverage
+    runs-on: ubuntu-24.04
+    needs:
+      - go-check
+      - postgres-parity
+      - object-storage
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Download Coverage Profiles
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: coverage-*
+          path: .
+          merge-multiple: true
+
+      - name: Check Combined Coverage
+        run: make coverage-merge-check
 
   docker-check:
     name: Docker Check

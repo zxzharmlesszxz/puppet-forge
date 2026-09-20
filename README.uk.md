@@ -97,6 +97,8 @@ make test-object-storage
 
 Об'єднаний target запускає контракти S3 та GCS. Вони перевіряють незмінні create-only завантаження, потокове повне й діапазонне читання, отримання списку та ідемпотентне видалення; контракт S3 додатково перевіряє конкурентний запис одного ключа й очищення після скасування. Для одного backend використовуй `make test-s3-storage` або `make test-gcs-storage`; адреси інших ізольованих емуляторів передаються через відповідні змінні `PUPPET_FORGE_TEST_*_ENDPOINT`.
 
+`make coverage-check` вимагає щонайменше 65% загального unit coverage та окремі мінімальні значення для критичної бізнес-логіки. Коли доступні PostgreSQL, MinIO і fake-gcs-server, `make coverage-integration-check` запускає unit та integration suites, об'єднує їхні atomic coverage profiles без дублювання statements і вимагає 70% загального coverage, зберігаючи окремі мінімальні значення для пакетів. У CI профілі створюються в ізольованих jobs, після чого перевіряється їхній об'єднаний результат.
+
 ## Як опублікувати свій модуль
 
 Сервіс приймає `tar.gz` архів Puppet-модуля через `POST /api/v1/modules` як `multipart/form-data`.
@@ -610,6 +612,8 @@ make check
 make test-browser
 make test-postgres
 make test-object-storage
+make coverage-check
+make coverage-integration-check
 make compose-up
 make http-smoke
 make docker-smoke
@@ -683,7 +687,7 @@ helm upgrade --install puppet-forge ./deploy/puppet-forge \
 
 Усі кроки публікації можна безпечно повторити для того самого тегу: GitHub Release редагується на місці, версійний image лишається адресованим за вмістом, а chart-releaser пропускає вже наявний пакет чарту. Якщо впав лише завершальний push метаданих, повторно запусти невдалу job або онови `deploy/puppet-forge/Chart.yaml` у головній гілці до випущених `version` та `appVersion`; не створюй тег повторно й не збирай під тією самою версією інші артефакти.
 
-Перед публікацією запусти повний локальний release gate з явно заданою канонічною версією:
+Перед публікацією запусти повний локальний release gate з явно заданою канонічною версією. PostgreSQL, MinIO та fake-gcs-server мають бути доступні, оскільки gate містить перевірку об'єднаного integration coverage:
 
 ```bash
 make release-preflight VERSION=v1.2.3
