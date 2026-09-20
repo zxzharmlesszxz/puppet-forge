@@ -612,6 +612,14 @@ func (s *ModuleService) ListReleases(ctx context.Context, owner, name string) ([
 	return s.modules.ListReleases(ctx, owner, name)
 }
 
+func (s *ModuleService) ListAllReleases(ctx context.Context) ([]store.ReleaseSummary, error) {
+	return s.modules.ListAllReleases(ctx)
+}
+
+func (s *ModuleService) GetStoredRelease(ctx context.Context, owner, name, version string) (domain.Release, error) {
+	return s.modules.GetRelease(ctx, owner, name, version)
+}
+
 func (s *ModuleService) ListReleasesForModules(ctx context.Context, modules []domain.Module) (map[string][]domain.ModuleVersion, error) {
 	grouped := make(map[string][]domain.ModuleVersion, len(modules))
 	if batchStore, ok := s.modules.(store.ModuleReleaseBatchStore); ok {
@@ -657,10 +665,6 @@ func (s *ModuleService) CountReleasesForModules(ctx context.Context, modules []d
 		counts[row.Owner+"\x00"+row.Name] = row.Count
 	}
 	return counts, nil
-}
-
-func (s *ModuleService) ListAllReleases(ctx context.Context) ([]store.ReleaseSummary, error) {
-	return s.modules.ListAllReleases(ctx)
 }
 
 func (s *ModuleService) ListReleaseMetricSummaries(ctx context.Context) ([]domain.ReleaseMetricSummary, error) {

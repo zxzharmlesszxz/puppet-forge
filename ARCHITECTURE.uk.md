@@ -9,8 +9,8 @@
 ## Огляд
 
 `puppet-forge` — сервіс на Go, який зберігає внутрішні релізи Puppet-модулів,
-надає невеликий HTML UI, API для публікації та видалення адміністраторами й
-проксіює `/v3/*` до публічного Puppet Forge.
+надає невеликий HTML UI, власний і Forge V3-сумісний API, а нерозв'язані
+`/v3/*`-запити проксіює до публічного Puppet Forge.
 
 Сервіс розділяє:
 
@@ -42,8 +42,9 @@
 
 ### Публікація модуля
 
-1. Клієнт надсилає `POST /api/v1/modules` з обов'язковим multipart-полем `file`
-   і необов'язковим полем `space`.
+1. Клієнт надсилає `POST /api/v1/modules` із multipart-полем `file` і
+   необов'язковим `space`, або PDK надсилає `POST /v3/releases` із Forge V3
+   JSON/base64-полем `file`.
 2. `internal/httpapi` автентифікує principal до приймання завантаження.
 3. `internal/service` перевіряє єдиний canonical root модуля, безпечні regular
    entries, обмежений розпакований розмір і рівно один `metadata.json` у root,
@@ -51,8 +52,9 @@
 4. До запису у storage або БД `internal/httpapi` перевіряє право публікації для
    owner із metadata. Якщо `space` передано, сервіс також вимагає його збігу з
    namespace архіву.
-5. Multipart input, checksum, upload і відповіді з артефактами використовують
-   streaming readers, тому розмір архіву не стає heap-витратами одного запиту.
+5. Після декодування запиту перевірка архіву, checksum, upload і відповіді з
+   артефактами використовують streaming readers, тому розмір архіву не стає
+   heap-витратами одного запиту.
 6. Сервіс обчислює MD5, SHA-256 і розмір, а потім серіалізує публікацію цієї
    identity між репліками.
 7. Сховище створює `<prefix>/<owner>/<name>/<version>/<sha256>.tar.gz` із
@@ -70,8 +72,11 @@
 
 ### Читання
 
-1. Клієнт запитує metadata модуля або релізу через `/api/v1/modules/...` чи UI.
-2. SQL store повертає records модуля й релізу.
+1. Клієнт запитує metadata модуля або релізу через `/api/v1/modules/...`,
+   локальний Forge V3-каталог чи UI.
+2. SQL store повертає локальні й індексовані upstream records. Маршрути
+   `GET /v3/modules` і `GET /v3/releases` пагінують збережений каталог без
+   окремої upstream hydration для кожного результату.
 3. Для локальних релізів URL завантаження будується з налаштованого artifact
    backend.
 4. `GET` конкретного архіву з іменованим збереженим access-токеном записує у
@@ -83,7 +88,9 @@
 ### Upstream proxy
 
 1. Клієнт звертається до `/v3/*` цього сервісу.
-2. Proxy передає запит публічному Puppet Forge.
+2. Router спочатку обслуговує підтримувані колекції, відомі details та
+   артефакти з локального каталогу. Лише нерозв'язаний V3 read передається
+   публічному Puppet Forge.
 3. JSON-відповіді GET і HEAD кешуються в пам'яті на
    `UPSTREAM_PROXY_JSON_CACHE_TTL`.
 4. Якщо upstream недоступний після завершення TTL, stale JSON може повертатися
@@ -158,7 +165,14 @@ metadata не додає цей спільний object до outbox. Окрем�
 - `/api/v1/modules/{owner}/{name}/versions/{version}/download` — завантаження;
 - `/` — HTML-каталог;
 - `/modules/...` — HTML-сторінки модуля й витягнутих файлів;
-- `/v3/*` — upstream Forge proxy;
+- `GET /v3/modules` і `GET /v3/releases` — Forge-сумісні колекції локального
+  та індексованого upstream-каталогу;
+- `POST /v3/releases` — PDK-сумісна JSON/base64-публікація з авторизацією за
+  owner із metadata;
+- `GET /v3/modules/{slug}`, `GET /v3/releases/{slug}` і
+  `GET|HEAD /v3/files/{filename}` — локально розв'язані Forge-сумісні details
+  та артефакти;
+- інші `/v3/*` — fallback proxy до upstream Forge;
 - `/metrics` — Prometheus endpoint на окремому `METRICS_ADDR`, не на listener
   застосунку;
 - `/healthz` — liveness процесу;

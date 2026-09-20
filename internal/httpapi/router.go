@@ -159,10 +159,9 @@ func NewRouter(config RouterConfig, opts ...RouterOption) (http.Handler, error) 
 	mux.HandleFunc("/api/v1/modules", r.modulesCollection)
 	mux.HandleFunc("/api/v1/modules/", r.moduleItem)
 	mux.HandleFunc("/api/v1/manage/publish-spaces", r.publishSpaces)
+	mux.HandleFunc("POST /v3/releases", r.publishV3Release)
 	mux.HandleFunc("/modules/", r.modulePage)
-	if config.ForgeProxy != nil {
-		mux.Handle("/v3/", r.requireRead(r.rateLimited("v3-read", 1200, time.Minute, http.HandlerFunc(r.v3Handler))))
-	}
+	mux.Handle("/v3/", r.requireRead(r.rateLimited("v3-read", 1200, time.Minute, http.HandlerFunc(r.v3Handler))))
 
 	return r.requestID(obs.Wrap(r.externalRequestBoundary(r.securityHeaders(mux)))), nil
 }

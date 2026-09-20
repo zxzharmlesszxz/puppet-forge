@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -395,6 +398,16 @@ func (r *Router) markReleaseConsumerUsed(ctx context.Context, owner, name, versi
 }
 
 func (r *Router) publishModule(w http.ResponseWriter, req *http.Request) {
+	r.publishModuleWithReader(w, req, readPublishInput)
+}
+
+func (r *Router) publishV3Release(w http.ResponseWriter, req *http.Request) {
+	r.publishModuleWithReader(w, req, readV3PublishInput)
+}
+
+type publishInputReader func(http.ResponseWriter, *http.Request, int64) (domain.PublishModuleInput, func(), error)
+
+func (r *Router) publishModuleWithReader(w http.ResponseWriter, req *http.Request, readInput publishInputReader) {
 	allowed, rateLimitErr := r.allowSharedRateLimit(req, "publish", 60, time.Minute)
 	if rateLimitErr != nil {
 		r.audit(req, auth.Principal{}, "publish_module", "failure", "rate_limit_unavailable")
@@ -422,7 +435,7 @@ func (r *Router) publishModule(w http.ResponseWriter, req *http.Request) {
 	}
 	r.recordAccessTokenUsed(req.Context(), principal)
 
-	input, cleanup, err := readPublishInput(w, req, r.moduleUploadMax)
+	input, cleanup, err := readInput(w, req, r.moduleUploadMax)
 	if err != nil {
 		r.audit(req, principal, "publish_module", "failure", auditReason(err))
 		if isRequestTooLarge(err) {
@@ -454,6 +467,48 @@ func (r *Router) publishModule(w http.ResponseWriter, req *http.Request) {
 
 	r.audit(req, principal, "publish_module", "success", "none", "space", release.Owner, "module", release.Owner+"/"+release.Name, "release", release.Version, "sha256", release.SHA256)
 	writeJSON(w, http.StatusCreated, newReleaseAPIResponse(release))
+}
+
+func readV3PublishInput(w http.ResponseWriter, req *http.Request, maxBytes int64) (domain.PublishModuleInput, func(), error) {
+	if maxBytes > 0 {
+		req.Body = http.MaxBytesReader(w, req.Body, encodedV3UploadLimit(maxBytes))
+	}
+
+	var payload struct {
+		File []byte `json:"file"`
+	}
+	decoder := json.NewDecoder(req.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		return domain.PublishModuleInput{}, nil, fmt.Errorf("decode Forge release payload: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return domain.PublishModuleInput{}, nil, errors.New("forge release payload must contain one JSON object")
+		}
+		return domain.PublishModuleInput{}, nil, fmt.Errorf("decode trailing Forge release payload: %w", err)
+	}
+	if len(payload.File) == 0 {
+		return domain.PublishModuleInput{}, nil, errors.New("artifact file is required")
+	}
+	if maxBytes > 0 && int64(len(payload.File)) > maxBytes {
+		return domain.PublishModuleInput{}, nil, requestTooLargeError{limit: maxBytes}
+	}
+
+	return domain.PublishModuleInput{
+		FileName:    "module.tar.gz",
+		ContentType: "application/gzip",
+		File:        bytes.NewReader(payload.File),
+		SizeBytes:   int64(len(payload.File)),
+	}, func() {}, nil
+}
+
+func encodedV3UploadLimit(maxBytes int64) int64 {
+	const jsonOverheadLimit int64 = 1 << 20
+	if maxBytes > (math.MaxInt64-jsonOverheadLimit)/4*3-2 {
+		return math.MaxInt64
+	}
+	return ((maxBytes + 2) / 3 * 4) + jsonOverheadLimit
 }
 
 type releaseAPIResponse struct {

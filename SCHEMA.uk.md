@@ -170,7 +170,7 @@ Request ID та observability охоплюють також запити, від
 ## Інвентар HTTP-методів і дій
 
 | Метод           | Шлях                                                         | Дія                                | Право або запобіжник                                                              |
-|-----------------|--------------------------------------------------------------|------------------------------------|-----------------------------------------------------------------------------------|
+| --------------- | ------------------------------------------------------------ | ---------------------------------- | --------------------------------------------------------------------------------- |
 | `GET`           | `/healthz`                                                   | liveness процесу                   | без dependencies                                                                  |
 | `GET`           | `/readyz`                                                    | SQL та object-storage readiness    | dependency deadline 2s                                                            |
 | `GET`           | `/`                                                          | каталог і filter                   | завжди public information                                                         |
@@ -203,6 +203,9 @@ Request ID та observability охоплюють також запити, від
 | `GET`, `DELETE` | `/api/v1/modules/{owner}/{name}`                             | get/delete module                  | read або delete capability                                                        |
 | `GET`, `DELETE` | `/api/v1/modules/{owner}/{name}/versions/{version}`          | get/delete release                 | read/delete; cold checksum hydration                                              |
 | `GET`, `HEAD`   | `/api/v1/modules/{owner}/{name}/versions/{version}/download` | stream artifact                    | read, range/ETag, rate limit                                                      |
+| `GET`           | `/v3/modules`                                                | combined module catalog            | read/public; local SQL filter і pagination                                        |
+| `GET`           | `/v3/releases`                                               | combined release catalog           | read/public; local SQL filter і pagination без upstream hydration                 |
+| `POST`          | `/v3/releases`                                               | publish PDK JSON/base64 `file`     | metadata-owner publish permission, shared rate limit, archive limits              |
 | `GET`           | `/v3/modules/{slug}`                                         | Forge module metadata              | read/public; fresh response робить index, fresh і cached response оновлюють usage |
 | `GET`           | `/v3/releases/{slug}`                                        | Forge release metadata             | read/public; complete checksums                                                   |
 | `GET`, `HEAD`   | `/v3/files/{filename}`                                       | artifact                           | read/public; shared cold cache + range                                            |
@@ -237,7 +240,7 @@ sequenceDiagram
     participant S as Module service
     participant DB as Shared PostgreSQL
     participant O as Shared object storage
-    C->>H: POST archive + optional space
+    C->>H: POST multipart archive або V3 JSON/base64 file
     H->>A: authenticate publish-capable principal
     A->>DB: current access/token
     DB-->>A: additive capabilities
@@ -261,10 +264,11 @@ sequenceDiagram
     S->>DB: release module lock
 ```
 
-Інваріанти: `file` обов'язковий, а `space` необов'язковий; `metadata.json` —
-source of truth; metadata owner має бути дозволеним для токена й збігатися з
-переданим `space`; module/version immutable; object path content-addressed і
-create-only; повтор тих самих bytes ідемпотентний.
+Інваріанти: `file` обов'язковий; multipart-публікація може передати
+необов'язковий `space`, а V3-публікація визначає його з metadata;
+`metadata.json` — source of truth; metadata owner має бути дозволеним для
+токена й збігатися з переданим `space`; module/version immutable; object path
+content-addressed і create-only; повтор тих самих bytes ідемпотентний.
 
 ## Cold upstream release та r10k
 

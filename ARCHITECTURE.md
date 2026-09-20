@@ -8,7 +8,7 @@
 
 ## Overview
 
-`puppet-forge` is a Go service that stores internal Puppet module releases, serves a small HTML UI, exposes an API for module publishing and admin-only deletion, and proxies `/v3/*` requests to the upstream public Puppet Forge.
+`puppet-forge` is a Go service that stores internal Puppet module releases, serves a small HTML UI, exposes native and Puppet Forge V3-compatible APIs, and proxies unresolved `/v3/*` requests to the upstream public Puppet Forge.
 
 The service separates:
 
@@ -43,11 +43,11 @@ The service separates:
 
 ### Module Publishing Flow
 
-1. Client sends `POST /api/v1/modules` with the multipart `file` field and an optional `space` field.
+1. Client either sends `POST /api/v1/modules` with a multipart `file` and optional `space`, or PDK sends `POST /v3/releases` with the Forge V3 JSON/base64 `file` payload.
 2. `internal/httpapi` authenticates the principal before accepting the upload.
 3. `internal/service` validates one canonical module root, safe regular archive entries, bounded expanded size, and exactly one root-level `metadata.json`, then reads owner, name, version, description, README, and metadata from the archive.
 4. Before any storage or database write, `internal/httpapi` verifies publish permission for the metadata owner. When `space` is supplied, the service also requires it to match the archive namespace.
-5. Multipart input, checksums, object-storage upload, and artifact responses use streaming readers so archive size does not become per-request heap usage.
+5. After request decoding, archive inspection, checksums, object-storage upload, and artifact responses use streaming readers so archive size does not become per-request heap usage.
 6. The service calculates MD5, SHA-256, and size, then serializes publication for the module identity across replicas.
 7. Artifact storage creates `<prefix>/<owner>/<name>/<version>/<sha256>.tar.gz` with a backend precondition that prevents overwriting an existing object.
 8. Bearer-token publishing creates the local release only if that module/version does not exist. Retrying the same bytes is idempotent, and different bytes return `409 Conflict`. An explicit management-only replacement requires global or owning-team delete capability; SQL atomically switches the release to the new content-addressed path and queues the superseded local object for durable deletion.
@@ -56,8 +56,8 @@ The service separates:
 
 ### Read Flow
 
-1. Client requests module or release metadata through `/api/v1/modules/...` or the HTML UI.
-2. SQL store returns module and release records.
+1. Client requests module or release metadata through `/api/v1/modules/...`, the local Forge V3 catalog, or the HTML UI.
+2. SQL store returns local and indexed-upstream module and release records. `GET /v3/modules` and `GET /v3/releases` paginate stored catalog data without triggering per-result upstream hydration.
 3. For local releases, download URLs are built from the configured artifact backend.
 4. A concrete archive `GET` authenticated by a named stored access token records the token team, operator-facing token name and role, and requested module version in shared SQL. Metadata and `HEAD` requests do not create consumer observations.
 5. For upstream-indexed releases, the service may enrich missing fields by querying the upstream proxy integration.
@@ -65,7 +65,7 @@ The service separates:
 ### Upstream Proxy Flow
 
 1. Client requests `/v3/*` on this service.
-2. The proxy forwards the request to the public Puppet Forge.
+2. The router first serves supported module/release collections and known details or artifacts from the local catalog. Only an unresolved V3 read is forwarded to the public Puppet Forge.
 3. JSON GET and HEAD responses are cached in memory for `UPSTREAM_PROXY_JSON_CACHE_TTL`.
 4. If upstream fails after cache expiry, the proxy may serve stale JSON only within `UPSTREAM_PROXY_JSON_STALE_TTL`.
 5. A cold `/v3/files/*` body streams directly from upstream into a create-only
@@ -129,8 +129,14 @@ Important route groups:
   HTML index
 - `/modules/...`
   HTML module and extracted file views
-- `/v3/*`
-  upstream Forge proxy
+- `GET /v3/modules` and `GET /v3/releases`
+  Forge-compatible local and indexed-upstream catalog collections
+- `POST /v3/releases`
+  PDK-compatible JSON/base64 publication using metadata-derived authorization
+- `GET /v3/modules/{slug}`, `GET /v3/releases/{slug}`, and `GET|HEAD /v3/files/{filename}`
+  locally resolved Forge-compatible details and artifact delivery
+- other `/v3/*`
+  upstream Forge proxy fallback
 - `/metrics` on the separate `METRICS_ADDR` listener; it is not registered on the application listener
   Prometheus endpoint
 - `/healthz`

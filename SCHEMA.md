@@ -228,6 +228,9 @@ listed with the methods used by their normal clients.
 | `GET`         | `/api/v1/modules/{owner}/{name}/versions/{version}`          | release metadata                                                  | read capability; cold upstream checksum materialization when required                                                                |
 | `DELETE`      | `/api/v1/modules/{owner}/{name}/versions/{version}`          | delete release                                                    | global or primary-team delete capability; latest/active protection                                                                   |
 | `GET`, `HEAD` | `/api/v1/modules/{owner}/{name}/versions/{version}/download` | stream release bytes                                              | read capability, range/ETag support, local download rate limit                                                                       |
+| `GET`         | `/v3/modules`                                                | Forge-compatible combined module catalog                          | read capability unless public access; local SQL filtering and pagination                                                             |
+| `GET`         | `/v3/releases`                                               | Forge-compatible combined release catalog                         | read capability unless public access; local SQL filtering and pagination without upstream hydration                                  |
+| `POST`        | `/v3/releases`                                               | publish PDK JSON/base64 `file`                                    | publish capability for metadata owner; shared publish rate limit and archive limits                                                  |
 | `GET`         | `/v3/modules/{slug}`                                         | Puppet Forge v3 module metadata                                   | read capability unless public access; fresh responses index metadata, while fresh and cached responses mark observed release usage   |
 | `GET`         | `/v3/releases/{slug}`                                        | Puppet Forge v3 release metadata                                  | read capability unless public access; complete checksum fields                                                                       |
 | `GET`, `HEAD` | `/v3/files/{filename}`                                       | Puppet Forge-compatible artifact stream                           | read capability unless public access; shared cold-cache coordination and range support                                               |
@@ -264,7 +267,7 @@ sequenceDiagram
     participant DB as Shared PostgreSQL
     participant O as Shared object storage
 
-    C->>H: POST archive + optional space
+    C->>H: POST multipart archive or V3 JSON/base64 file
     H->>A: authenticate publish-capable principal
     A->>DB: load current access config or token
     DB-->>A: additive effective capabilities
@@ -294,8 +297,9 @@ sequenceDiagram
 
 Publish invariants:
 
-1. `file` is required and `space` is optional; caller-provided identity
-   overrides are rejected.
+1. `file` is required. Multipart publishing may include optional `space`, while
+   V3 publishing derives it from metadata; caller-provided identity overrides
+   are rejected.
 2. `metadata.json` is the identity source of truth.
 3. The archive owner must be authorized for the token and must equal `space`
    when that field is supplied.

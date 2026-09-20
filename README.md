@@ -24,6 +24,8 @@ It provides:
 Implemented:
 
 - `POST /api/v1/modules` uploads a new module version;
+- `POST /v3/releases` accepts the Puppet Forge V3 JSON/base64 upload used by PDK 3.4 and later;
+- `GET /v3/modules` and `GET /v3/releases` expose the combined local and indexed-upstream catalog with Forge-compatible filtering and pagination;
 - `GET /api/v1/manage/publish-spaces` lists spaces available to the authenticated principal with publishing rights;
 - `GET /api/v1/modules?limit=20&offset=0` lists modules and returns `items`, `limit`, `offset`, and `total`;
 - `GET /api/v1/modules/{owner}/{name}` returns a module card;
@@ -426,12 +428,12 @@ Important details:
 - authorization always checks the archive namespace from `metadata.json`; the token must have the `publish` role and access to that publishing space. In the structured UI, the space named after `Team` is added automatically, and global administrators assign additional spaces under `/manage/admin/spaces`.
 - multipart uploads, checksum calculation, object-storage writes, and release downloads are streamed; large archives are not copied into a single in-memory buffer.
 
-PDK can publish without a separate `space` field because the service derives it from `metadata.json` before authorization:
+PDK 3.4 and later always publish to `/v3/releases`. Pass the Forge base URL; the service decodes the official JSON/base64 payload, derives the space from `metadata.json`, and applies the same authorization rules as the multipart endpoint:
 
 ```bash
 pdk release publish \
   --forge-token "${PUBLISH_TOKEN}" \
-  --forge-upload-url "${FORGE_URL}/api/v1/modules"
+  --forge-upload-url "${FORGE_URL}"
 ```
 
 List the spaces available to a token with the `publish` role:
