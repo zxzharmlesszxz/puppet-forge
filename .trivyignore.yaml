@@ -1,0 +1,5 @@
+misconfigurations:
+  - id: KSV-0109
+    paths:
+      - deploy/puppet-forge/templates/configmap.yaml
+    statement: ACCESS_TOKEN_HISTORY_TTL is a duration, while credentials are stored in a Kubernetes Secret.

@@ -1,0 +1,12 @@
+exit-code: 1
+ignorefile: .trivyignore.yaml
+misconfiguration:
+  helm:
+    values:
+      - deploy/puppet-forge/values-dev.yaml
+severity:
+  - HIGH
+  - CRITICAL
+scan:
+  skip-files:
+    - examples/grafana/puppet-forge-dashboard.json
