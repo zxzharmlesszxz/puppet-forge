@@ -202,6 +202,9 @@ create table if not exists release_consumers (
 create index if not exists idx_release_consumers_last_seen_at
 on release_consumers (last_seen_at desc);
 
+create index if not exists idx_release_consumers_current
+on release_consumers (consumer_team, consumer_name, consumer_role, owner, name, last_seen_at desc, version);
+
 create table if not exists artifact_deletions (
 	storage_path text primary key,
 	owner text not null,

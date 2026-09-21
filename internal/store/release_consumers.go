@@ -6,6 +6,22 @@ import (
 	"time"
 )
 
+const currentReleaseConsumersCTE = `
+	with ranked_release_consumers as (
+		select c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version,
+			coalesce(m.latest_version, '') as latest_version,
+			c.first_seen_at, c.last_seen_at, c.request_count,
+			row_number() over (
+				partition by c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name
+				order by c.last_seen_at desc,
+					case when c.version = coalesce(m.latest_version, '') then 0 else 1 end,
+					c.version desc
+			) as observation_rank
+		from release_consumers c
+		left join modules m on m.owner = c.owner and m.name = c.name
+	)
+`
+
 func (s *PostgresStore) RecordReleaseConsumer(ctx context.Context, observation ReleaseConsumerObservation) error {
 	_, err := s.pool.Exec(ctx, `
 		insert into release_consumers (
@@ -24,15 +40,17 @@ func (s *PostgresStore) RecordReleaseConsumer(ctx context.Context, observation R
 
 func (s *PostgresStore) ListReleaseConsumers(ctx context.Context, since time.Time, limit int) ([]ReleaseConsumer, int, error) {
 	var total int
-	if err := s.pool.QueryRow(ctx, `select count(*) from release_consumers where last_seen_at >= $1`, since.UTC()).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, currentReleaseConsumersCTE+`
+		select count(*) from ranked_release_consumers
+		where observation_rank = 1 and last_seen_at >= $1
+	`, since.UTC()).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count release consumers: %w", err)
 	}
-	rows, err := s.pool.Query(ctx, `
-		select c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version,
-			coalesce(m.latest_version, ''), c.first_seen_at, c.last_seen_at, c.request_count
-		from release_consumers c
-		left join modules m on m.owner = c.owner and m.name = c.name
-		where c.last_seen_at >= $1
+	rows, err := s.pool.Query(ctx, currentReleaseConsumersCTE+`
+		select consumer_team, consumer_name, consumer_role, owner, name, version,
+			latest_version, first_seen_at, last_seen_at, request_count
+		from ranked_release_consumers c
+		where c.observation_rank = 1 and c.last_seen_at >= $1
 		order by c.last_seen_at desc, c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version
 		limit $2
 	`, since.UTC(), limit)
@@ -53,19 +71,18 @@ func (s *PostgresStore) ListReleaseConsumers(ctx context.Context, since time.Tim
 
 func (s *PostgresStore) ListLegacyReleaseConsumers(ctx context.Context, consumerTeam, query string, limit, offset int) ([]ReleaseConsumer, int, error) {
 	const filter = `
-		m.latest_version is not null and m.latest_version <> '' and c.version <> m.latest_version
+		c.observation_rank = 1 and c.latest_version <> '' and c.version <> c.latest_version
 		and ($1 = '' or c.consumer_team = $1)
-		and ($2 = '' or position(lower($2) in lower(concat_ws(' ', c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version, m.latest_version))) > 0)
+		and ($2 = '' or position(lower($2) in lower(concat_ws(' ', c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version, c.latest_version))) > 0)
 	`
 	var total int
-	if err := s.pool.QueryRow(ctx, `select count(*) from release_consumers c join modules m on m.owner = c.owner and m.name = c.name where `+filter, consumerTeam, query).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, currentReleaseConsumersCTE+`select count(*) from ranked_release_consumers c where `+filter, consumerTeam, query).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count legacy release consumers: %w", err)
 	}
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.pool.Query(ctx, currentReleaseConsumersCTE+`
 		select c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version,
-			m.latest_version, c.first_seen_at, c.last_seen_at, c.request_count
-		from release_consumers c
-		join modules m on m.owner = c.owner and m.name = c.name
+			c.latest_version, c.first_seen_at, c.last_seen_at, c.request_count
+		from ranked_release_consumers c
 		where `+filter+`
 		order by c.last_seen_at desc, c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version
 		limit $3 offset $4
@@ -111,15 +128,17 @@ func (s *SQLiteStore) RecordReleaseConsumer(ctx context.Context, observation Rel
 
 func (s *SQLiteStore) ListReleaseConsumers(ctx context.Context, since time.Time, limit int) ([]ReleaseConsumer, int, error) {
 	var total int
-	if err := s.db.QueryRowContext(ctx, `select count(*) from release_consumers where julianday(last_seen_at) >= julianday(?)`, sqliteTime(since.UTC())).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, currentReleaseConsumersCTE+`
+		select count(*) from ranked_release_consumers
+		where observation_rank = 1 and julianday(last_seen_at) >= julianday(?)
+	`, sqliteTime(since.UTC())).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count release consumers: %w", err)
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		select c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version,
-			coalesce(m.latest_version, ''), c.first_seen_at, c.last_seen_at, c.request_count
-		from release_consumers c
-		left join modules m on m.owner = c.owner and m.name = c.name
-		where julianday(c.last_seen_at) >= julianday(?)
+	rows, err := s.db.QueryContext(ctx, currentReleaseConsumersCTE+`
+		select consumer_team, consumer_name, consumer_role, owner, name, version,
+			latest_version, first_seen_at, last_seen_at, request_count
+		from ranked_release_consumers c
+		where c.observation_rank = 1 and julianday(c.last_seen_at) >= julianday(?)
 		order by c.last_seen_at desc, c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version
 		limit ?
 	`, sqliteTime(since.UTC()), limit)
@@ -143,19 +162,18 @@ func (s *SQLiteStore) ListReleaseConsumers(ctx context.Context, since time.Time,
 
 func (s *SQLiteStore) ListLegacyReleaseConsumers(ctx context.Context, consumerTeam, query string, limit, offset int) ([]ReleaseConsumer, int, error) {
 	const filter = `
-		m.latest_version is not null and m.latest_version <> '' and c.version <> m.latest_version
+		c.observation_rank = 1 and c.latest_version <> '' and c.version <> c.latest_version
 		and (? = '' or c.consumer_team = ?)
-		and (? = '' or instr(lower(c.consumer_team || ' ' || c.consumer_name || ' ' || c.consumer_role || ' ' || c.owner || ' ' || c.name || ' ' || c.version || ' ' || m.latest_version), lower(?)) > 0)
+		and (? = '' or instr(lower(c.consumer_team || ' ' || c.consumer_name || ' ' || c.consumer_role || ' ' || c.owner || ' ' || c.name || ' ' || c.version || ' ' || c.latest_version), lower(?)) > 0)
 	`
 	var total int
-	if err := s.db.QueryRowContext(ctx, `select count(*) from release_consumers c join modules m on m.owner = c.owner and m.name = c.name where `+filter, consumerTeam, consumerTeam, query, query).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, currentReleaseConsumersCTE+`select count(*) from ranked_release_consumers c where `+filter, consumerTeam, consumerTeam, query, query).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count legacy release consumers: %w", err)
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, currentReleaseConsumersCTE+`
 		select c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version,
-			m.latest_version, c.first_seen_at, c.last_seen_at, c.request_count
-		from release_consumers c
-		join modules m on m.owner = c.owner and m.name = c.name
+			c.latest_version, c.first_seen_at, c.last_seen_at, c.request_count
+		from ranked_release_consumers c
 		where `+filter+`
 		order by c.last_seen_at desc, c.consumer_team, c.consumer_name, c.consumer_role, c.owner, c.name, c.version
 		limit ? offset ?
