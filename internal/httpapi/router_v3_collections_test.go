@@ -15,12 +15,7 @@ import (
 func TestV3ModuleCollectionServesLocalCatalogWithoutUpstreamProxy(t *testing.T) {
 	t.Parallel()
 
-	st := newHTTPAPITestStore(t)
-	createV3CollectionRelease(t, st, "teamname", "apache", "1.0.0")
-	createV3CollectionRelease(t, st, "teamname", "apache", "2.0.0")
-	createV3CollectionRelease(t, st, "otherteam", "stdlib", "3.0.0")
-	server := httptest.NewServer(newTestRouter(service.NewModuleService(st, testArtifactStorage{}, "modules", nil), nil, "http://example.test", nil, nil, "admin-token", true, defaultActiveReleaseTTL))
-	t.Cleanup(server.Close)
+	server := newPopulatedV3CollectionServer(t)
 
 	resp, err := server.Client().Get(server.URL + "/v3/modules?query=apache&limit=1")
 	if err != nil {
@@ -68,12 +63,7 @@ func TestV3ModuleCollectionServesLocalCatalogWithoutUpstreamProxy(t *testing.T) 
 func TestV3ReleaseCollectionFiltersAndPaginatesLocalReleases(t *testing.T) {
 	t.Parallel()
 
-	st := newHTTPAPITestStore(t)
-	createV3CollectionRelease(t, st, "teamname", "apache", "1.0.0")
-	createV3CollectionRelease(t, st, "teamname", "apache", "2.0.0")
-	createV3CollectionRelease(t, st, "otherteam", "stdlib", "3.0.0")
-	server := httptest.NewServer(newTestRouter(service.NewModuleService(st, testArtifactStorage{}, "modules", nil), nil, "http://example.test", nil, nil, "admin-token", true, defaultActiveReleaseTTL))
-	t.Cleanup(server.Close)
+	server := newPopulatedV3CollectionServer(t)
 
 	first := getV3ReleaseCollection(t, server, "/v3/releases?module=teamname-apache&sort_by=version&limit=1")
 	if first.Pagination.Total != 2 || first.Pagination.Offset != 0 || first.Pagination.Next == nil || len(first.Results) != 1 || first.Results[0].Version != "2.0.0" {
@@ -115,6 +105,17 @@ type v3ReleaseCollectionPayload struct {
 		Metadata map[string]any `json:"metadata"`
 		FileURI  string         `json:"file_uri"`
 	} `json:"results"`
+}
+
+func newPopulatedV3CollectionServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	st := newHTTPAPITestStore(t)
+	createV3CollectionRelease(t, st, "teamname", "apache", "1.0.0")
+	createV3CollectionRelease(t, st, "teamname", "apache", "2.0.0")
+	createV3CollectionRelease(t, st, "otherteam", "stdlib", "3.0.0")
+	server := httptest.NewServer(newTestRouter(service.NewModuleService(st, testArtifactStorage{}, "modules", nil), nil, "http://example.test", nil, nil, "admin-token", true, defaultActiveReleaseTTL))
+	t.Cleanup(server.Close)
+	return server
 }
 
 func getV3ReleaseCollection(t *testing.T, server *httptest.Server, requestPath string) v3ReleaseCollectionPayload {
