@@ -99,6 +99,8 @@ make test-object-storage
 
 `make coverage-check` вимагає щонайменше 65% загального unit coverage та окремі мінімальні значення для критичної бізнес-логіки. Коли доступні PostgreSQL, MinIO і fake-gcs-server, `make coverage-integration-check` запускає unit та integration suites, об'єднує їхні atomic coverage profiles без дублювання statements і вимагає 70% загального coverage, зберігаючи окремі мінімальні значення для пакетів. У CI профілі створюються в ізольованих jobs, після чого перевіряється їхній об'єднаний результат.
 
+Для самодостатнього локального запуску `make coverage-integration-docker` піднімає одноразові контейнери PostgreSQL, MinIO, fake-gcs-server і Go runner в ізольованій Docker-мережі. Він використовує стандартні внутрішні порти сервісів, очікує їхньої готовності, запускає той самий об'єднаний gate і видаляє контейнери, анонімні volumes та мережу після успіху, помилки або переривання.
+
 ## Як опублікувати свій модуль
 
 Сервіс приймає `tar.gz` архів Puppet-модуля через `POST /api/v1/modules` як `multipart/form-data`.
@@ -687,7 +689,7 @@ helm upgrade --install puppet-forge ./deploy/puppet-forge \
 
 Усі кроки публікації можна безпечно повторити для того самого тегу: GitHub Release редагується на місці, версійний image лишається адресованим за вмістом, а chart-releaser пропускає вже наявний пакет чарту. Не створюй тег повторно й не збирай під тією самою версією інші артефакти.
 
-Перед публікацією онови `deploy/puppet-forge/Chart.yaml`: `version` має дорівнювати версії релізу без початкової `v`, а `appVersion` — повному тегу. Закоміть цю зміну, а потім запусти повний локальний release gate із тією самою канонічною версією. PostgreSQL, MinIO та fake-gcs-server мають бути доступні, оскільки gate містить перевірку об'єднаного integration coverage:
+Перед публікацією онови `deploy/puppet-forge/Chart.yaml`: `version` має дорівнювати версії релізу без початкової `v`, а `appVersion` — повному тегу. Закоміть цю зміну, а потім запусти повний локальний release gate із тією самою канонічною версією. Gate сам піднімає ізольовані контейнери PostgreSQL, MinIO та fake-gcs-server для перевірки об'єднаного integration coverage і завжди видаляє їх після завершення:
 
 ```bash
 make release-preflight VERSION=v1.2.3

@@ -1,6 +1,6 @@
 include Makefile.mk
 
-.PHONY: help fmt fmt-check tidy mod-download deps-update build release-archives release-checksums release release-smoke release-preflight release-version-check release-chart-version-check release-worktree-check release-tag-check push-release vet lint govulncheck gosec security-go trivy-filesystem trivy-image test test-postgres test-s3-storage test-gcs-storage test-object-storage test-race test-browser coverage-unit coverage-postgres coverage-s3 coverage-gcs coverage coverage-check coverage-integration coverage-integration-check coverage-merge-check docker-build docker-smoke docker-buildx docker-buildx-push docker-push compose compose-up compose-down compose-logs compose-ps compose-config compose-smoke r10k r10k-logs http-smoke oidc-preflight prometheus-rules-check helm-lint helm-template-check helm-package check ci clean-dist clean size
+.PHONY: help fmt fmt-check tidy mod-download deps-update build release-archives release-checksums release release-smoke release-preflight release-version-check release-chart-version-check release-worktree-check release-tag-check push-release vet lint govulncheck gosec security-go trivy-filesystem trivy-image test test-postgres test-s3-storage test-gcs-storage test-object-storage test-race test-browser coverage-unit coverage-postgres coverage-s3 coverage-gcs coverage coverage-check coverage-integration coverage-integration-check coverage-integration-docker coverage-merge-check docker-build docker-smoke docker-buildx docker-buildx-push docker-push compose compose-up compose-down compose-logs compose-ps compose-config compose-smoke r10k r10k-logs http-smoke oidc-preflight prometheus-rules-check helm-lint helm-template-check helm-package check ci clean-dist clean size
 .SILENT: compose compose-config compose-down compose-logs compose-ps compose-up r10k r10k-logs size
 
 help: ## Show available make targets.
@@ -76,7 +76,7 @@ release-smoke: release ## Build release archives and smoke-test the native archi
 	"$$binary" --help 2>&1 | grep -F "Usage of $(PROJECT_NAME):" >/dev/null; \
 	"$$binary" --version 2>&1 | grep -F "$(VERSION)" >/dev/null
 
-release-preflight: release-version-check release-chart-version-check full-check coverage-integration-check security-go test-browser test-race trivy-filesystem trivy-image ## Run all local checks required before pushing a release tag. Set VERSION=vX.Y.Z.
+release-preflight: release-version-check release-chart-version-check full-check coverage-integration-docker security-go test-browser test-race trivy-filesystem trivy-image ## Run all local checks required before pushing a release tag. Set VERSION=vX.Y.Z.
 
 release-version-check: ## Validate VERSION for release targets.
 	@printf '%s\n' "$(VERSION)" | grep -Eq '^v(0|1)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$' || { \
@@ -219,6 +219,14 @@ coverage-integration: coverage-unit coverage-postgres coverage-s3 coverage-gcs #
 coverage-integration-check: coverage-integration ## Enforce the merged integration coverage threshold.
 	bash scripts/check-coverage.sh $(COVERAGE_REPORT) $(COVERAGE_THRESHOLD)
 	bash scripts/check-package-coverage.sh $(COVERAGE_PROFILE) $(COVERAGE_PACKAGE_THRESHOLDS)
+
+coverage-integration-docker: ## Run merged integration coverage with disposable local service containers.
+	DOCKER="$(DOCKER)" \
+	POSTGRES_TEST_IMAGE="$(POSTGRES_TEST_IMAGE)" \
+	MINIO_TEST_IMAGE="$(MINIO_TEST_IMAGE)" \
+	GCS_TEST_IMAGE="$(GCS_TEST_IMAGE)" \
+	INTEGRATION_RUNNER_IMAGE="$(INTEGRATION_RUNNER_IMAGE)" \
+	bash scripts/with-integration-services.sh make coverage-integration-check
 
 coverage-merge-check: ## Merge prebuilt profiles from COVERAGE_PROFILES and enforce the threshold.
 	bash scripts/merge-coverage.sh $(COVERAGE_PROFILE) $(COVERAGE_PROFILES)

@@ -549,6 +549,8 @@ The combined target runs the S3 and GCS storage contracts. They cover immutable 
 
 `make coverage-check` enforces 65% total unit coverage plus package-specific floors for critical business logic. With PostgreSQL, MinIO, and fake-gcs-server available, `make coverage-integration-check` runs the unit and integration suites, merges their atomic coverage profiles without duplicating statements, and requires 70% total coverage while retaining the package-specific floors. CI produces these profiles in isolated jobs and checks their merged result.
 
+For a self-contained local run, `make coverage-integration-docker` starts disposable PostgreSQL, MinIO, fake-gcs-server, and Go runner containers in an isolated Docker network. It uses the services' standard internal ports, waits for readiness, runs the same combined gate, and removes the containers, anonymous volumes, and network on success, failure, or interruption.
+
 ## Docker Compose
 
 Start the local stack:
@@ -694,7 +696,7 @@ The workflow first verifies that committed Helm `version` and `appVersion` match
 
 All publication steps are safe to retry for the same tag: the GitHub Release is edited in place, the versioned image remains content-addressed, and chart-releaser skips an existing chart package. Do not recreate the tag or rebuild different artifacts under the same version.
 
-Before publishing, update `deploy/puppet-forge/Chart.yaml` so `version` equals the release version without the leading `v` and `appVersion` equals the complete tag. Commit that change, then run the complete local release gate with the same canonical version. PostgreSQL, MinIO, and fake-gcs-server must be available because the gate includes combined integration coverage:
+Before publishing, update `deploy/puppet-forge/Chart.yaml` so `version` equals the release version without the leading `v` and `appVersion` equals the complete tag. Commit that change, then run the complete local release gate with the same canonical version. The gate starts isolated PostgreSQL, MinIO, and fake-gcs-server containers for combined integration coverage and always removes them afterward:
 
 ```bash
 make release-preflight VERSION=v1.2.3
