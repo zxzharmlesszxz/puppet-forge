@@ -5,7 +5,7 @@
     "test:browser": "playwright test"
   },
   "devDependencies": {
-    "@types/node": "26.4.0",
-    "@playwright/test": "1.62.1"
+    "@types/node": "26.6.1",
+    "@playwright/test": "1.63.0"
   }
 }
