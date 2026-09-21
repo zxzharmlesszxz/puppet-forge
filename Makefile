@@ -1,6 +1,6 @@
 include Makefile.mk
 
-.PHONY: help fmt fmt-check tidy mod-download deps-update build release-archives release-checksums release release-smoke release-preflight release-version-check release-worktree-check release-tag-check push-release vet lint govulncheck gosec security-go trivy-filesystem trivy-image test test-postgres test-s3-storage test-gcs-storage test-object-storage test-race test-browser coverage-unit coverage-postgres coverage-s3 coverage-gcs coverage coverage-check coverage-integration coverage-integration-check coverage-merge-check docker-build docker-smoke docker-buildx docker-buildx-push docker-push compose compose-up compose-down compose-logs compose-ps compose-config compose-smoke r10k r10k-logs http-smoke oidc-preflight prometheus-rules-check helm-lint helm-template-check helm-package check ci clean-dist clean size
+.PHONY: help fmt fmt-check tidy mod-download deps-update build release-archives release-checksums release release-smoke release-preflight release-version-check release-chart-version-check release-worktree-check release-tag-check push-release vet lint govulncheck gosec security-go trivy-filesystem trivy-image test test-postgres test-s3-storage test-gcs-storage test-object-storage test-race test-browser coverage-unit coverage-postgres coverage-s3 coverage-gcs coverage coverage-check coverage-integration coverage-integration-check coverage-merge-check docker-build docker-smoke docker-buildx docker-buildx-push docker-push compose compose-up compose-down compose-logs compose-ps compose-config compose-smoke r10k r10k-logs http-smoke oidc-preflight prometheus-rules-check helm-lint helm-template-check helm-package check ci clean-dist clean size
 .SILENT: compose compose-config compose-down compose-logs compose-ps compose-up r10k r10k-logs size
 
 help: ## Show available make targets.
@@ -76,11 +76,26 @@ release-smoke: release ## Build release archives and smoke-test the native archi
 	"$$binary" --help 2>&1 | grep -F "Usage of $(PROJECT_NAME):" >/dev/null; \
 	"$$binary" --version 2>&1 | grep -F "$(VERSION)" >/dev/null
 
-release-preflight: release-version-check full-check coverage-integration-check security-go test-browser test-race trivy-filesystem trivy-image ## Run all local checks required before pushing a release tag. Set VERSION=vX.Y.Z.
+release-preflight: release-version-check release-chart-version-check full-check coverage-integration-check security-go test-browser test-race trivy-filesystem trivy-image ## Run all local checks required before pushing a release tag. Set VERSION=vX.Y.Z.
 
 release-version-check: ## Validate VERSION for release targets.
 	@printf '%s\n' "$(VERSION)" | grep -Eq '^v(0|1)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$' || { \
 		echo "VERSION must use canonical vMAJOR.MINOR.PATCH syntax; v2+ requires a /v2 module path" >&2; \
+		exit 2; \
+	}
+
+release-chart-version-check: release-version-check ## Verify committed Helm chart metadata matches VERSION.
+	@set -eu; \
+	release_version="$(VERSION)"; \
+	expected_chart_version="$${release_version#v}"; \
+	chart_version="$$(awk '$$1 == "version:" { print $$2; exit }' "$(CHART_DIR)/Chart.yaml")"; \
+	app_version="$$(awk '$$1 == "appVersion:" { gsub(/\"/, "", $$2); print $$2; exit }' "$(CHART_DIR)/Chart.yaml")"; \
+	test "$$chart_version" = "$$expected_chart_version" || { \
+		echo "Helm chart version $$chart_version does not match release $(VERSION); expected $$expected_chart_version" >&2; \
+		exit 2; \
+	}; \
+	test "$$app_version" = "$(VERSION)" || { \
+		echo "Helm chart appVersion $$app_version does not match release $(VERSION)" >&2; \
 		exit 2; \
 	}
 

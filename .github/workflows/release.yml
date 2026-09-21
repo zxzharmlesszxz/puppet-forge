@@ -52,6 +52,8 @@ jobs:
             exit 1
           fi
 
+          make release-chart-version-check VERSION="${RELEASE_TAG}"
+
   checks:
     name: Checks
     needs:
@@ -177,13 +179,6 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
 
-      - name: Prepare Chart Version
-        shell: bash
-        run: |
-          chart_version="${GITHUB_REF_NAME#v}"
-          sed -i "s/^version:.*/version: ${chart_version}/" deploy/puppet-forge/Chart.yaml
-          sed -i "s/^appVersion:.*/appVersion: \"${GITHUB_REF_NAME}\"/" deploy/puppet-forge/Chart.yaml
-
       - name: Configure Git
         run: |
           git config user.name "$GITHUB_ACTOR"
@@ -218,7 +213,7 @@ jobs:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
 
   finalize-release:
-    name: Finalize Release Metadata
+    name: Finalize Release
     runs-on: ubuntu-24.04
     needs:
       - helm-publish
@@ -242,29 +237,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update Source Chart Version
-        shell: bash
-        run: |
-          default_branch="${{ github.event.repository.default_branch }}"
-          chart_version="${GITHUB_REF_NAME#v}"
-
-          git fetch origin "${default_branch}"
-          git switch -C "${default_branch}" "origin/${default_branch}"
-
-          sed -i "s/^version:.*/version: ${chart_version}/" deploy/puppet-forge/Chart.yaml
-          sed -i "s/^appVersion:.*/appVersion: \"${GITHUB_REF_NAME}\"/" deploy/puppet-forge/Chart.yaml
-
-          if git diff --quiet -- deploy/puppet-forge/Chart.yaml; then
-            echo "Source chart metadata is already aligned with ${GITHUB_REF_NAME}."
-            exit 0
-          fi
-
-          git config user.name "$GITHUB_ACTOR"
-          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
-          git add deploy/puppet-forge/Chart.yaml
-          git commit -m "chore(chart): mark ${GITHUB_REF_NAME} as released [skip ci]"
-          git push origin "HEAD:${default_branch}"
 
       - name: Promote Docker Image To Latest
         env:
