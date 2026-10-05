@@ -150,7 +150,7 @@ services:
         mc mb --ignore-existing local/puppet-forge-artifacts
 
   prometheus:
-    image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
     depends_on:
       app:
         condition: service_healthy
@@ -166,7 +166,7 @@ services:
       - prometheus-data:/prometheus
 
   grafana:
-    image: grafana/grafana:13.2.2
+    image: grafana/grafana:13.2.3
     depends_on:
       - prometheus
     entrypoint:
