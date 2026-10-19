@@ -136,6 +136,7 @@ config:
   # host/proto only from the direct ingress or reverse-proxy CIDRs below.
   PUBLIC_BASE_URL: ""
   ALLOWED_PUBLIC_HOSTS: ""
+  README_IMAGE_ALLOWED_HOSTS: "img.shields.io,github.com,coveralls.io,s3.amazonaws.com,www.puppetmodule.info"
   TRUSTED_PROXY_CIDRS: ""
   TRUST_FORWARDED_HEADERS: "false"
   PUBLIC_MODULE_ACCESS: "false"

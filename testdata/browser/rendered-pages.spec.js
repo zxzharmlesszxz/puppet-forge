@@ -139,3 +139,37 @@ test("module title stays inside its card on mobile", async ({ page }) => {
   expect(title.x + title.width).toBeLessThanOrEqual(hero.x + hero.width);
   expect(copyLink.x + copyLink.width).toBeLessThanOrEqual(390);
 });
+
+test("README allows trusted badges and captions unavailable images", async ({ page, baseURL }) => {
+  const badge = { contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="20"><rect width="80" height="20" fill="green"/></svg>' };
+  await page.route("https://images.example.test/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/redirect.svg" || path === "/blocked-redirect.svg") {
+      const target = path === "/redirect.svg"
+        ? new URL("/browser-fixture/badge.svg", baseURL).href
+        : "https://blocked.example.test/badge.svg";
+      return route.fulfill({ status: 302, headers: { Location: target }, body: "" });
+    }
+    return route.fulfill(path === "/badge.svg" ? badge : { status: 404, contentType: "text/plain", body: "missing" });
+  });
+  await page.addInitScript(() => {
+    window.blockedImages = [];
+    document.addEventListener("securitypolicyviolation", (event) => {
+      if (event.effectiveDirective === "img-src") window.blockedImages.push(event.blockedURI);
+    });
+  });
+  await page.goto("/modules/upstream/module-34");
+  const readme = page.locator("#readme");
+  const allowed = readme.locator('img[alt="Allowed badge"]');
+  await expect(allowed).toBeVisible();
+  await expect.poll(() => allowed.evaluate((image) => image.naturalWidth)).toBe(80);
+  const redirected = readme.locator('img[alt="Redirected badge"]');
+  await expect(redirected).toBeVisible();
+  await expect.poll(() => redirected.evaluate((image) => image.naturalWidth)).toBe(40);
+  await expect(readme).toContainText("Missing badge");
+  await expect(readme).toContainText("Image unavailable");
+  await expect(readme).toContainText("Blocked badge");
+  await expect(readme).toContainText("Blocked redirect");
+  await expect(readme.locator("img")).toHaveCount(2);
+  await expect.poll(() => page.evaluate(() => window.blockedImages)).toContain("https://blocked.example.test/badge.svg");
+});

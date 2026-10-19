@@ -52,6 +52,7 @@ type Config struct {
 	ArtifactPathStyle         bool
 	PublicBaseURL             string
 	AllowedPublicHosts        string
+	ReadmeImageAllowedHosts   string
 	TrustedProxyCIDRs         string
 	TrustForwardedHeaders     bool
 	SecurityHSTSEnabled       bool
@@ -126,6 +127,7 @@ func loadArgs(args []string, output io.Writer) (Config, error) {
 		ArtifactPathStyle:         true,
 		PublicBaseURL:             os.Getenv("PUBLIC_BASE_URL"),
 		AllowedPublicHosts:        os.Getenv("ALLOWED_PUBLIC_HOSTS"),
+		ReadmeImageAllowedHosts:   "img.shields.io,github.com,coveralls.io,s3.amazonaws.com,www.puppetmodule.info",
 		TrustedProxyCIDRs:         os.Getenv("TRUSTED_PROXY_CIDRS"),
 		TrustForwardedHeaders:     false,
 		SecurityHSTSEnabled:       false,
@@ -156,6 +158,9 @@ func loadArgs(args []string, output io.Writer) (Config, error) {
 		MetricsRefreshInterval:    30 * time.Second,
 		ReconcileArtifacts:        false,
 		ReconcileRepair:           false,
+	}
+	if value, set := os.LookupEnv("README_IMAGE_ALLOWED_HOSTS"); set {
+		cfg.ReadmeImageAllowedHosts = value
 	}
 	if err := applyTypedEnv(&cfg); err != nil {
 		return Config{}, err
@@ -231,6 +236,7 @@ func applyFlags(cfg *Config, args []string, output io.Writer) error {
 	flags.BoolVar(&cfg.ArtifactPathStyle, "artifact-path-style", cfg.ArtifactPathStyle, "use path-style S3 URLs")
 	flags.StringVar(&cfg.PublicBaseURL, "public-base-url", cfg.PublicBaseURL, "optional public base URL fallback")
 	flags.StringVar(&cfg.AllowedPublicHosts, "allowed-public-hosts", cfg.AllowedPublicHosts, "comma- or space-separated public request hosts")
+	flags.StringVar(&cfg.ReadmeImageAllowedHosts, "readme-image-allowed-hosts", cfg.ReadmeImageAllowedHosts, "comma- or space-separated exact HTTPS hosts for README images; empty disables external images")
 	flags.StringVar(&cfg.TrustedProxyCIDRs, "trusted-proxy-cidrs", cfg.TrustedProxyCIDRs, "comma- or space-separated CIDRs allowed to supply X-Forwarded-For")
 	flags.BoolVar(&cfg.TrustForwardedHeaders, "trust-forwarded-headers", cfg.TrustForwardedHeaders, "trust validated Forwarded and X-Forwarded-* headers from trusted proxy CIDRs")
 	flags.BoolVar(&cfg.SecurityHSTSEnabled, "security-hsts-enabled", cfg.SecurityHSTSEnabled, "enable Strict-Transport-Security response header")

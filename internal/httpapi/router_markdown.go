@@ -9,7 +9,9 @@ import (
 
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/text"
 )
 
 var relativeLinkPattern = regexp.MustCompile(`(?i)(href|src)="([^"]+)"`)
@@ -28,7 +30,20 @@ func renderMarkdown(source, basePath string) template.HTML {
 	}
 
 	var buf bytes.Buffer
-	if err := markdownRenderer.Convert([]byte(source), &buf); err != nil {
+	document := markdownRenderer.Parser().Parse(text.NewReader([]byte(source)))
+	err := ast.Walk(document, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if image, ok := node.(*ast.Image); ok && entering {
+			destination := string(image.Destination)
+			if strings.HasPrefix(strings.ToLower(destination), "http://") {
+				image.Destination = []byte("https://" + destination[len("http://"):])
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	if err == nil {
+		err = markdownRenderer.Renderer().Render(&buf, []byte(source), document)
+	}
+	if err != nil {
 		// #nosec G203 -- the fallback source is explicitly HTML-escaped.
 		return template.HTML(template.HTMLEscapeString(source))
 	}

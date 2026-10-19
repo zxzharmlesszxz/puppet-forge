@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +107,41 @@ func TestLoadGCSConfigWithDefaults(t *testing.T) {
 	}
 	if cfg.UpstreamURL != "https://forgeapi.puppet.com" {
 		t.Fatalf("unexpected UPSTREAM_URL default: %q", cfg.UpstreamURL)
+	}
+}
+
+func TestLoadReadmeImageAllowedHosts(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		env   string
+		unset bool
+		args  []string
+		want  string
+	}{
+		{name: "default", unset: true, want: "img.shields.io,github.com,coveralls.io,s3.amazonaws.com,www.puppetmodule.info"},
+		{name: "disabled", env: "", want: ""},
+		{name: "custom", env: "img.shields.io,badges.example.com", want: "img.shields.io,badges.example.com"},
+		{name: "flag override", env: "img.shields.io", args: []string{"--readme-image-allowed-hosts=badges.example.com"}, want: "badges.example.com"},
+		{name: "flag disable", env: "img.shields.io", args: []string{"--readme-image-allowed-hosts="}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv("DATABASE_DSN", "sqlite:///tmp/puppet-forge.db")
+			t.Setenv("ARTIFACT_BUCKET", "forge-artifacts")
+			t.Setenv("README_IMAGE_ALLOWED_HOSTS", tc.env)
+			if tc.unset {
+				if err := os.Unsetenv("README_IMAGE_ALLOWED_HOSTS"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg, err := LoadArgs(tc.args)
+			if err != nil {
+				t.Fatalf("LoadArgs() error = %v", err)
+			}
+			if cfg.ReadmeImageAllowedHosts != tc.want {
+				t.Fatalf("README_IMAGE_ALLOWED_HOSTS = %q, want %q", cfg.ReadmeImageAllowedHosts, tc.want)
+			}
+		})
 	}
 }
 
@@ -1064,6 +1100,7 @@ func clearConfigEnv(t *testing.T) {
 		"ARTIFACT_PATH_STYLE",
 		"PUBLIC_BASE_URL",
 		"ALLOWED_PUBLIC_HOSTS",
+		"README_IMAGE_ALLOWED_HOSTS",
 		"TRUSTED_PROXY_CIDRS",
 		"TRUST_FORWARDED_HEADERS",
 		"SECURITY_HSTS_ENABLED",

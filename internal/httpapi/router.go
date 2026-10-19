@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -36,21 +37,22 @@ type cspNonceContextKey struct{}
 type RouterOption func(*Router)
 
 type RouterConfig struct {
-	Modules               *service.ModuleService
-	ForgeProxy            http.Handler
-	PublicBaseURL         string
-	AllowedPublicHosts    []string
-	TrustedProxyCIDRs     []netip.Prefix
-	TrustForwardedHeaders bool
-	Authorizer            *auth.Authorizer
-	TokenHasher           *auth.TokenHasher
-	WebAuth               *webauth.OIDCAuth
-	AdminToken            string
-	ManageSessionSecret   string
-	RefreshAccessConfig   bool
-	PublicModuleAccess    bool
-	ActiveReleaseTTL      time.Duration
-	SecurityHSTSEnabled   bool
+	Modules                 *service.ModuleService
+	ForgeProxy              http.Handler
+	PublicBaseURL           string
+	AllowedPublicHosts      []string
+	ReadmeImageAllowedHosts []string
+	TrustedProxyCIDRs       []netip.Prefix
+	TrustForwardedHeaders   bool
+	Authorizer              *auth.Authorizer
+	TokenHasher             *auth.TokenHasher
+	WebAuth                 *webauth.OIDCAuth
+	AdminToken              string
+	ManageSessionSecret     string
+	RefreshAccessConfig     bool
+	PublicModuleAccess      bool
+	ActiveReleaseTTL        time.Duration
+	SecurityHSTSEnabled     bool
 }
 
 type requestTooLargeError struct {
@@ -84,6 +86,7 @@ type Router struct {
 	securityHSTSEnabled   bool
 	moduleUploadMax       int64
 	formActionSources     string
+	imageSources          string
 }
 
 func WithModuleUploadMaxBytes(maxBytes int64) RouterOption {
@@ -103,6 +106,10 @@ func NewRouter(config RouterConfig, opts ...RouterOption) (http.Handler, error) 
 	}
 	if config.Modules == nil {
 		return nil, errors.New("module service is required")
+	}
+	imageSources, err := readmeImageSources(config.ReadmeImageAllowedHosts)
+	if err != nil {
+		return nil, err
 	}
 
 	r := &Router{
@@ -125,6 +132,7 @@ func NewRouter(config RouterConfig, opts ...RouterOption) (http.Handler, error) 
 		securityHSTSEnabled:   config.SecurityHSTSEnabled,
 		moduleUploadMax:       defaultModuleUploadMax,
 		formActionSources:     formActionSources(oidcLogoutOrigin(config.WebAuth)),
+		imageSources:          imageSources,
 	}
 	if config.Authorizer != nil {
 		r.authorizerRefreshed = time.Now()
@@ -186,7 +194,7 @@ func (r *Router) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 		policy := "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
 		if nonce != "" {
-			policy = fmt.Sprintf("default-src 'self'; base-uri 'self'; connect-src 'self'; form-action %s; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'nonce-%s'; style-src 'self' 'nonce-%s'", r.formActionSources, nonce, nonce)
+			policy = fmt.Sprintf("default-src 'self'; base-uri 'self'; connect-src 'self'; form-action %s; frame-ancestors 'none'; img-src %s; object-src 'none'; script-src 'self' 'nonce-%s'; style-src 'self' 'nonce-%s'", r.formActionSources, r.imageSources, nonce, nonce)
 		}
 		w.Header().Set("Content-Security-Policy", policy)
 		if strings.HasPrefix(req.URL.Path, "/manage") || strings.HasPrefix(req.URL.Path, "/auth/") {
@@ -216,6 +224,27 @@ func formActionSources(logoutOrigin string) string {
 		sources += " " + logoutOrigin
 	}
 	return sources
+}
+
+var readmeImageHostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$`)
+
+func readmeImageSources(hosts []string) (string, error) {
+	sources := []string{"'self'", "data:"}
+	seen := make(map[string]bool)
+	for _, value := range hosts {
+		host := strings.ToLower(strings.TrimSpace(value))
+		if host == "" {
+			continue
+		}
+		if len(host) > 253 || !readmeImageHostPattern.MatchString(host) {
+			return "", fmt.Errorf("invalid README_IMAGE_ALLOWED_HOSTS entry %q: use exact hostnames without schemes, ports, paths or wildcards", value)
+		}
+		if !seen[host] {
+			seen[host] = true
+			sources = append(sources, "https://"+host)
+		}
+	}
+	return strings.Join(sources, " "), nil
 }
 
 func randomCSPNonce() (string, error) {

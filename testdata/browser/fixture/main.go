@@ -50,6 +50,15 @@ func main() {
 			owner = "upstream"
 		}
 		name := fmt.Sprintf("module-%02d", index)
+		readme := ""
+		if index == 34 {
+			readme = "![Allowed badge](https://images.example.test/badge.svg)\n\n" +
+				"![Redirected badge](https://images.example.test/redirect.svg)\n\n" +
+				"![Blocked redirect](https://images.example.test/blocked-redirect.svg)\n\n" +
+				"![Missing badge](https://images.example.test/missing.svg)\n\n" +
+				"![](https://images.example.test/no-alt.svg)\n\n" +
+				"![Blocked badge](https://blocked.example.test/badge.svg)"
+		}
 		module, err := metadataStore.UpsertModule(ctx, owner, name)
 		if err != nil {
 			log.Fatal(err)
@@ -59,6 +68,7 @@ func main() {
 			Version: "1.0.0", Source: "local", FileName: owner + "-" + name + "-1.0.0.tar.gz",
 			ContentType: "application/gzip", MD5: "fixture-md5", SHA256: "fixture-sha256",
 			StoragePath: "modules/fixture.tar.gz", SizeBytes: 1,
+			Readme: readme,
 		}); err != nil {
 			log.Fatal(err)
 		}
@@ -80,10 +90,17 @@ func main() {
 		Modules: moduleService, Authorizer: authorizer, TokenHasher: tokenHasher,
 		AdminToken: "admin-token", ManageSessionSecret: "browser-fixture-session-secret-32-bytes",
 		RefreshAccessConfig: true, PublicModuleAccess: true, ActiveReleaseTTL: 30 * 24 * time.Hour,
+		ReadmeImageAllowedHosts: []string{"images.example.test"},
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
+	fixtureMux := http.NewServeMux()
+	fixtureMux.HandleFunc("GET /browser-fixture/badge.svg", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_, _ = fmt.Fprint(w, `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><text x="0" y="15">Badge</text></svg>`)
+	})
+	fixtureMux.Handle("/", handler)
 	address := os.Getenv("BROWSER_FIXTURE_ADDR")
 	if address == "" {
 		address = "127.0.0.1:18085"
@@ -91,7 +108,7 @@ func main() {
 	log.Print("browser fixture starting")
 	server := &http.Server{
 		Addr:              address,
-		Handler:           handler,
+		Handler:           fixtureMux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	log.Fatal(server.ListenAndServe())

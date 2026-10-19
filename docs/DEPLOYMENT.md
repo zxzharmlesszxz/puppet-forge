@@ -31,6 +31,7 @@ ACCESS_TOKEN_PEPPER -> --access-token-pepper
 TRUSTED_PROXY_CIDRS -> --trusted-proxy-cidrs
 TRUST_FORWARDED_HEADERS -> --trust-forwarded-headers
 ALLOWED_PUBLIC_HOSTS -> --allowed-public-hosts
+README_IMAGE_ALLOWED_HOSTS -> --readme-image-allowed-hosts
 PUBLIC_MODULE_ACCESS -> --public-module-access
 OIDC_SCOPES -> --oidc-scopes
 OIDC_SIGNING_ALGORITHMS -> --oidc-signing-algorithms
@@ -88,6 +89,7 @@ puppet-forge \
 | `ARTIFACT_PATH_STYLE`            | `true`                           | no                             | Enables path-style S3 URLs. Useful for MinIO, GCS interoperability, and local endpoints.                                                                                                                                                                                                             |
 | `PUBLIC_BASE_URL`                | empty                            | no                             | Optional fallback for building absolute URLs. If empty, the service derives URLs from the validated request host and, when explicitly trusted, forwarded host/proto.                                                                                                                                 |
 | `ALLOWED_PUBLIC_HOSTS`           | empty                            | no                             | Optional comma- or space-separated allowlist of accepted public hosts, with optional ports. Disallowed hosts receive `421`; an entry without a port accepts that hostname on any port.                                                                                                               |
+| `README_IMAGE_ALLOWED_HOSTS`     | See README Images and Badges     | no                             | Exact HTTPS image hosts for README badges, separated by commas or spaces. Empty disables external images; see README Images and Badges.                                                                                                                                                              |
 | `TRUSTED_PROXY_CIDRS`            | empty                            | no                             | Comma- or space-separated direct ingress/reverse-proxy CIDRs. Use `*` for "trust all direct peers" (diagnostic only), or `0.0.0.0/0,::/0` as equivalent explicit form. These CIDRs may supply forwarded client identity and, only with `TRUST_FORWARDED_HEADERS=true`, forwarded host/proto.         |
 | `TRUST_FORWARDED_HEADERS`        | `false`                          | no                             | Accept validated `Forwarded`/`X-Forwarded-*` values only when the direct peer belongs to `TRUSTED_PROXY_CIDRS`. Otherwise every forwarded variant is removed before routing.                                                                                                                         |
 | `PUBLIC_MODULE_ACCESS`           | `false`                          | no                             | If `true`, read APIs, downloads, and `/v3/*` are open without a token. If `false`, install/API routes require a token with read, publish, or admin privileges. HTML catalog pages stay informationally public. Publishing, deletion, and management routes are always protected.                     |
@@ -118,6 +120,40 @@ puppet-forge \
 | `METRICS_REFRESH_INTERVAL`       | `30s`                            | no                             | Base interval for rebuilding each replica's inventory-metric snapshot from shared SQL. A small random jitter prevents replicas from querying SQL simultaneously.                                                                                                                                     |
 | `RECONCILE_ARTIFACTS`            | `false`                          | no                             | Run one-shot SQL/object-storage reconciliation, emit JSON, and exit without starting listeners.                                                                                                                                                                                                      |
 | `RECONCILE_REPAIR`               | `false`                          | no                             | With reconciliation enabled, delete only orphan objects; missing/corrupt release records remain untouched.                                                                                                                                                                                           |
+
+## README Images and Badges
+
+The administrator controls external image sources through
+`README_IMAGE_ALLOWED_HOSTS`, a comma- or space-separated list of exact
+hostnames. The default is
+`img.shields.io,github.com,coveralls.io,s3.amazonaws.com,www.puppetmodule.info`. Setting a custom list
+replaces the default; explicitly setting it to an empty string disables external images.
+Local archive images and `data:` images remain allowed.
+Markdown image URLs using `http://` are upgraded to `https://` before rendering;
+the same host allowlist still applies. Ordinary links are not changed.
+
+For Helm, configure the same value in your values file:
+
+```yaml
+config:
+  README_IMAGE_ALLOWED_HOSTS: "img.shields.io,github.com,coveralls.io,s3.amazonaws.com,www.puppetmodule.info,badges.example.com"
+```
+
+Only HTTPS images from these exact hosts are permitted by CSP. Subdomains must
+be listed separately; wildcards, schemes, ports, paths, and CSP directives are
+rejected at startup. README authors cannot change this allowlist. Add a host
+only after verifying the image URL and trusting its operator.
+
+Redirect destinations must also be allowed. Coveralls redirects its badges to
+`s3.amazonaws.com`; permitting only `coveralls.io` is insufficient. The S3 host
+is shared: this permission allows HTTPS images from other buckets on that host
+as well, not just Coveralls. A custom allowlist can omit it to block those images.
+
+Images are loaded directly by the browser, not proxied through Forge, so the
+provider can see the reader's IP address. A blocked or failed image is replaced
+with its `alt` caption, or `Image unavailable` if the caption is empty. An image
+that successfully loads and itself says `404 badge not found` is displayed as
+provided; fix that badge URL in the module README.
 
 ## Artifact Storage
 
@@ -591,4 +627,3 @@ The chart supports Prometheus Operator resources, disabled by default:
 - Backup and restore: [BACKUP_RESTORE.md](BACKUP_RESTORE.md)
 - Grafana dashboard: [examples/grafana/puppet-forge-dashboard.json](../examples/grafana/puppet-forge-dashboard.json)
 - Prometheus rules: [examples/prometheus/alerts/puppet-forge.yml](../examples/prometheus/alerts/puppet-forge.yml)
-

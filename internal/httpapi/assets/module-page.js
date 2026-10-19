@@ -51,9 +51,8 @@ document.querySelectorAll('.readme img').forEach((element) => {
   const image = /** @type {HTMLImageElement} */ (element);
   const replaceBrokenImage = () => {
     if (image.naturalWidth !== 0) return;
-    const alternative = image.getAttribute('alt');
-    if (alternative) image.replaceWith(document.createTextNode(alternative));
-    else image.remove();
+    const alternative = image.getAttribute('alt')?.trim() || 'Image unavailable';
+    image.replaceWith(document.createTextNode(alternative));
   };
   image.addEventListener('error', replaceBrokenImage, {once: true});
   if (image.complete) replaceBrokenImage();

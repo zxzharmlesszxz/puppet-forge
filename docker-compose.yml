@@ -51,6 +51,7 @@ services:
       ARTIFACT_PREFIX: modules
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       ALLOWED_PUBLIC_HOSTS: ${ALLOWED_PUBLIC_HOSTS:-}
+      README_IMAGE_ALLOWED_HOSTS: ${README_IMAGE_ALLOWED_HOSTS-img.shields.io,github.com,coveralls.io,s3.amazonaws.com,www.puppetmodule.info}
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       TRUST_FORWARDED_HEADERS: ${TRUST_FORWARDED_HEADERS:-false}
       PUBLIC_MODULE_ACCESS: ${PUBLIC_MODULE_ACCESS:-false}
