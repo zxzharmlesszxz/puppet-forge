@@ -395,8 +395,7 @@ flowchart TD
     override -- no --> lock["LOCK-1 module lock"]
     override -- yes --> forceAuth{"Force scope, reason і confirmation valid?"}
     forceAuth -- no --> deny
-    forceAuth -- yes --> audit["security_audit із justification"]
-    audit --> forceLock["LOCK-1 module lock"]
+    forceAuth -- yes --> forceLock["LOCK-1 module lock"]
     lock --> kind{"Release або module?"}
     forceLock --> forceKind{"Release або module?"}
     forceKind -- release --> releaseSQL
@@ -411,7 +410,9 @@ flowchart TD
     any -- no --> moduleSQL["SQL-1 delete metadata + enqueue local paths"]
     releaseSQL --> commit["Commit SQL + release lock"]
     moduleSQL --> commit
-    commit --> done["Success для клієнта"]
+    commit --> audit["Запис audit_events + security_audit log"]
+    protected --> auditFailure["Запис невдалої audit-події"]
+    audit --> done["Success для клієнта"]
     worker["Lease-elected deletion worker"] --> cleanupLock["LOCK-1 module lock"]
     cleanupLock --> referenced{"Path знову referenced?"}
     referenced -- yes --> cancelTask["Remove stale outbox task"]

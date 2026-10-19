@@ -25,6 +25,80 @@ type parityStore interface {
 	ModuleReleaseBatchStore
 }
 
+func TestStoreParityAuditEvents(t *testing.T) {
+	for _, tc := range parityStoreCases(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			st := tc.open(t)
+			t.Cleanup(st.Close)
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			for _, event := range []AuditEvent{
+				{OccurredAt: now, RequestID: "request-one", Actor: "subject:admin", AuthMethod: "oidc", Action: "force_delete_release", Result: "success", Reason: "none", SourceIP: "192.0.2.1", Attributes: map[string]string{"module": "teamname/apache", "release": "1.0.0", "justification": "broken archive"}},
+				{OccurredAt: now.Add(time.Minute), RequestID: "request-two", Actor: "token:publisher", AuthMethod: "token", Action: "publish_module", Result: "failure", Reason: "conflict", SourceIP: "192.0.2.2", Attributes: map[string]string{"module": "teamname/apache", "release": "1.0.0"}},
+			} {
+				if err := st.RecordAuditEvent(ctx, event); err != nil {
+					t.Fatalf("RecordAuditEvent() error = %v", err)
+				}
+			}
+			events, total, err := st.ListAuditEvents(ctx, nil, "BROKEN ARCHIVE", 10, 0)
+			if err != nil {
+				t.Fatalf("ListAuditEvents() error = %v", err)
+			}
+			if total != 1 || len(events) != 1 || events[0].Action != "force_delete_release" || events[0].Attributes["justification"] != "broken archive" {
+				t.Fatalf("audit events = %#v total=%d", events, total)
+			}
+			events, total, err = st.ListAuditEvents(ctx, nil, "", 1, 1)
+			if err != nil {
+				t.Fatalf("ListAuditEvents(paginated) error = %v", err)
+			}
+			if total != 2 || len(events) != 1 || events[0].RequestID != "request-one" {
+				t.Fatalf("paginated audit events = %#v total=%d", events, total)
+			}
+			for _, event := range []AuditEvent{
+				{OccurredAt: now.Add(2 * time.Minute), RequestID: "request-three", Actor: "subject:admin", AuthMethod: "oidc", Action: "change_team_access", Result: "success", Reason: "none", SourceIP: "192.0.2.3", Attributes: map[string]string{"team": "teamname", "space": "shared"}},
+				{OccurredAt: now.Add(3 * time.Minute), RequestID: "request-four", Actor: "subject:admin", AuthMethod: "oidc", Action: "delete_module", Result: "success", Reason: "none", SourceIP: "192.0.2.4", Attributes: map[string]string{"module": "anotherteam/stdlib"}},
+			} {
+				if err := st.RecordAuditEvent(ctx, event); err != nil {
+					t.Fatalf("RecordAuditEvent(scoped fixture) error = %v", err)
+				}
+			}
+			events, total, err = st.ListAuditEvents(ctx, []string{"teamname"}, "", 10, 0)
+			if err != nil {
+				t.Fatalf("ListAuditEvents(scoped) error = %v", err)
+			}
+			if total != 3 || len(events) != 3 {
+				t.Fatalf("scoped audit events = %#v total=%d", events, total)
+			}
+			events, total, err = st.ListAuditEvents(ctx, []string{"shared"}, "", 10, 0)
+			if err != nil {
+				t.Fatalf("ListAuditEvents(extra space) error = %v", err)
+			}
+			if total != 1 || len(events) != 1 || events[0].RequestID != "request-three" {
+				t.Fatalf("extra-space audit events = %#v total=%d", events, total)
+			}
+			for _, filter := range []struct {
+				scopes []string
+				query  string
+				want   int
+			}{
+				{[]string{"teamname", "shared", "teamname"}, "", 3},
+				{[]string{"teamname"}, "BROKEN ARCHIVE", 1},
+				{[]string{"unknown"}, "", 0},
+				{[]string{"teamname') OR 1=1 --"}, "", 0},
+				{[]string{"teamname"}, "' OR 1=1 --", 0},
+			} {
+				events, total, err := st.ListAuditEvents(ctx, filter.scopes, filter.query, 10, 0)
+				if err != nil {
+					t.Fatalf("ListAuditEvents(%q, %q): %v", filter.scopes, filter.query, err)
+				}
+				if total != filter.want || len(events) != filter.want {
+					t.Errorf("ListAuditEvents(%q, %q): total=%d events=%d, want %d", filter.scopes, filter.query, total, len(events), filter.want)
+				}
+			}
+		})
+	}
+}
+
 func TestStoreParityReleaseConsumers(t *testing.T) {
 	for _, tc := range parityStoreCases(t) {
 		t.Run(tc.name, func(t *testing.T) {

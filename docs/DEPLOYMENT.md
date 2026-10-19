@@ -466,10 +466,10 @@ The UI includes:
 ## Active Releases and Deletion
 
 - Releases requested by r10k or `puppet module install` within `ACTIVE_RELEASE_TTL` are marked as `in use`.
-- Normal deletion rejects latest and active releases. An owning team administrator or global administrator can force-delete one after supplying a reason and typing the exact `owner/name@version` identity; this permits a corrected archive with the same version to be published again by CI.
-- Only a global administrator can force-delete an entire module. That operation requires a reason and exact `owner/name` confirmation.
+- Normal deletion rejects latest and active releases. A dedicated confirmation page lets an owning team administrator or global administrator force-delete one after supplying a reason and typing the exact `owner/name@version` identity; this permits a corrected archive with the same version to be published again by CI.
+- Only a global administrator can force-delete an entire module. Its dedicated confirmation page requires a reason and exact `owner/name` confirmation.
 - The HTTP API accepts the same explicit override through `X-Puppet-Forge-Force-Delete: true`, `X-Puppet-Forge-Delete-Reason`, and `X-Puppet-Forge-Delete-Confirmation` headers.
-- Every normal and forced API or management deletion emits a structured `security_audit` event containing the authenticated actor, source address, resource, result, and operator justification. Retain these events in the centralized logging backend as the deletion journal.
+- Administrative team, access, token, publishing-space, module, and release mutations emit structured `security_audit` events to application logs and the SQL-backed journal at `/manage/admin/audit`. The global-admin page exposes the complete journal. `/manage/teams/{team}/audit` exposes a backend-filtered view to that team's administrators and includes actions by global admins against the team or any of its publish spaces. Both views support filtering and pagination and preserve force-delete comments with the actor, source address, target, result, and request ID. Centralized logging should retain the duplicate log stream for independent operational correlation.
 - Deleting the latest release automatically promotes the highest remaining semantic version. If no releases remain, the module record is removed.
 - Delete buttons are hidden for protected releases in `/manage/modules`.
 - `ACTIVE_RELEASE_TTL` defaults to `720h` / 30 days.

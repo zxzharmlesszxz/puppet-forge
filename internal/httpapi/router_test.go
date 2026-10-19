@@ -1146,6 +1146,36 @@ func TestDeleteReleaseRejectsLatestAndActiveVersions(t *testing.T) {
 	}
 }
 
+func TestManageLayoutStylesheetIsServedWithoutAuthentication(t *testing.T) {
+	t.Parallel()
+
+	_, server, _ := setupManageTestWithModule(t)
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		req, err := http.NewRequest(method, server.URL+"/assets/manage-layout.css", nil)
+		if err != nil {
+			t.Fatalf("NewRequest() error = %v", err)
+		}
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("stylesheet request error = %v", err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read stylesheet error = %v", readErr)
+		}
+		if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/css; charset=utf-8" {
+			t.Fatalf("stylesheet response status=%d content-type=%q", resp.StatusCode, resp.Header.Get("Content-Type"))
+		}
+		if method == http.MethodGet && !strings.Contains(string(body), "max-width: 1440px") {
+			t.Fatal("stylesheet response is missing the shared layout")
+		}
+		if method == http.MethodHead && len(body) != 0 {
+			t.Fatal("stylesheet HEAD response includes a body")
+		}
+	}
+}
+
 func TestForceDeleteParametersRequireReasonAndExactConfirmation(t *testing.T) {
 	t.Parallel()
 
@@ -1167,6 +1197,64 @@ func TestForceDeleteParametersRequireReasonAndExactConfirmation(t *testing.T) {
 				t.Fatalf("forceDeleteParameters() = (%t, %v), want (true, %q)", force, err, tc.want)
 			}
 		})
+	}
+}
+
+func TestForceDeleteUsesDedicatedConfirmationPages(t *testing.T) {
+	t.Parallel()
+
+	_, server, client := setupManageTestWithModule(t)
+	for _, tc := range []struct {
+		path     string
+		title    string
+		resource string
+		action   string
+	}{
+		{
+			path:     "/manage/modules/teamname/apache/force-delete?next=%2Fmanage%2Fmodules",
+			title:    "Force delete module",
+			resource: "teamname/apache",
+			action:   "/manage/modules/teamname/apache/delete",
+		},
+		{
+			path:     "/manage/modules/teamname/apache/versions/1.2.3/force-delete?next=%2Fmanage%2Fmodules",
+			title:    "Force delete release",
+			resource: "teamname/apache@1.2.3",
+			action:   "/manage/modules/teamname/apache/versions/1.2.3/delete",
+		},
+	} {
+		body := getBody(t, client, server.URL+tc.path)
+		for _, want := range []string{
+			"<h1>" + tc.title + "</h1>",
+			"<code>" + tc.resource + "</code>",
+			`action="` + tc.action + `"`,
+			`name="force" value="true"`,
+			`name="reason" maxlength="500" required`,
+			`name="confirmation" autocomplete="off" required`,
+			`href="/manage/modules">Cancel</a>`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("force-delete confirmation %s misses %q:\n%s", tc.path, want, body)
+			}
+		}
+	}
+
+	values := manageFormValues(t, client, server.URL, url.Values{
+		"force":      {"true"},
+		"next":       {"/manage/modules"},
+		"error_next": {"/manage/modules/teamname/apache/versions/1.2.3/force-delete?next=%2Fmanage%2Fmodules"},
+	})
+	resp, err := client.PostForm(server.URL+"/manage/modules/teamname/apache/versions/1.2.3/delete", values)
+	if err != nil {
+		t.Fatalf("POST invalid force delete error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll(invalid force delete response) error = %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `role="alert">force delete reason is required`) {
+		t.Fatalf("invalid force delete did not return to confirmation page: status=%d body=%s", resp.StatusCode, body)
 	}
 }
 
@@ -4202,6 +4290,30 @@ func TestManageReturnPathAllowsOnlyTeamManagementPages(t *testing.T) {
 	}
 }
 
+func TestManageErrorReturnPathAllowsOnlyForceDeletePages(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		errorNext string
+		want      string
+	}{
+		{name: "module confirmation", errorNext: "/manage/modules/teamname/apache/force-delete?next=%2Fmanage%2Fmodules", want: "/manage/modules/teamname/apache/force-delete?next=%2Fmanage%2Fmodules"},
+		{name: "release confirmation", errorNext: "/manage/modules/teamname/apache/versions/1.0.0/force-delete", want: "/manage/modules/teamname/apache/versions/1.0.0/force-delete"},
+		{name: "ordinary module route", errorNext: "/manage/modules/teamname/apache/delete", want: "/manage/modules"},
+		{name: "external URL", errorNext: "https://example.com/manage/modules/teamname/apache/force-delete", want: "/manage/modules"},
+		{name: "scheme relative URL", errorNext: "//example.com/manage/modules/teamname/apache/force-delete", want: "/manage/modules"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := formRequest(url.Values{"error_next": {tc.errorNext}})
+			if got := manageErrorReturnPath(req, "/manage/modules"); got != tc.want {
+				t.Fatalf("manageErrorReturnPath() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestManageAccessAllowsSharedOIDCGroupMapping(t *testing.T) {
 	t.Parallel()
 
@@ -4661,9 +4773,9 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 	module := domain.Module{Owner: "teamname", Name: "apache", LatestVersion: "2.0.0"}
 	for _, tc := range []struct {
 		principal       auth.Principal
-		forceModuleForm bool
+		forceModuleLink bool
 	}{
-		{principal: auth.Principal{CanAdmin: true}, forceModuleForm: true},
+		{principal: auth.Principal{CanAdmin: true}, forceModuleLink: true},
 		{principal: auth.Principal{Team: "teamname", CanPublish: true, CanManageTeam: true, ManagedTeams: map[string]struct{}{"teamname": {}}}},
 	} {
 		rows := []manageModuleRow{{
@@ -4676,6 +4788,7 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 			CanForceDeleteModule:  tc.forceModuleForm,
 			CanForceDeleteRelease: true,
 		}}
+		configureManageModuleRows(rows, "csrf", "/manage/modules")
 		var rec bytes.Buffer
 		err := managePageTemplate.Execute(&rec, managePageData{
 			Principal: tc.principal,
@@ -4701,6 +4814,7 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 			`.module-details:has(.danger-button:hover)`,
 			`.module-details:has(.danger-button:focus-visible)`,
 			`.module-details > .release-list`,
+			`.force-delete-link`,
 		} {
 			if !strings.Contains(body, wantStyle) {
 				t.Fatalf("manage page does not render module block highlight style %q for %#v:\n%s", wantStyle, tc.principal, body)
@@ -4710,16 +4824,20 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 			t.Fatalf("manage page renders legacy module delete control for %#v:\n%s", tc.principal, body)
 		}
 		for _, want := range []string{
-			`Type <code>teamname/apache@1.2.3</code> to confirm`,
-			`Type <code>teamname/apache@2.0.0</code> to confirm`,
+			`href="/manage/modules/teamname/apache/versions/1.2.3/force-delete?next=%2Fmanage%2Fmodules"`,
+			`href="/manage/modules/teamname/apache/versions/2.0.0/force-delete?next=%2Fmanage%2Fmodules"`,
+			`class="release-danger-button force-delete-link"`,
 		} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("manage page misses protected release override %q for %#v:\n%s", want, tc.principal, body)
 			}
 		}
-		moduleConfirmation := `Type <code>teamname/apache</code> to confirm`
-		if strings.Contains(body, moduleConfirmation) != tc.forceModuleForm {
+		moduleForceDeleteLink := `href="/manage/modules/teamname/apache/force-delete?next=%2Fmanage%2Fmodules"`
+		if strings.Contains(body, moduleForceDeleteLink) != tc.forceModuleLink {
 			t.Fatalf("manage page module force-delete visibility mismatch for %#v:\n%s", tc.principal, body)
+		}
+		if strings.Contains(body, `name="confirmation"`) || strings.Contains(body, `name="reason"`) {
+			t.Fatalf("manage page still embeds force-delete forms for %#v:\n%s", tc.principal, body)
 		}
 	}
 }
@@ -4830,6 +4948,7 @@ func TestManageAccessNavLinks(t *testing.T) {
 		`<summary>Administration</summary>`,
 		`<a href="/manage/admin/spaces">Publish spaces</a>`,
 		`<a href="/manage/admin/legacy">Legacy usage</a>`,
+		`<a href="/manage/admin/audit">Audit log</a>`,
 		`<a href="/manage/admin/access" aria-current="page">Global access</a>`,
 		`<form method="post" action="/manage/logout">`,
 	} {
@@ -4889,6 +5008,133 @@ func TestGlobalAdminViewsLegacyModuleUsage(t *testing.T) {
 	}
 	if strings.Contains(teamBody, `anotherteam / staging`) {
 		t.Fatalf("team legacy usage page exposes another team's consumer:\n%s", teamBody)
+	}
+}
+
+func TestGlobalAdminViewsPersistentAuditLog(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	if err := st.RecordAuditEvent(ctx, store.AuditEvent{
+		OccurredAt: time.Now().UTC(), RequestID: "request-delete", Actor: "subject:operator", AuthMethod: "oidc",
+		Action: "force_delete_release", Result: "success", Reason: "none", SourceIP: "192.0.2.10",
+		Attributes: map[string]string{"module": "teamname/apache", "release": "1.0.0", "changes": "release metadata removed", "justification": "broken archive"},
+	}); err != nil {
+		t.Fatalf("RecordAuditEvent() error = %v", err)
+	}
+	adminClient, serverURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{Team: "platform"}})
+	body := getBody(t, adminClient, serverURL+"/manage/admin/audit?q=BROKEN")
+	for _, want := range []string{
+		`<a href="/manage/admin/audit" aria-current="page">Audit log</a>`,
+		`subject:operator`,
+		`force delete release`,
+		`teamname/apache@1.0.0`,
+		`release metadata removed`,
+		`broken archive`,
+		`request-delete`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("audit page misses %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestTeamAuditLogIncludesGlobalAdminActionsOnTeamResources(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := newHTTPAPITestStore(t)
+	for _, event := range []store.AuditEvent{
+		{RequestID: "team-settings", Actor: "subject:global-admin", AuthMethod: "oidc", Action: "change_team_access", Result: "success", Reason: "none", Attributes: map[string]string{"team": "teamname"}},
+		{RequestID: "extra-space-release", Actor: "subject:global-admin", AuthMethod: "oidc", Action: "force_delete_release", Result: "success", Reason: "none", Attributes: map[string]string{"module": "shared/apache", "release": "1.0.0"}},
+		{RequestID: "other-team-release", Actor: "subject:global-admin", AuthMethod: "oidc", Action: "delete_release", Result: "success", Reason: "none", Attributes: map[string]string{"module": "anotherteam/stdlib", "release": "2.0.0"}},
+		{RequestID: "global-settings", Actor: "subject:global-admin", AuthMethod: "oidc", Action: "change_global_access", Result: "success", Reason: "none"},
+	} {
+		if err := st.RecordAuditEvent(ctx, event); err != nil {
+			t.Fatalf("RecordAuditEvent() error = %v", err)
+		}
+	}
+	adminClient, serverURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{Team: "teamname", PublishOwners: []string{"shared"}}})
+	body := getBody(t, adminClient, serverURL+"/manage/teams/teamname/audit")
+	for _, want := range []string{
+		`<h1>Audit log: teamname</h1>`,
+		`href="/manage/teams/teamname/audit" aria-current="page">Audit log</a>`,
+		`team-settings`,
+		`extra-space-release`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("team audit page misses %q:\n%s", want, body)
+		}
+	}
+	for _, forbidden := range []string{"other-team-release", "global-settings"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("team audit page exposes unrelated event %q:\n%s", forbidden, body)
+		}
+	}
+}
+
+func TestAccessConfigChangeSummaryExcludesCredentials(t *testing.T) {
+	t.Parallel()
+
+	before := []auth.TeamConfig{
+		{Team: auth.GlobalAdminTeam, OIDCAdminGroups: []string{"old-admins"}, OIDCAdminEmails: []string{"old@example.com"}},
+		{Team: "teamname", ReadTokens: []string{"secret-read-token"}, OIDCGroups: []string{"old-publishers"}, OIDCTeamAdminGroups: []string{"old-team-admins"}},
+	}
+	after := []auth.TeamConfig{
+		{Team: auth.GlobalAdminTeam, OIDCAdminGroups: []string{"new-admins"}, OIDCAdminSubjects: []string{"admin-subject"}},
+		{Team: "teamname", ReadTokens: []string{"different-secret"}, OIDCGroups: []string{"new-publishers"}, OIDCTeamAdminEmails: []string{"owner@example.com"}},
+	}
+
+	globalChanges := globalAccessChangeSummary(before, after)
+	for _, want := range []string{"admin groups added [new-admins]", "admin groups removed [old-admins]", "admin emails removed [old@example.com]", "admin subjects added [admin-subject]"} {
+		if !strings.Contains(globalChanges, want) {
+			t.Fatalf("global access changes miss %q: %s", want, globalChanges)
+		}
+	}
+	teamChanges := accessConfigChangeSummary(before, after, "teamname")
+	for _, want := range []string{"publish groups added [new-publishers]", "publish groups removed [old-publishers]", "team admin emails added [owner@example.com]", "team admin groups removed [old-team-admins]"} {
+		if !strings.Contains(teamChanges, want) {
+			t.Fatalf("team access changes miss %q: %s", want, teamChanges)
+		}
+	}
+	for _, secret := range []string{"secret-read-token", "different-secret"} {
+		if strings.Contains(globalChanges, secret) || strings.Contains(teamChanges, secret) {
+			t.Fatalf("access changes expose credential %q", secret)
+		}
+	}
+}
+
+func TestAuditTargetUsesTokenPrefix(t *testing.T) {
+	t.Parallel()
+
+	target := auditTarget(map[string]string{
+		"token_id":     "621590d79a1606d354dda0594065cef3",
+		"token_name":   "Test R10K",
+		"token_role":   "read",
+		"token_prefix": "pf_read_ab12cd",
+	})
+	if target != "Test R10K (read, pf_read_ab12cd)" {
+		t.Fatalf("audit target = %q", target)
+	}
+}
+
+func TestAuditOIDCActorUsesReadableIdentity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, email, subject string
+		want                 string
+	}{
+		{name: "Admin User", email: "admin@example.com", subject: "opaque-subject", want: "Admin User <admin@example.com>"},
+		{email: "admin@example.com", subject: "opaque-subject", want: "admin@example.com"},
+		{name: "Admin User", subject: "opaque-subject", want: "Admin User"},
+		{subject: "opaque-subject", want: "subject:opaque-subject"},
+	}
+	for _, test := range tests {
+		if actor := auditOIDCActor(test.name, test.email, test.subject); actor != test.want {
+			t.Errorf("auditOIDCActor(%q, %q, %q) = %q, want %q", test.name, test.email, test.subject, actor, test.want)
+		}
 	}
 }
 

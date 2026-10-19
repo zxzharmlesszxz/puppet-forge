@@ -46,10 +46,16 @@ func (r *Router) manageAccessPage(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		defer releaseAccessConfigLock(unlock)
-		action := strings.TrimSpace(req.FormValue("action"))
+		auditAction, auditAttrs := accessMutationAudit(req)
+		beforeConfigs, err := r.modules.LoadTeamConfigs(req.Context())
+		if err != nil {
+			r.audit(req, principal, auditAction, "failure", auditReason(err), auditAttrs...)
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 		configs, message, err := r.accessConfigsFromForm(req, principal)
 		if err != nil {
-			r.audit(req, principal, "change_access_config", "failure", auditReason(err), "config_action", action)
+			r.audit(req, principal, auditAction, "failure", auditReason(err), auditAttrs...)
 			if next := manageReturnPath(req, ""); next != "" {
 				redirectManageResult(w, req, next, "error", err.Error())
 				return
@@ -58,7 +64,7 @@ func (r *Router) manageAccessPage(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if err := r.saveAccessConfigs(req.Context(), configs); err != nil {
-			r.audit(req, principal, "change_access_config", "failure", auditReason(err), "config_action", action)
+			r.audit(req, principal, auditAction, "failure", auditReason(err), auditAttrs...)
 			if next := manageReturnPath(req, ""); next != "" {
 				redirectManageResult(w, req, next, "error", err.Error())
 				return
@@ -66,10 +72,30 @@ func (r *Router) manageAccessPage(w http.ResponseWriter, req *http.Request) {
 			r.renderManageAccess(w, req, principal, err.Error())
 			return
 		}
-		r.audit(req, principal, "change_access_config", "success", "none", "config_action", action)
+		auditAttrs = append(auditAttrs, "changes", accessConfigChangeSummary(beforeConfigs, configs, actionTeam(req)))
+		r.audit(req, principal, auditAction, "success", "none", auditAttrs...)
 		redirectManageResult(w, req, "/manage/admin/access", "message", message)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+	}
+}
+
+func accessMutationAudit(req *http.Request) (string, []any) {
+	action := strings.TrimSpace(req.FormValue("action"))
+	team := strings.TrimSpace(req.FormValue("team"))
+	originalTeam := strings.TrimSpace(req.FormValue("original_team"))
+	switch action {
+	case "save_global_admins":
+		return "change_global_access", nil
+	case "delete_team":
+		return "delete_team", []any{"team", firstNonEmpty(team, originalTeam)}
+	case "save_team":
+		if originalTeam != "" && team != "" && originalTeam != team {
+			return "rename_team", []any{"team", originalTeam, "new_team", team}
+		}
+		return "update_team", []any{"team", firstNonEmpty(team, originalTeam)}
+	default:
+		return "change_access_config", []any{"config_action", action, "team", firstNonEmpty(team, originalTeam)}
 	}
 }
 
@@ -98,6 +124,12 @@ func (r *Router) manageAccessAddPage(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		defer releaseAccessConfigLock(unlock)
+		beforeConfigs, err := r.modules.LoadTeamConfigs(req.Context())
+		if err != nil {
+			r.audit(req, principal, "create_team", "failure", auditReason(err))
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 		configs, message, err := r.accessConfigsWithUpsertedTeam(req, principal)
 		if err != nil {
 			r.audit(req, principal, "create_team", "failure", auditReason(err))
@@ -110,7 +142,7 @@ func (r *Router) manageAccessAddPage(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		team := strings.TrimSpace(req.FormValue("team"))
-		r.audit(req, principal, "create_team", "success", "none", "team", team)
+		r.audit(req, principal, "create_team", "success", "none", "team", team, "changes", accessConfigChangeSummary(beforeConfigs, configs, team))
 		redirectManageResult(w, req, "/manage/teams/"+url.PathEscape(team)+"/access", "message", message)
 		return
 	}
@@ -123,6 +155,116 @@ func (r *Router) manageAccessAddPage(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	r.renderManageAccessAddPage(w, req, principal, req.URL.Query().Get("error"), http.StatusOK)
+}
+
+func actionTeam(req *http.Request) string {
+	if team := strings.TrimSpace(req.FormValue("team")); team != "" {
+		return team
+	}
+	return strings.TrimSpace(req.FormValue("original_team"))
+}
+
+func accessConfigChangeSummary(before, after []auth.TeamConfig, team string) string {
+	if team == "" {
+		return globalAccessChangeSummary(before, after)
+	}
+	beforeConfig := findAccessConfig(before, team)
+	afterConfig := findAccessConfig(after, team)
+	stateChange := ""
+	if beforeConfig == nil {
+		for _, cfg := range before {
+			if findAccessConfig(after, cfg.Team) == nil && !isGlobalAdminConfig(cfg) {
+				beforeConfig = &cfg
+				stateChange = "team renamed " + cfg.Team + " -> " + team
+				break
+			}
+		}
+	}
+	changes := make([]string, 0, 6)
+	if beforeConfig == nil && afterConfig == nil {
+		return "team " + team + " removed"
+	}
+	if beforeConfig == nil {
+		stateChange = "team created"
+	} else if afterConfig == nil {
+		stateChange = "team removed"
+	}
+	if stateChange != "" {
+		changes = append(changes, stateChange)
+	}
+	var beforeGroups, beforeAdminEmails, beforeAdminGroups []string
+	if beforeConfig != nil {
+		beforeGroups = beforeConfig.OIDCGroups
+		beforeAdminEmails = beforeConfig.OIDCTeamAdminEmails
+		beforeAdminGroups = beforeConfig.OIDCTeamAdminGroups
+	}
+	var afterGroups, afterAdminEmails, afterAdminGroups []string
+	if afterConfig != nil {
+		afterGroups = afterConfig.OIDCGroups
+		afterAdminEmails = afterConfig.OIDCTeamAdminEmails
+		afterAdminGroups = afterConfig.OIDCTeamAdminGroups
+	}
+	changes = appendValueChanges(changes, "publish groups", beforeGroups, afterGroups)
+	changes = appendValueChanges(changes, "team admin emails", beforeAdminEmails, afterAdminEmails)
+	changes = appendValueChanges(changes, "team admin groups", beforeAdminGroups, afterAdminGroups)
+	if len(changes) == 0 {
+		return "no effective access changes"
+	}
+	return strings.Join(changes, "; ")
+}
+
+func globalAccessChangeSummary(before, after []auth.TeamConfig) string {
+	beforeGroups, beforeEmails, beforeSubjects := globalAdminValues(before)
+	afterGroups, afterEmails, afterSubjects := globalAdminValues(after)
+	changes := make([]string, 0, 6)
+	changes = appendValueChanges(changes, "admin groups", beforeGroups, afterGroups)
+	changes = appendValueChanges(changes, "admin emails", beforeEmails, afterEmails)
+	changes = appendValueChanges(changes, "admin subjects", beforeSubjects, afterSubjects)
+	if len(changes) == 0 {
+		return "no effective access changes"
+	}
+	return strings.Join(changes, "; ")
+}
+
+func globalAdminValues(configs []auth.TeamConfig) (groups, emails, subjects []string) {
+	for _, cfg := range configs {
+		groups = append(groups, cfg.OIDCAdminGroups...)
+		emails = append(emails, cfg.OIDCAdminEmails...)
+		subjects = append(subjects, cfg.OIDCAdminSubjects...)
+	}
+	return groups, emails, subjects
+}
+
+func appendValueChanges(changes []string, label string, before, after []string) []string {
+	beforeSet := make(map[string]struct{}, len(before))
+	afterSet := make(map[string]struct{}, len(after))
+	for _, value := range before {
+		beforeSet[value] = struct{}{}
+	}
+	for _, value := range after {
+		afterSet[value] = struct{}{}
+	}
+	added := make([]string, 0)
+	removed := make([]string, 0)
+	for value := range afterSet {
+		if _, exists := beforeSet[value]; !exists {
+			added = append(added, value)
+		}
+	}
+	for value := range beforeSet {
+		if _, exists := afterSet[value]; !exists {
+			removed = append(removed, value)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	if len(added) > 0 {
+		changes = append(changes, label+" added ["+strings.Join(added, ", ")+"]")
+	}
+	if len(removed) > 0 {
+		changes = append(changes, label+" removed ["+strings.Join(removed, ", ")+"]")
+	}
+	return changes
 }
 
 func (r *Router) renderManageAccessAddPage(w http.ResponseWriter, req *http.Request, principal auth.Principal, errorMessage string, status int) {

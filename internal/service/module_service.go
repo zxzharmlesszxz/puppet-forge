@@ -745,6 +745,22 @@ func (s *ModuleService) PurgeReleaseConsumers(ctx context.Context, before time.T
 	return consumerStore.PurgeReleaseConsumers(ctx, before)
 }
 
+func (s *ModuleService) RecordAuditEvent(ctx context.Context, event store.AuditEvent) error {
+	auditStore, ok := s.modules.(store.AuditEventStore)
+	if !ok {
+		return nil
+	}
+	return auditStore.RecordAuditEvent(ctx, event)
+}
+
+func (s *ModuleService) ListAuditEvents(ctx context.Context, scopes []string, query string, limit, offset int) ([]store.AuditEvent, int, error) {
+	auditStore, ok := s.modules.(store.AuditEventStore)
+	if !ok {
+		return nil, 0, nil
+	}
+	return auditStore.ListAuditEvents(ctx, scopes, query, limit, offset)
+}
+
 func (s *ModuleService) IsReleaseActive(ctx context.Context, owner, name, version string, since time.Time) (bool, error) {
 	return s.isReleaseActive(ctx, owner, name, version, since)
 }

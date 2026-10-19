@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/assets/manage-layout.css">
   <style nonce="{{.Navigation.CSPNonce}}">
     :root { color-scheme: light; --bg: #f3f0ea; --panel: #fff; --ink: #1f2428; --muted: #66717a; --accent: #2f6f73; --line: #d9e0e2; --legacy: #8a4b16; }
     {{template "manage-navigation-styles" .Navigation}}
     * { box-sizing: border-box; }
     body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
-    main { max-width: 1280px; margin: 0 auto; padding: 32px 20px 56px; }
     header { margin-bottom: 20px; }
     h1 { margin: 0; font-size: 32px; }
     .subtitle { max-width: 850px; margin-top: 8px; color: var(--muted); line-height: 1.5; }

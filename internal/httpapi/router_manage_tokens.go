@@ -61,7 +61,7 @@ func (r *Router) manageAccessTokenPage(w http.ResponseWriter, req *http.Request)
 		}
 		r.createAccessToken(w, req, principal, configs, cfg, kind, existing, next)
 	case "revoke":
-		_, record := accessTokenRecordByID(cfg, req.FormValue("token_id"))
+		kind, record := accessTokenRecordByID(cfg, req.FormValue("token_id"))
 		if record == nil || record.RevokedAt != nil {
 			writeError(w, http.StatusNotFound, errors.New("access token not found"))
 			return
@@ -69,11 +69,11 @@ func (r *Router) manageAccessTokenPage(w http.ResponseWriter, req *http.Request)
 		revokedAt := time.Now().UTC()
 		record.RevokedAt = &revokedAt
 		if err := r.saveAccessConfigs(req.Context(), configs); err != nil {
-			r.audit(req, principal, "revoke_access_token", "failure", auditReason(err), "team", team, "token_id", record.ID)
+			r.audit(req, principal, "revoke_access_token", "failure", auditReason(err), "team", team, "token_role", kind, "token_name", record.Description, "token_prefix", record.Prefix, "token_id", record.ID)
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		r.audit(req, principal, "revoke_access_token", "success", "none", "team", team, "token_id", record.ID)
+		r.audit(req, principal, "revoke_access_token", "success", "none", "team", team, "token_role", kind, "token_name", record.Description, "token_prefix", record.Prefix, "token_id", record.ID)
 		redirectManageResult(w, req, next, "message", "access token revoked")
 	default:
 		writeError(w, http.StatusBadRequest, errors.New("unknown token action"))
@@ -133,16 +133,18 @@ func (r *Router) createAccessToken(w http.ResponseWriter, req *http.Request, pri
 	} else {
 		cfg.PublishTokenRecords = append(cfg.PublishTokenRecords, record)
 	}
+	action := "create_access_token"
+	auditAttrs := []any{"team", cfg.Team, "token_role", kind, "token_name", name, "token_prefix", record.Prefix, "token_id", record.ID}
+	if rotated != nil {
+		action = "rotate_access_token"
+		auditAttrs = append(auditAttrs, "replaces_token_id", rotated.ID)
+	}
 	if err := r.saveAccessConfigs(req.Context(), configs); err != nil {
-		r.audit(req, principal, "create_access_token", "failure", auditReason(err), "team", cfg.Team, "token_role", kind)
+		r.audit(req, principal, action, "failure", auditReason(err), auditAttrs...)
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	action := "create_access_token"
-	if rotated != nil {
-		action = "rotate_access_token"
-	}
-	r.audit(req, principal, action, "success", "none", "team", cfg.Team, "token_role", kind, "token_id", record.ID)
+	r.audit(req, principal, action, "success", "none", auditAttrs...)
 	csrfToken, err := r.ensureManageCSRFToken(w, req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)

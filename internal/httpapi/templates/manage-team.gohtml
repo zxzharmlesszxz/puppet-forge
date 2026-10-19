@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Team {{.Team.Team}}</title>
+  <link rel="stylesheet" href="/assets/manage-layout.css">
   <style nonce="{{.Navigation.CSPNonce}}">
     :root {
       color-scheme: light;
@@ -19,7 +20,6 @@
     {{template "manage-navigation-styles" .Navigation}}
     * { box-sizing: border-box; }
     body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
-    main { max-width: 1080px; margin: 0 auto; padding: 32px 20px 56px; }
     header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; }
     h1 { margin: 0; font-size: 32px; }
     h2 { margin: 0 0 16px; font-size: 20px; }
@@ -56,7 +56,7 @@
     .section-title { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
     .section-content { padding: 16px 14px; border-top: 1px solid var(--line); }
     .release-version form { margin: 0; }
-    .module-actions button, .release-version button { min-height: 32px; margin: 0; padding: 0 10px; font-size: 12px; }
+    .module-actions button, .module-actions .force-delete-link, .release-version button, .release-version .force-delete-link { min-height: 32px; margin: 0; padding: 0 10px; border: 1px solid #d6a09b; border-radius: 6px; background: #fff; color: var(--danger); font-size: 12px; font-weight: 700; }
     .release-version { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; background: #f7f8f8; transition: border-color .15s ease, box-shadow .15s ease; }
     .release-version.is-latest { border-color: #87b79a; background: #eef7f1; }
     .release-version.is-active { border-color: #d3b66d; background: #fff8e5; }

@@ -445,8 +445,7 @@ flowchart TD
     override -- no --> lock["LOCK-1 acquire module lock"]
     override -- yes --> forceAuth{"Allowed force scope,<br/>reason and confirmation valid?"}
     forceAuth -- no --> forbidden
-    forceAuth -- yes --> audit["Emit security_audit with justification"]
-    audit --> forceLock["LOCK-1 acquire module lock"]
+    forceAuth -- yes --> forceLock["LOCK-1 acquire module lock"]
     lock --> kind{"Release or module?"}
     forceLock --> forceKind{"Release or module?"}
     forceKind -- release --> deleteReleaseSQL
@@ -461,7 +460,9 @@ flowchart TD
     anyActive -- no --> deleteModuleSQL["SQL-1 delete metadata and enqueue local paths"]
     deleteReleaseSQL --> commit["Commit SQL transaction and release lock"]
     deleteModuleSQL --> commit
-    commit --> done["Success returned to client"]
+    commit --> audit["Persist audit_events row and emit security_audit log"]
+    protected --> auditFailure["Persist failed audit event"]
+    audit --> done["Success returned to client"]
     worker["Lease-elected deletion worker"] --> cleanupLock["LOCK-1 acquire module lock"]
     cleanupLock --> referenced{"Path referenced again?"}
     referenced -- yes --> cancelTask["Remove stale outbox task"]

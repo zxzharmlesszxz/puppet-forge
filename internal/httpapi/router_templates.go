@@ -194,6 +194,34 @@ type manageLegacyConsumerRow struct {
 	Observations int64
 }
 
+type manageAuditData struct {
+	Navigation manageNavigationData
+	Title      string
+	Events     []manageAuditRow
+	Query      string
+	Filter     listFilterData
+	Pagination paginationData
+}
+
+type manageAuditRow struct {
+	OccurredAt    string
+	OccurredDate  string
+	OccurredTime  string
+	Actor         string
+	AuthMethod    string
+	Action        string
+	Result        string
+	Reason        string
+	Target        string
+	Details       string
+	Justification string
+	TargetTokenID string
+	ActorTokenID  string
+	OIDCSubject   string
+	RequestID     string
+	SourceIP      string
+}
+
 type managePublishSpaceAssignment struct {
 	Team        string
 	TeamURL     string
@@ -213,6 +241,21 @@ type manageTokenCreatedData struct {
 	Kind       string
 	Next       string
 	CSRFToken  string
+}
+
+type manageForceDeleteData struct {
+	Navigation   manageNavigationData
+	Title        string
+	ResourceKind string
+	Resource     string
+	Latest       string
+	Active       bool
+	IsLatest     bool
+	Action       string
+	Next         string
+	ErrorNext    string
+	Error        string
+	CSRFToken    string
 }
 
 type manageTeamsData struct {
@@ -270,12 +313,14 @@ type manageNavigationData struct {
 	TeamTokensActive    bool
 	TeamModulesActive   bool
 	TeamLegacyActive    bool
+	TeamAuditActive     bool
 	ModulesActive       bool
 	TeamsActive         bool
 	AddTeamActive       bool
 	PublishSpacesActive bool
 	GlobalAccessActive  bool
 	LegacyUsageActive   bool
+	AuditActive         bool
 	Breadcrumbs         []manageBreadcrumb
 }
 
@@ -300,7 +345,7 @@ func newManageNavigation(principal auth.Principal, csrfToken, page, team string)
 	case "teams":
 		navigation.TeamsActive = true
 		navigation.Breadcrumbs = []manageBreadcrumb{{Label: "Overview", URL: "/manage"}, {Label: "Teams"}}
-	case "team-access", "team-tokens", "team-modules", "team-legacy":
+	case "team-access", "team-tokens", "team-modules", "team-legacy", "team-audit":
 		navigation.TeamsActive = true
 		navigation.TeamPage = true
 		navigation.TeamURL = "/manage/teams/" + url.PathEscape(team)
@@ -309,6 +354,7 @@ func newManageNavigation(principal auth.Principal, csrfToken, page, team string)
 		navigation.TeamTokensActive = section == "tokens"
 		navigation.TeamModulesActive = section == "modules"
 		navigation.TeamLegacyActive = section == "legacy"
+		navigation.TeamAuditActive = section == "audit"
 		navigation.Breadcrumbs = []manageBreadcrumb{
 			{Label: "Overview", URL: "/manage"},
 			{Label: "Teams", URL: "/manage/teams"},
@@ -328,6 +374,9 @@ func newManageNavigation(principal auth.Principal, csrfToken, page, team string)
 	case "legacy-usage":
 		navigation.LegacyUsageActive = true
 		navigation.Breadcrumbs = []manageBreadcrumb{{Label: "Overview", URL: "/manage"}, {Label: "Administration"}, {Label: "Legacy usage"}}
+	case "audit":
+		navigation.AuditActive = true
+		navigation.Breadcrumbs = []manageBreadcrumb{{Label: "Overview", URL: "/manage"}, {Label: "Administration"}, {Label: "Audit log"}}
 	case "token":
 		navigation.TeamsActive = true
 		navigation.TeamPage = true
@@ -426,14 +475,16 @@ type manageModuleRow struct {
 	VersionsLoaded        bool
 	CardID                string
 	CardURL               string
+	ForceDeleteURL        string
 	Next                  string
 	CSRFToken             string
 }
 
 type manageVersionRow struct {
-	Version string
-	Active  bool
-	Latest  bool
+	Version        string
+	Active         bool
+	Latest         bool
+	ForceDeleteURL string
 }
 
 type paginationData struct {
@@ -478,6 +529,20 @@ var csrfFuncs = template.FuncMap{
 //go:embed templates/*.gohtml
 var templateFS embed.FS
 
+//go:embed templates/manage-layout.css
+var manageLayoutCSS string
+
+func serveManageLayoutCSS(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeContent(w, req, "manage-layout.css", time.Time{}, strings.NewReader(manageLayoutCSS))
+}
+
 func mustParseTemplate(filename string) *template.Template {
 	return template.Must(template.New(filename).ParseFS(templateFS, "templates/"+filename))
 }
@@ -504,7 +569,11 @@ var managePublishSpacesTemplate = mustParseCSRFTemplate("manage-publish-spaces.g
 
 var manageLegacyUsageTemplate = mustParseCSRFTemplate("manage-legacy-usage.gohtml")
 
+var manageAuditTemplate = mustParseCSRFTemplate("manage-audit.gohtml")
+
 var manageTokenCreatedTemplate = mustParseCSRFTemplate("manage-token-created.gohtml")
+
+var manageForceDeleteTemplate = mustParseCSRFTemplate("manage-force-delete.gohtml")
 
 var manageTeamsTemplate = mustParseCSRFTemplate("manage-teams.gohtml")
 

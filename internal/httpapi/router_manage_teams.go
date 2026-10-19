@@ -23,6 +23,7 @@ const (
 	manageTeamTokensSection  manageTeamSection = "tokens"
 	manageTeamModulesSection manageTeamSection = "modules"
 	manageTeamLegacySection  manageTeamSection = "legacy"
+	manageTeamAuditSection   manageTeamSection = "audit"
 )
 
 func (r *Router) manageTeamsPage(w http.ResponseWriter, req *http.Request) {
@@ -156,8 +157,13 @@ func (r *Router) manageTeamPage(w http.ResponseWriter, req *http.Request) {
 		http.Redirect(w, req, target, http.StatusFound)
 		return
 	}
+	spaces := teamPublishSpaces(*cfg)
 	if section == manageTeamLegacySection {
 		r.renderManageLegacyUsage(w, req, principal, team, teamBasePath+"/legacy", "team-legacy", "Legacy usage: "+team)
+		return
+	}
+	if section == manageTeamAuditSection {
+		r.renderManageAudit(w, req, principal, spaces, teamBasePath+"/audit", "team-audit", team, "Audit log: "+team)
 		return
 	}
 	formRows := accessTeamFormRows([]auth.TeamConfig{*cfg}, principal)
@@ -165,7 +171,6 @@ func (r *Router) manageTeamPage(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusForbidden, errors.New("team admin access required"))
 		return
 	}
-	spaces := teamPublishSpaces(*cfg)
 	data := manageTeamData{
 		Navigation:  r.manageNavigation(req, principal, "", "team-"+string(section), team),
 		Principal:   principal,
@@ -225,7 +230,7 @@ func parseManageTeamPath(path string) (string, manageTeamSection, bool, bool) {
 	}
 	section := manageTeamSection(parts[1])
 	switch section {
-	case manageTeamAccessSection, manageTeamTokensSection, manageTeamModulesSection, manageTeamLegacySection:
+	case manageTeamAccessSection, manageTeamTokensSection, manageTeamModulesSection, manageTeamLegacySection, manageTeamAuditSection:
 		return parts[0], section, true, true
 	default:
 		return "", "", false, false

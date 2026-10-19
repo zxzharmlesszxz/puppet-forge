@@ -40,6 +40,19 @@ type ReleaseConsumerObservation struct {
 	ObservedAt   time.Time
 }
 
+type AuditEvent struct {
+	ID         string
+	OccurredAt time.Time
+	RequestID  string
+	Actor      string
+	AuthMethod string
+	Action     string
+	Result     string
+	Reason     string
+	SourceIP   string
+	Attributes map[string]string
+}
+
 type ModuleReleaseSummary struct {
 	Owner     string
 	Name      string
@@ -105,9 +118,15 @@ type Store interface {
 	SessionMaintenanceStore
 	RateLimitStore
 	ReleaseConsumerStore
+	AuditEventStore
 	AcquireLease(ctx context.Context, name, holder string, duration time.Duration) (bool, error)
 	ReleaseLease(ctx context.Context, name, holder string) error
 	Close()
+}
+
+type AuditEventStore interface {
+	RecordAuditEvent(ctx context.Context, event AuditEvent) error
+	ListAuditEvents(ctx context.Context, scopes []string, query string, limit, offset int) ([]AuditEvent, int, error)
 }
 
 type RateLimitStore interface {

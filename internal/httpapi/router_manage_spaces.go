@@ -41,11 +41,11 @@ func (r *Router) managePublishSpacesPage(w http.ResponseWriter, req *http.Reques
 			err = r.saveAccessConfigs(req.Context(), configs)
 		}
 		if err != nil {
-			r.audit(req, principal, "change_publish_spaces", "failure", auditReason(err), "team", req.FormValue("team"), "space", req.FormValue("space"))
+			r.audit(req, principal, "change_publish_spaces", "failure", auditReason(err), "assignment_action", req.FormValue("action"), "team", req.FormValue("team"), "space", req.FormValue("space"))
 			redirectManageResult(w, req, "/manage/admin/spaces", "error", err.Error())
 			return
 		}
-		r.audit(req, principal, "change_publish_spaces", "success", "none", "team", req.FormValue("team"), "space", req.FormValue("space"))
+		r.audit(req, principal, "change_publish_spaces", "success", "none", "assignment_action", req.FormValue("action"), "team", req.FormValue("team"), "space", req.FormValue("space"))
 		redirectManageResult(w, req, "/manage/admin/spaces", "message", message)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))

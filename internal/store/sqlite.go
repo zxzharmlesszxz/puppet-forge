@@ -20,7 +20,7 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
 
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 
 type sqliteQueryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -204,6 +204,22 @@ on release_consumers (last_seen_at desc);
 
 create index if not exists idx_release_consumers_current
 on release_consumers (consumer_team, consumer_name, consumer_role, owner, name, last_seen_at desc, version);
+
+create table if not exists audit_events (
+	id text primary key,
+	occurred_at text not null,
+	request_id text not null,
+	actor text not null,
+	auth_method text not null,
+	action text not null,
+	result text not null,
+	reason text not null,
+	source_ip text not null,
+	attributes_json text not null default '{}'
+);
+
+create index if not exists idx_audit_events_occurred_at
+on audit_events (occurred_at desc, id desc);
 
 create table if not exists artifact_deletions (
 	storage_path text primary key,

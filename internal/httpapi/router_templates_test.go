@@ -197,6 +197,11 @@ func TestPaginatedViewsUseSharedAsyncListContract(t *testing.T) {
 			Navigation: navigation,
 			Consumers:  []manageLegacyConsumerRow{{ConsumerTeam: "platform", ConsumerName: "production", Module: "teamname/apache"}},
 		}), []string{"legacy-usage-list"}},
+		{render(manageAuditTemplate, manageAuditData{
+			Navigation: navigation,
+			Title:      "Audit log",
+			Events:     []manageAuditRow{{Actor: "subject:admin", Action: "delete release", Target: "teamname/apache@1.0.0"}},
+		}), []string{"audit-list"}},
 	}
 	for _, page := range pages {
 		for _, target := range page.targets {
@@ -260,14 +265,14 @@ func TestManageNavigationRoleMatrix(t *testing.T) {
 			},
 			page:    "team-tokens",
 			team:    "teamname",
-			present: []string{`href="/manage/teams" aria-current="page">Teams</a>`, `aria-label="Management context navigation"`, `href="/manage/teams/teamname/tokens" aria-current="page">Tokens</a>`, `href="/manage/teams/teamname/legacy">Legacy usage</a>`, `<span aria-current="page">Tokens</span>`},
+			present: []string{`href="/manage/teams" aria-current="page">Teams</a>`, `aria-label="Management context navigation"`, `href="/manage/teams/teamname/tokens" aria-current="page">Tokens</a>`, `href="/manage/teams/teamname/legacy">Legacy usage</a>`, `href="/manage/teams/teamname/audit">Audit log</a>`, `<span aria-current="page">Tokens</span>`},
 			absent:  []string{`>Add team</a>`, `>Publish spaces</a>`, `href="/manage/admin/legacy"`, `>Global access</a>`},
 		},
 		{
 			name:      "global admin",
 			principal: auth.Principal{CanAdmin: true},
 			page:      "teams",
-			present:   []string{`href="/manage/teams" aria-current="page">Teams</a>`, `href="/manage/teams/new">Add team</a>`, `<details class="administration-menu">`, `<summary>Administration</summary>`, `href="/manage/admin/spaces">Publish spaces</a>`, `href="/manage/admin/legacy">Legacy usage</a>`, `href="/manage/admin/access">Global access</a>`},
+			present:   []string{`href="/manage/teams" aria-current="page">Teams</a>`, `href="/manage/teams/new">Add team</a>`, `<details class="administration-menu">`, `<summary>Administration</summary>`, `href="/manage/admin/spaces">Publish spaces</a>`, `href="/manage/admin/legacy">Legacy usage</a>`, `href="/manage/admin/audit">Audit log</a>`, `href="/manage/admin/access">Global access</a>`},
 		},
 		{
 			name: "combined global and team admin",
@@ -280,7 +285,7 @@ func TestManageNavigationRoleMatrix(t *testing.T) {
 			},
 			page:    "team-modules",
 			team:    "teamname",
-			present: []string{`href="/manage/teams" aria-current="page">Teams</a>`, `<details class="administration-menu">`, `<summary>Administration</summary>`, `href="/manage/admin/spaces">Publish spaces</a>`, `href="/manage/admin/legacy">Legacy usage</a>`, `href="/manage/admin/access">Global access</a>`, `href="/manage/teams/teamname/modules" aria-current="page">Modules</a>`, `href="/manage/teams/teamname/legacy">Legacy usage</a>`, `<span aria-current="page">Modules</span>`},
+			present: []string{`href="/manage/teams" aria-current="page">Teams</a>`, `<details class="administration-menu">`, `<summary>Administration</summary>`, `href="/manage/admin/spaces">Publish spaces</a>`, `href="/manage/admin/legacy">Legacy usage</a>`, `href="/manage/admin/audit">Audit log</a>`, `href="/manage/admin/access">Global access</a>`, `href="/manage/teams/teamname/modules" aria-current="page">Modules</a>`, `href="/manage/teams/teamname/legacy">Legacy usage</a>`, `href="/manage/teams/teamname/audit">Audit log</a>`, `<span aria-current="page">Modules</span>`},
 		},
 	}
 
@@ -498,15 +503,21 @@ func TestAuthenticatedManagePagesUseConsistentWidth(t *testing.T) {
 		"manage-access.gohtml",
 		"manage-publish-spaces.gohtml",
 		"manage-token-created.gohtml",
+		"manage-force-delete.gohtml",
+		"manage-legacy-usage.gohtml",
+		"manage-audit.gohtml",
 	}
 	for _, page := range pages {
 		contents, err := templateFS.ReadFile("templates/" + page)
 		if err != nil {
 			t.Fatalf("read %s: %v", page, err)
 		}
-		if !strings.Contains(string(contents), "max-width: 1080px") {
+		if !strings.Contains(string(contents), `<link rel="stylesheet" href="/assets/manage-layout.css">`) {
 			t.Errorf("%s does not use the shared management page width", page)
 		}
+	}
+	if !strings.Contains(manageLayoutCSS, "max-width: 1440px") {
+		t.Error("shared management page width is not 1440px")
 	}
 }
 
@@ -670,6 +681,7 @@ func TestParseManageTeamPathSeparatesTeamPages(t *testing.T) {
 		{path: "/manage/teams/teamname/tokens", team: "teamname", section: manageTeamTokensSection, canonical: true, ok: true},
 		{path: "/manage/teams/teamname/modules", team: "teamname", section: manageTeamModulesSection, canonical: true, ok: true},
 		{path: "/manage/teams/teamname/legacy", team: "teamname", section: manageTeamLegacySection, canonical: true, ok: true},
+		{path: "/manage/teams/teamname/audit", team: "teamname", section: manageTeamAuditSection, canonical: true, ok: true},
 		{path: "/manage/teams/teamname/unknown"},
 		{path: "/manage/teams/teamname/modules/extra"},
 	} {

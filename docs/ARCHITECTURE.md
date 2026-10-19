@@ -147,10 +147,10 @@ Important route groups:
   authenticated read-only overview of modules and manageable teams
 - `/manage/modules`
   authenticated cross-team module publishing, search, deletion, and upstream imports
-- `/manage/teams` and `/manage/teams/{team}/{access,tokens,modules}`
-  authenticated team list and separate team-scoped access, token, and module management pages
-- `/manage/admin/{access,spaces}`
-  authenticated structured global access and publishing-space configuration available only to global admins
+- `/manage/teams` and `/manage/teams/{team}/{access,tokens,modules,legacy,audit}`
+  authenticated team list and separate team-scoped access, token, module, legacy-usage, and audit pages
+- `/manage/admin/{access,spaces,audit}`
+  authenticated structured global access, publishing-space configuration, and persistent audit history available only to global admins
 
 ## Auth Model
 
@@ -166,7 +166,8 @@ Both SQLite and PostgreSQL stores create the required operational schema in code
 - OIDC authorization state is HMAC-indexed, expires after five minutes, and is atomically consumed once across replicas. Authorization requests use nonce and PKCE S256; callbacks enforce nonce plus strict signed ID-token issuer, audience, algorithm, and expiry validation
 - the independent `MANAGE_SESSION_SECRET` protects token-session IDs. `ACCESS_TOKEN_PEPPER` remains dedicated to access-token digests, while `OIDC_COOKIE_SECRET` protects transient OIDC state cookies and OIDC session IDs. Each value must be stable and identical across replicas
 - an early request boundary strips every forwarded-header variant from untrusted peers. Forwarded host/proto/client addresses are accepted only after explicit opt-in, direct-peer CIDR matching, syntax validation, and conflict checks; `ALLOWED_PUBLIC_HOSTS` can additionally constrain all effective request hosts
-- deleting modules and releases is allowed for global admins across all spaces and for delegated team admins only inside their managed primary team spaces; extra publishing spaces allow publishing but do not grant delete ownership. Normal deletion protects active/latest releases. An owning team admin or global admin can explicitly override release protection with a bounded reason and exact identity confirmation, while only a global admin can force-delete a protected module. Every attempt emits a structured security-audit event with the operator justification
+- administrative mutations emit structured security-audit events to both application logs and the SQL-backed audit journal. The global-admin-only `/manage/admin/audit` page provides the complete history. `/manage/teams/{team}/audit` is available to that team's administrators and global admins, and applies a backend scope over the team's identity plus all primary and extra publish spaces. The scope follows the target resource, so global-admin actions on team settings, tokens, modules, and releases remain visible to the affected team. Both views support filtering and pagination over actors, actions, targets, results, access-control diffs, and force-delete justifications. Access diffs include only changed OIDC mappings and never token values, hashes, or session secrets
+- deleting modules and releases is allowed for global admins across all spaces and for delegated team admins only inside their managed primary team spaces; extra publishing spaces allow publishing but do not grant delete ownership. Normal deletion protects active/latest releases. Dedicated force-delete confirmation pages collect a bounded reason and exact identity confirmation without expanding module cards. An owning team admin or global admin can explicitly override release protection, while only a global admin can force-delete a protected module
 - `ADMIN_TOKEN` is a runtime-only bootstrap/break-glass admin token and is not persisted in SQL
 - The informational HTML catalog (`/` and `/modules/...`) stays publicly viewable regardless of `PUBLIC_MODULE_ACCESS`
 - `PUBLIC_MODULE_ACCESS=true` bypasses read auth only for install/API routes: module metadata APIs, downloads, extracted module files, and `/v3/*`, mainly for r10k-style consumers without an Authorization header

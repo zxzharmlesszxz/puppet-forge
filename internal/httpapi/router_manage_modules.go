@@ -177,12 +177,31 @@ func (r *Router) loadManageModuleCard(ctx context.Context, principal auth.Princi
 
 func configureManageModuleRows(rows []manageModuleRow, csrfToken, next string) {
 	for i := range rows {
-		rows[i].CSRFToken = csrfToken
-		rows[i].Next = next
+		row := &rows[i]
+		row.CSRFToken = csrfToken
+		row.Next = next
+		row.ForceDeleteURL = manageForceDeleteURL(row.Module.Owner, row.Module.Name, "", next)
+		for versionIndex := range row.Versions {
+			version := &row.Versions[versionIndex]
+			version.ForceDeleteURL = manageForceDeleteURL(row.Module.Owner, row.Module.Name, version.Version, next)
+		}
 		if next != "" && next != "/manage/modules" {
-			rows[i].CardURL += "?next=" + url.QueryEscape(next)
+			row.CardURL += "?next=" + url.QueryEscape(next)
 		}
 	}
+}
+
+func manageForceDeleteURL(owner, name, version, next string) string {
+	path := "/manage/modules/" + url.PathEscape(owner) + "/" + url.PathEscape(name)
+	if version == "" {
+		path += "/force-delete"
+	} else {
+		path += "/versions/" + url.PathEscape(version) + "/force-delete"
+	}
+	if next != "" {
+		path += "?next=" + url.QueryEscape(next)
+	}
+	return path
 }
 
 func manageModuleCardID(owner, name string) string {
@@ -354,6 +373,10 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 	}
 	trimmed := strings.Trim(strings.TrimPrefix(req.URL.Path, "/manage/modules/"), "/")
 	parts := strings.Split(trimmed, "/")
+	if req.Method == http.MethodGet && ((len(parts) == 3 && parts[2] == "force-delete") || (len(parts) == 5 && parts[2] == "versions" && parts[4] == "force-delete")) {
+		r.renderManageForceDelete(w, req, principal, parts)
+		return
+	}
 	if req.Method == http.MethodGet && len(parts) == 3 && parts[2] == "card" {
 		owner, name := parts[0], parts[1]
 		if !canViewManageSpace(principal, owner) {
@@ -454,6 +477,81 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 	}
 
 	writeError(w, http.StatusNotFound, errors.New("route not found"))
+}
+
+func (r *Router) renderManageForceDelete(w http.ResponseWriter, req *http.Request, principal auth.Principal, parts []string) {
+	owner, name := parts[0], parts[1]
+	isModule := len(parts) == 3
+	if isModule {
+		if !principal.CanAdmin {
+			writeError(w, http.StatusForbidden, errors.New("global admin access required for force delete"))
+			return
+		}
+	} else if !canDeleteInSpace(principal, owner) {
+		writeError(w, http.StatusForbidden, errors.New("admin or team admin access required"))
+		return
+	}
+
+	row, err := r.loadManageModuleCard(req.Context(), principal, owner, name)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	next := manageReturnPath(req, "/manage/modules")
+	data := manageForceDeleteData{
+		ResourceKind: "module",
+		Resource:     owner + "/" + name,
+		Latest:       row.Module.LatestVersion,
+		Action:       "/manage/modules/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/delete",
+		Next:         next,
+		ErrorNext:    manageForceDeleteURL(owner, name, "", next),
+		Error:        req.URL.Query().Get("error"),
+	}
+	if isModule {
+		data.Title = "Force delete module"
+	} else {
+		version := parts[3]
+		var release *manageVersionRow
+		for index := range row.Versions {
+			if row.Versions[index].Version == version {
+				release = &row.Versions[index]
+				break
+			}
+		}
+		if release == nil {
+			writeServiceError(w, store.ErrNotFound)
+			return
+		}
+		data.Title = "Force delete release"
+		data.ResourceKind = "release"
+		data.Resource += "@" + version
+		data.Latest = ""
+		data.Active = release.Active
+		data.IsLatest = release.Latest
+		data.Action = "/manage/modules/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/versions/" + url.PathEscape(version) + "/delete"
+		data.ErrorNext = manageForceDeleteURL(owner, name, version, next)
+	}
+	csrfToken, err := r.ensureManageCSRFToken(w, req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	page, team := manageForceDeleteNavigation(next)
+	data.CSRFToken = csrfToken
+	data.Navigation = r.manageNavigation(req, principal, csrfToken, page, team)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	executeHTMLTemplate(w, manageForceDeleteTemplate, data)
+}
+
+func manageForceDeleteNavigation(next string) (string, string) {
+	parsed, err := url.ParseRequestURI(next)
+	if err == nil {
+		team, section, _, ok := parseManageTeamPath(parsed.Path)
+		if ok && section == manageTeamModulesSection {
+			return "team-modules", team
+		}
+	}
+	return "modules", ""
 }
 
 func forceDeleteParameters(req *http.Request, expectedConfirmation string) (bool, string, error) {
@@ -559,7 +657,13 @@ func parseUpstreamModuleFormValue(raw string) (string, string, error) {
 }
 
 func redirectManageError(w http.ResponseWriter, req *http.Request, err error) {
-	redirectManageResult(w, req, "/manage/modules", "error", err.Error())
+	target := manageErrorReturnPath(req, "/manage/modules")
+	separator := "?"
+	if strings.Contains(target, "?") {
+		separator = "&"
+	}
+	// #nosec G710 -- manageErrorReturnPath accepts only validated local force-delete paths or a fixed local fallback.
+	http.Redirect(w, req, target+separator+"error="+url.QueryEscape(err.Error()), http.StatusFound)
 }
 
 func redirectManageResult(w http.ResponseWriter, req *http.Request, fallback, key, message string) {
@@ -581,6 +685,15 @@ func manageReturnPath(req *http.Request, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+func manageErrorReturnPath(req *http.Request, fallback string) string {
+	next := strings.TrimSpace(req.FormValue("error_next"))
+	parsed, err := url.ParseRequestURI(next)
+	if err == nil && !parsed.IsAbs() && parsed.Host == "" && strings.HasPrefix(parsed.Path, "/manage/modules/") && strings.HasSuffix(parsed.Path, "/force-delete") {
+		return next
+	}
+	return manageReturnPath(req, fallback)
 }
 
 func canManageAccessTeam(principal auth.Principal, team string) bool {

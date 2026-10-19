@@ -371,6 +371,19 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) (returnErr 
 			primary key (consumer_team, consumer_name, consumer_role, owner, name, version)
 		);
 
+		create table if not exists audit_events (
+			id text primary key,
+			occurred_at timestamptz not null,
+			request_id text not null,
+			actor text not null,
+			auth_method text not null,
+			action text not null,
+			result text not null,
+			reason text not null,
+			source_ip text not null,
+			attributes_json jsonb not null default '{}'::jsonb
+		);
+
 		create table if not exists artifact_deletions (
 			storage_path text primary key,
 			owner text not null,
@@ -443,6 +456,7 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) (returnErr 
 		create index if not exists idx_release_usage_last_used_at on release_usage (last_used_at);
 		create index if not exists idx_release_consumers_last_seen_at on release_consumers (last_seen_at desc);
 		create index if not exists idx_release_consumers_current on release_consumers (consumer_team, consumer_name, consumer_role, owner, name, last_seen_at desc, version);
+		create index if not exists idx_audit_events_occurred_at on audit_events (occurred_at desc, id desc);
 		create index if not exists idx_access_tokens_team_type on access_tokens (team, token_type);
 		create index if not exists idx_access_tokens_expires_at on access_tokens (expires_at) where expires_at is not null;
 		create index if not exists idx_access_tokens_revoked_at on access_tokens (revoked_at) where revoked_at is not null;
