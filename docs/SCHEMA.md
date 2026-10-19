@@ -186,7 +186,7 @@ methods; unknown resources return `404 Not Found`. Probe and OIDC endpoints are
 listed with the methods used by their normal clients.
 
 | Method        | Path                                                         | Action                                                            | Required capability or guard                                                                                                         |
-| ------------- | ------------------------------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+|---------------|--------------------------------------------------------------|-------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
 | `GET`         | `/healthz`                                                   | process liveness                                                  | none; does not check dependencies                                                                                                    |
 | `GET`         | `/readyz`                                                    | SQL and artifact-storage readiness                                | two-second dependency deadline                                                                                                       |
 | `GET`         | `/`                                                          | public module catalog and filtering                               | always informationally public                                                                                                        |
@@ -202,7 +202,7 @@ listed with the methods used by their normal clients.
 | `GET`         | `/manage/modules`                                            | manageable module catalog                                         | global admin or team management capability                                                                                           |
 | `POST`        | `/manage/modules`                                            | publish module archive                                            | selected-space publish capability, CSRF, upload limit                                                                                |
 | `POST`        | `/manage/modules/{owner}/{name}/delete`                      | delete module                                                     | normal protection; global force requires reason and exact confirmation                                                               |
-| `POST`        | `/manage/modules/{owner}/{name}/versions/{version}/delete`   | delete release                                                    | normal protection; owning-team/global force requires reason and confirmation                                                        |
+| `POST`        | `/manage/modules/{owner}/{name}/versions/{version}/delete`   | delete release                                                    | normal protection; owning-team/global force requires reason and confirmation                                                         |
 | `POST`        | `/manage/upstream`                                           | explicitly index an upstream module                               | global administrator, CSRF                                                                                                           |
 | `GET`         | `/manage/teams`                                              | list manageable teams                                             | global admin sees all; team admin sees assigned teams                                                                                |
 | `GET`         | `/manage/teams/new`                                          | render team creation                                              | global administrator                                                                                                                 |
@@ -864,11 +864,12 @@ missing or corrupt release data.
 
 ## Related Documentation
 
-- [README.md](README.md): installation, configuration, and API usage.
-- [README.uk.md](README.uk.md): Ukrainian user and operator guide.
+- [DEPLOYMENT.md](DEPLOYMENT.md): installation, configuration, and API usage.
+- [DEPLOYMENT.uk.md](DEPLOYMENT.uk.md): Ukrainian user and operator guide.
+- [DEVELOPMENT.md](DEVELOPMENT.md): local development, verification, CI, and releases.
 - [ARCHITECTURE.md](ARCHITECTURE.md): package responsibilities and design rules.
 - [METRICS.md](METRICS.md): metric definitions and label semantics.
 - [BACKUP_RESTORE.md](BACKUP_RESTORE.md): recovery and reconciliation procedure.
-- [Helm chart](deploy/puppet-forge): Kubernetes deployment configuration.
-- [Grafana dashboard](examples/grafana/puppet-forge-dashboard.json): operational views.
-- [Prometheus alerts](examples/prometheus/alerts/puppet-forge.yml): example alert rules.
+- [Helm chart](../deploy/puppet-forge): Kubernetes deployment configuration.
+- [Grafana dashboard](../examples/grafana/puppet-forge-dashboard.json): operational views.
+- [Prometheus alerts](../examples/prometheus/alerts/puppet-forge.yml): example alert rules.

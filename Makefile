@@ -42,7 +42,8 @@ release-archives: ## Cross-build release archives into dist/.
 		mkdir -p "$$workdir"; \
 		echo "building $$archive"; \
 		CGO_ENABLED=$(CGO_ENABLED) GOOS="$$goos" GOARCH="$$goarch" $(GO) build -buildvcs=false -trimpath -ldflags "$(LDFLAGS)" -o "$$workdir/$$binary" $(MAIN_PACKAGE); \
-		cp README.md METRICS.md ARCHITECTURE.md BACKUP_RESTORE.md "$$workdir/"; \
+		cp README.md "$$workdir/"; \
+		cp -R docs "$$workdir/"; \
 		COPYFILE_DISABLE=1 tar -C $(DIST_DIR) -czf "$(DIST_DIR)/$$archive.tar.gz" "$$archive"; \
 		rm -rf "$$workdir"; \
 	done
@@ -339,6 +340,7 @@ prometheus-rules-check: ## Validate standalone and Helm-rendered Prometheus rule
 	rendered="$$(mktemp)"; \
 	trap 'rm -f "$$rendered"' EXIT; \
 	$(HELM) template puppet-forge $(CHART_DIR) \
+		-f $(CHART_DIR)/values-gcs.yaml \
 		--show-only templates/prometheusrule.yaml \
 		--set prometheusRule.enabled=true \
 		--set secret.create=true \
@@ -351,6 +353,7 @@ prometheus-rules-check: ## Validate standalone and Helm-rendered Prometheus rule
 
 helm-lint: helm-template-check ## Lint Helm charts and render supported configurations.
 	$(HELM) lint deploy/puppet-forge \
+		-f deploy/puppet-forge/values-gcs.yaml \
 		--set secret.create=true \
 		--set-string secret.stringData.DATABASE_DSN=postgres://forge:forge@postgres:5432/forge \
 		--set-string secret.stringData.ACCESS_TOKEN_PEPPER=helm-lint-access-token-pepper-32-bytes \

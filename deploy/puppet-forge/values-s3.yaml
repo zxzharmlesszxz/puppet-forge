@@ -1,0 +1,9 @@
+config:
+  ARTIFACT_BACKEND: s3
+  ARTIFACT_ENDPOINT: https://s3.example.com
+  ARTIFACT_BUCKET: puppet-forge-artifacts
+  ARTIFACT_REGION: us-east-1
+  ARTIFACT_PATH_STYLE: "false"
+
+# Supply ARTIFACT_ACCESS_KEY_ID and ARTIFACT_SECRET_ACCESS_KEY through
+# secret.existingSecret when the S3-compatible backend requires static credentials.

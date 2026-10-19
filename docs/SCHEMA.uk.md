@@ -702,10 +702,11 @@ max by (source) (puppet_forge_module_releases)
 
 ## Пов'язана документація
 
-- [README.uk.md](README.uk.md) — український user/operator guide.
+- [DEPLOYMENT.uk.md](DEPLOYMENT.uk.md) — український user/operator guide.
+- [DEVELOPMENT.uk.md](DEVELOPMENT.uk.md) — локальна розробка, перевірки, CI та релізи.
 - [ARCHITECTURE.uk.md](ARCHITECTURE.uk.md) — package responsibilities і design.
 - [METRICS.uk.md](METRICS.uk.md) — визначення метрик.
 - [BACKUP_RESTORE.uk.md](BACKUP_RESTORE.uk.md) — recovery та reconciliation.
-- [Helm chart](deploy/puppet-forge) — Kubernetes configuration.
-- [Grafana dashboard](examples/grafana/puppet-forge-dashboard.json).
-- [Prometheus alerts](examples/prometheus/alerts/puppet-forge.yml).
+- [Helm chart](../deploy/puppet-forge) — Kubernetes configuration.
+- [Grafana dashboard](../examples/grafana/puppet-forge-dashboard.json).
+- [Prometheus alerts](../examples/prometheus/alerts/puppet-forge.yml).

@@ -1,0 +1,7 @@
+config:
+  ARTIFACT_BACKEND: gcs
+  ARTIFACT_ENDPOINT: https://storage.googleapis.com
+  ARTIFACT_BUCKET: puppet-forge-artifacts
+  ARTIFACT_PROJECT: my-gcp-project
+  ARTIFACT_ENSURE_BUCKET: "false"
+  ARTIFACT_GCS_ANONYMOUS: "false"

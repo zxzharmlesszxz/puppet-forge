@@ -4,11 +4,14 @@ set -eu
 
 HELM="${HELM:-helm}"
 CHART_DIR="${CHART_DIR:-deploy/puppet-forge}"
+GCS_VALUES="$CHART_DIR/values-gcs.yaml"
+S3_VALUES="$CHART_DIR/values-s3.yaml"
 PEPPER="helm-template-access-token-pepper-32-bytes"
 SESSION_SECRET="helm-template-manage-session-secret-32-bytes"
 
 render_manifest() {
   "$HELM" template puppet-forge "$CHART_DIR" \
+    -f "$GCS_VALUES" \
     --set secret.create=true \
     --set-string secret.stringData.DATABASE_DSN=postgres://forge:forge@postgres:5432/forge \
     --set-string secret.stringData.ACCESS_TOKEN_PEPPER="$PEPPER" \
@@ -35,7 +38,17 @@ render --set database.backend=sqlite --set replicaCount=1 --set-string secret.st
 render --set database.backend=postgres --set secret.create=false --set secret.existingSecret=puppet-forge-runtime
 render --set database.backend=sqlite --set replicaCount=1 --set secret.create=false --set secret.existingSecret=puppet-forge-runtime
 render --set-string config.TRUST_FORWARDED_HEADERS=true --set-string 'config.TRUSTED_PROXY_CIDRS=0.0.0.0/0\,::/0'
-"$HELM" template puppet-forge "$CHART_DIR" -f "$CHART_DIR/values-dev.yaml" >/dev/null
+"$HELM" template puppet-forge "$CHART_DIR" -f "$GCS_VALUES" -f "$CHART_DIR/values-dev.yaml" >/dev/null
+"$HELM" template puppet-forge "$CHART_DIR" -f "$S3_VALUES" \
+  --set secret.create=false \
+  --set secret.existingSecret=puppet-forge-runtime >/dev/null
+
+if "$HELM" template puppet-forge "$CHART_DIR" \
+  --set secret.create=false \
+  --set secret.existingSecret=puppet-forge-runtime >/dev/null 2>&1; then
+  echo "expected Helm rendering without an artifact backend profile to fail" >&2
+  exit 1
+fi
 
 manifest="$(render_manifest)"
 printf '%s\n' "$manifest" | grep -F 'runAsNonRoot: true' >/dev/null

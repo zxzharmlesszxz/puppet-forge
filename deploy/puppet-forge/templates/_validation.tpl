@@ -1,8 +1,18 @@
 {{- define "chart.validate" -}}
 {{- $dsn := default "" .Values.secret.stringData.DATABASE_DSN -}}
 {{- $backend := default "" .Values.database.backend -}}
+{{- $artifactBackend := default "" (index .Values.config "ARTIFACT_BACKEND") -}}
 {{- if not (has $backend (list "postgres" "sqlite")) -}}
 {{- fail "database.backend must be postgres or sqlite" -}}
+{{- end -}}
+{{- if not (has $artifactBackend (list "gcs" "s3")) -}}
+{{- fail "config.ARTIFACT_BACKEND must be gcs or s3; apply values-gcs.yaml or values-s3.yaml" -}}
+{{- end -}}
+{{- if empty (index .Values.config "ARTIFACT_BUCKET") -}}
+{{- fail "config.ARTIFACT_BUCKET is required" -}}
+{{- end -}}
+{{- if and (eq $artifactBackend "s3") (empty (index .Values.config "ARTIFACT_ENDPOINT")) -}}
+{{- fail "config.ARTIFACT_ENDPOINT is required for the s3 backend" -}}
 {{- end -}}
 {{- if and .Values.secret.create (not (empty .Values.secret.existingSecret)) -}}
 {{- fail "secret.create and secret.existingSecret are mutually exclusive" -}}
