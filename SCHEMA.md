@@ -201,8 +201,8 @@ listed with the methods used by their normal clients.
 | `GET`         | `/manage`                                                    | overview                                                          | global admin or team management capability                                                                                           |
 | `GET`         | `/manage/modules`                                            | manageable module catalog                                         | global admin or team management capability                                                                                           |
 | `POST`        | `/manage/modules`                                            | publish module archive                                            | selected-space publish capability, CSRF, upload limit                                                                                |
-| `POST`        | `/manage/modules/{owner}/{name}/delete`                      | delete module                                                     | global delete or primary-team admin delete, CSRF, protected-release checks                                                           |
-| `POST`        | `/manage/modules/{owner}/{name}/versions/{version}/delete`   | delete release                                                    | global delete or primary-team admin delete, CSRF, latest/active protection                                                           |
+| `POST`        | `/manage/modules/{owner}/{name}/delete`                      | delete module                                                     | normal protection; global force requires reason and exact confirmation                                                               |
+| `POST`        | `/manage/modules/{owner}/{name}/versions/{version}/delete`   | delete release                                                    | normal protection; owning-team/global force requires reason and confirmation                                                        |
 | `POST`        | `/manage/upstream`                                           | explicitly index an upstream module                               | global administrator, CSRF                                                                                                           |
 | `GET`         | `/manage/teams`                                              | list manageable teams                                             | global admin sees all; team admin sees assigned teams                                                                                |
 | `GET`         | `/manage/teams/new`                                          | render team creation                                              | global administrator                                                                                                                 |
@@ -224,9 +224,9 @@ listed with the methods used by their normal clients.
 | `POST`        | `/api/v1/modules`                                            | publish multipart `file` with optional `space`                    | publish capability for metadata owner; supplied space must match                                                                     |
 | `GET`         | `/api/v1/manage/publish-spaces`                              | list caller's effective publish spaces                            | publish-capable principal                                                                                                            |
 | `GET`         | `/api/v1/modules/{owner}/{name}`                             | module metadata                                                   | read capability                                                                                                                      |
-| `DELETE`      | `/api/v1/modules/{owner}/{name}`                             | delete module                                                     | global or primary-team delete capability; protected-release checks                                                                   |
+| `DELETE`      | `/api/v1/modules/{owner}/{name}`                             | delete module                                                     | protected by default; global force uses explicit reason/confirmation headers                                                         |
 | `GET`         | `/api/v1/modules/{owner}/{name}/versions/{version}`          | release metadata                                                  | read capability; cold upstream checksum materialization when required                                                                |
-| `DELETE`      | `/api/v1/modules/{owner}/{name}/versions/{version}`          | delete release                                                    | global or primary-team delete capability; latest/active protection                                                                   |
+| `DELETE`      | `/api/v1/modules/{owner}/{name}/versions/{version}`          | delete release                                                    | protected by default; owning-team/global force uses explicit headers                                                                 |
 | `GET`, `HEAD` | `/api/v1/modules/{owner}/{name}/versions/{version}/download` | stream release bytes                                              | read capability, range/ETag support, local download rate limit                                                                       |
 | `GET`         | `/v3/modules`                                                | Forge-compatible combined module catalog                          | read capability unless public access; local SQL filtering and pagination                                                             |
 | `GET`         | `/v3/releases`                                               | Forge-compatible combined release catalog                         | read capability unless public access; local SQL filtering and pagination without upstream hydration                                  |
@@ -441,8 +441,16 @@ token, and OIDC capabilities.
 flowchart TD
     request["Delete module or release"] --> authz{"AUTH-5 allowed?<br/>global admin or primary-team admin"}
     authz -- no --> forbidden["403"]
-    authz -- yes --> lock["LOCK-1 acquire module lock"]
+    authz -- yes --> override{"Explicit force override?"}
+    override -- no --> lock["LOCK-1 acquire module lock"]
+    override -- yes --> forceAuth{"Allowed force scope,<br/>reason and confirmation valid?"}
+    forceAuth -- no --> forbidden
+    forceAuth -- yes --> audit["Emit security_audit with justification"]
+    audit --> forceLock["LOCK-1 acquire module lock"]
     lock --> kind{"Release or module?"}
+    forceLock --> forceKind{"Release or module?"}
+    forceKind -- release --> deleteReleaseSQL
+    forceKind -- module --> deleteModuleSQL
     kind -- release --> latest{"Is latest?"}
     latest -- yes --> protected["409 protected"]
     latest -- no --> active{"Used inside ACTIVE_RELEASE_TTL?"}

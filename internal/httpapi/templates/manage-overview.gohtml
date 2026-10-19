@@ -234,6 +234,7 @@
       <a class="summary-item" href="/manage/modules"><span class="summary-value">{{.ModuleTotal}}</span><span class="summary-label">Modules in scope</span></a>
       <a class="summary-item" href="{{if .Navigation.CanAdmin}}/manage/admin/spaces{{else}}#spaces{{end}}"><span class="summary-value">{{.SpaceTotal}}</span><span class="summary-label">Available spaces</span></a>
       {{if .Navigation.CanTeams}}<a class="summary-item" href="/manage/teams"><span class="summary-value">{{.TeamTotal}}</span><span class="summary-label">Manageable teams</span></a>{{end}}
+      {{if .Navigation.CanAdmin}}<a class="summary-item" href="/manage/admin/legacy"><span class="summary-value">{{.LegacyUsageTotal}}</span><span class="summary-label">Legacy module usage</span></a>{{end}}
     </section>
 
     <div class="overview-grid">

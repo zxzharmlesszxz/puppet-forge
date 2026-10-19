@@ -103,6 +103,14 @@ func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 	}
 	teamPage = canonicalTeamPage
 	teams = pageItems(teams, teamPage, teamPageSize)
+	legacyUsageTotal := 0
+	if principal.CanAdmin {
+		_, legacyUsageTotal, err = r.modules.ListLegacyReleaseConsumers(ctx, "", "", 1, 0)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
 
 	csrfToken, err := r.ensureManageCSRFToken(w, req)
 	if err != nil {
@@ -111,16 +119,17 @@ func (r *Router) managePage(w http.ResponseWriter, req *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	executeHTMLTemplate(w, manageOverviewTemplate, manageOverviewData{
-		Navigation:  r.manageNavigation(req, principal, csrfToken, "overview", ""),
-		Modules:     modules,
-		ModuleTotal: moduleTotal,
-		ModulePages: overviewPagination(req.URL.Query(), "modules_page", "modules_per_page", "modules", modulePage, moduleTotal, modulePageSize),
-		Spaces:      spaces,
-		SpaceTotal:  spaceTotal,
-		SpacePages:  overviewPagination(req.URL.Query(), "spaces_page", "spaces_per_page", "spaces", spacePage, spaceTotal, spacePageSize),
-		Teams:       teams,
-		TeamTotal:   teamTotal,
-		TeamPages:   overviewPagination(req.URL.Query(), "teams_page", "teams_per_page", "teams", teamPage, teamTotal, teamPageSize),
+		Navigation:       r.manageNavigation(req, principal, csrfToken, "overview", ""),
+		Modules:          modules,
+		ModuleTotal:      moduleTotal,
+		ModulePages:      overviewPagination(req.URL.Query(), "modules_page", "modules_per_page", "modules", modulePage, moduleTotal, modulePageSize),
+		Spaces:           spaces,
+		SpaceTotal:       spaceTotal,
+		SpacePages:       overviewPagination(req.URL.Query(), "spaces_page", "spaces_per_page", "spaces", spacePage, spaceTotal, spacePageSize),
+		Teams:            teams,
+		TeamTotal:        teamTotal,
+		TeamPages:        overviewPagination(req.URL.Query(), "teams_page", "teams_per_page", "teams", teamPage, teamTotal, teamPageSize),
+		LegacyUsageTotal: legacyUsageTotal,
 	})
 }
 

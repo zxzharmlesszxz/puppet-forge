@@ -177,6 +177,10 @@ func newTestRouter(modules *service.ModuleService, forgeProxy http.Handler, publ
 	return handler
 }
 
+func hasStandardReleaseDelete(body, action string) bool {
+	return strings.Contains(body, `<form method="post" action="`+action+`" data-async-mutation data-refresh-target=`)
+}
+
 func TestRouterSecurityHeaders(t *testing.T) {
 	t.Parallel()
 
@@ -1112,6 +1116,58 @@ func TestDeleteReleaseRejectsLatestAndActiveVersions(t *testing.T) {
 	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(body), "latest release teamname/apache 2.0.0 cannot be deleted") {
 		t.Fatalf("expected API latest delete to get 409 protected error, got %d body=%s", resp.StatusCode, string(body))
 	}
+
+	forceReq, err := http.NewRequest(http.MethodDelete, server.URL+"/api/v1/modules/teamname/apache/versions/2.0.0", nil)
+	if err != nil {
+		t.Fatalf("NewRequest(force delete latest) error = %v", err)
+	}
+	forceReq.Header.Set("Authorization", "Bearer admin-token")
+	forceReq.Header.Set("X-Puppet-Forge-Force-Delete", "true")
+	forceReq.Header.Set("X-Puppet-Forge-Delete-Reason", "broken release archive")
+	forceReq.Header.Set("X-Puppet-Forge-Delete-Confirmation", "teamname/apache@2.0.0")
+	forceResp, err := server.Client().Do(forceReq)
+	if err != nil {
+		t.Fatalf("force delete latest error = %v", err)
+	}
+	defer func() { _ = forceResp.Body.Close() }()
+	if forceResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(forceResp.Body)
+		t.Fatalf("force delete latest status = %d, want %d: %s", forceResp.StatusCode, http.StatusOK, body)
+	}
+	if _, err := st.GetRelease(ctx, "teamname", "apache", "2.0.0"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("force-deleted release lookup error = %v, want ErrNotFound", err)
+	}
+	updatedModule, err := st.GetModule(ctx, "teamname", "apache")
+	if err != nil {
+		t.Fatalf("GetModule() after force delete error = %v", err)
+	}
+	if updatedModule.LatestVersion != "1.5.0" {
+		t.Fatalf("latest version after force delete = %q, want 1.5.0", updatedModule.LatestVersion)
+	}
+}
+
+func TestForceDeleteParametersRequireReasonAndExactConfirmation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		values url.Values
+		want   string
+	}{
+		{name: "missing reason", values: url.Values{"force": {"true"}, "confirmation": {"teamname/apache@1.0.0"}}, want: "force delete reason is required"},
+		{name: "wrong confirmation", values: url.Values{"force": {"true"}, "reason": {"broken archive"}, "confirmation": {"teamname/apache@2.0.0"}}, want: "invalid force delete confirmation"},
+		{name: "control character in reason", values: url.Values{"force": {"true"}, "reason": {"broken\narchive"}, "confirmation": {"teamname/apache@1.0.0"}}, want: "force delete reason contains invalid control characters"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(http.MethodPost, "/manage/modules/teamname/apache/versions/1.0.0/delete", strings.NewReader(tc.values.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			force, _, err := forceDeleteParameters(req, "teamname/apache@1.0.0")
+			if !force || err == nil || err.Error() != tc.want {
+				t.Fatalf("forceDeleteParameters() = (%t, %v), want (true, %q)", force, err, tc.want)
+			}
+		})
+	}
 }
 
 func TestReleaseAPIResponseHidesStorageDetails(t *testing.T) {
@@ -1326,11 +1382,11 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 	}
 	body := getBody(t, client, server.URL+"/manage/modules/teamname/apache/card")
 
-	if strings.Contains(body, "/manage/modules/teamname/apache/versions/1.2.3/delete") {
-		t.Fatalf("manage page exposes delete for active release:\n%s", body)
+	if hasStandardReleaseDelete(body, "/manage/modules/teamname/apache/versions/1.2.3/delete") {
+		t.Fatalf("manage page exposes standard delete for active release:\n%s", body)
 	}
-	if strings.Contains(body, "/manage/modules/teamname/apache/versions/2.0.0/delete") {
-		t.Fatalf("manage page exposes delete for latest release:\n%s", body)
+	if hasStandardReleaseDelete(body, "/manage/modules/teamname/apache/versions/2.0.0/delete") {
+		t.Fatalf("manage page exposes standard delete for latest release:\n%s", body)
 	}
 	if !strings.Contains(body, "/manage/modules/teamname/apache/delete") {
 		t.Fatalf("manage page hides module delete action for admin:\n%s", body)
@@ -1347,7 +1403,7 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 	if strings.Contains(body, `version-deletable`) {
 		t.Fatalf("manage page should not emit unused deletable release class:\n%s", body)
 	}
-	if !strings.Contains(body, "/manage/modules/teamname/apache/versions/1.5.0/delete") {
+	if !hasStandardReleaseDelete(body, "/manage/modules/teamname/apache/versions/1.5.0/delete") {
 		t.Fatalf("manage page hides delete for inactive release:\n%s", body)
 	}
 	if !strings.Contains(body, `class="release-danger-button" type="submit">Delete</button>`) {
@@ -1790,8 +1846,8 @@ func TestUpstreamV3FileDownloadMarksReleaseUsed(t *testing.T) {
 	if !strings.Contains(body, "in use") {
 		t.Fatalf("manage page does not mark upstream v3 download as active:\n%s", body)
 	}
-	if strings.Contains(body, "/manage/modules/teamname/apache/versions/1.2.3/delete") {
-		t.Fatalf("manage page exposes delete for active upstream release:\n%s", body)
+	if hasStandardReleaseDelete(body, "/manage/modules/teamname/apache/versions/1.2.3/delete") {
+		t.Fatalf("manage page exposes standard delete for active upstream release:\n%s", body)
 	}
 }
 
@@ -1905,8 +1961,8 @@ func TestUpstreamV3ReleaseUsesLocalFileURIAndMarksSelectedVersionActive(t *testi
 	if !strings.Contains(body, "9.1.0") || !strings.Contains(body, "in use") {
 		t.Fatalf("manage page does not mark selected upstream release active:\n%s", body)
 	}
-	if strings.Contains(body, "/manage/modules/puppetlabs/concat/versions/9.1.0/delete") {
-		t.Fatalf("manage page exposes delete for active upstream release:\n%s", body)
+	if hasStandardReleaseDelete(body, "/manage/modules/puppetlabs/concat/versions/9.1.0/delete") {
+		t.Fatalf("manage page exposes standard delete for active upstream release:\n%s", body)
 	}
 	if !strings.Contains(body, `class="release-version is-latest"`) {
 		t.Fatalf("manage page does not mark latest release:\n%s", body)
@@ -1978,8 +2034,8 @@ func TestV3ReleaseRequestMarksSelectedVersionActive(t *testing.T) {
 	if !strings.Contains(body, "9.1.0") || !strings.Contains(body, "in use") {
 		t.Fatalf("manage page does not mark requested release active:\n%s", body)
 	}
-	if strings.Contains(body, "/manage/modules/puppetlabs/concat/versions/9.1.0/delete") {
-		t.Fatalf("manage page exposes delete for requested active release:\n%s", body)
+	if hasStandardReleaseDelete(body, "/manage/modules/puppetlabs/concat/versions/9.1.0/delete") {
+		t.Fatalf("manage page exposes standard delete for requested active release:\n%s", body)
 	}
 }
 
@@ -2037,8 +2093,8 @@ func TestV3ModuleRequestDoesNotMarkLatestReleaseActive(t *testing.T) {
 	if strings.Contains(body, "in use") {
 		t.Fatalf("module metadata request incorrectly marks latest release active:\n%s", body)
 	}
-	if strings.Contains(body, "/manage/modules/stm/debconf/versions/9.1.0/delete") {
-		t.Fatalf("manage page exposes delete for latest release:\n%s", body)
+	if hasStandardReleaseDelete(body, "/manage/modules/stm/debconf/versions/9.1.0/delete") {
+		t.Fatalf("manage page exposes standard delete for latest release:\n%s", body)
 	}
 }
 
@@ -2086,8 +2142,8 @@ func TestUpstreamV3ModuleRequestIndexesWithoutMarkingCurrentReleaseActive(t *tes
 	if strings.Contains(body, "in use") {
 		t.Fatalf("upstream module metadata request incorrectly marks current release active:\n%s", body)
 	}
-	if strings.Contains(body, "/manage/modules/stm/debconf/versions/9.1.0/delete") {
-		t.Fatalf("manage page exposes delete for latest upstream current release:\n%s", body)
+	if hasStandardReleaseDelete(body, "/manage/modules/stm/debconf/versions/9.1.0/delete") {
+		t.Fatalf("manage page exposes standard delete for latest upstream current release:\n%s", body)
 	}
 }
 
@@ -4603,21 +4659,26 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 	t.Parallel()
 
 	module := domain.Module{Owner: "teamname", Name: "apache", LatestVersion: "2.0.0"}
-	rows := []manageModuleRow{{
-		Module: module,
-		Versions: []manageVersionRow{
-			{Version: "1.2.3", Active: true},
-			{Version: "2.0.0", Latest: true},
-		},
-		CanDelete: true,
-	}}
-	for _, principal := range []auth.Principal{
-		{CanAdmin: true},
-		{Team: "teamname", CanPublish: true, CanManageTeam: true, ManagedTeams: map[string]struct{}{"teamname": {}}},
+	for _, tc := range []struct {
+		principal       auth.Principal
+		forceModuleForm bool
+	}{
+		{principal: auth.Principal{CanAdmin: true}, forceModuleForm: true},
+		{principal: auth.Principal{Team: "teamname", CanPublish: true, CanManageTeam: true, ManagedTeams: map[string]struct{}{"teamname": {}}}},
 	} {
+		rows := []manageModuleRow{{
+			Module: module,
+			Versions: []manageVersionRow{
+				{Version: "1.2.3", Active: true},
+				{Version: "2.0.0", Latest: true},
+			},
+			CanDelete:             true,
+			CanForceDeleteModule:  tc.forceModuleForm,
+			CanForceDeleteRelease: true,
+		}}
 		var rec bytes.Buffer
 		err := managePageTemplate.Execute(&rec, managePageData{
-			Principal: principal,
+			Principal: tc.principal,
 			Modules:   rows,
 			CSRFToken: "csrf",
 		})
@@ -4626,13 +4687,13 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 		}
 		body := rec.String()
 		if !strings.Contains(body, `/manage/modules/teamname/apache/delete`) {
-			t.Fatalf("manage page hides module delete action for %#v:\n%s", principal, body)
+			t.Fatalf("manage page hides module delete action for %#v:\n%s", tc.principal, body)
 		}
 		if !strings.Contains(body, `class="danger-button" type="submit" form="delete-module-teamname-apache">Delete module</button>`) {
-			t.Fatalf("manage page does not render module delete as a danger button for %#v:\n%s", principal, body)
+			t.Fatalf("manage page does not render module delete as a danger button for %#v:\n%s", tc.principal, body)
 		}
 		if !strings.Contains(body, `<form id="delete-module-teamname-apache" method="post" action="/manage/modules/teamname/apache/delete" hidden`) {
-			t.Fatalf("manage page does not associate module delete button with an external form for %#v:\n%s", principal, body)
+			t.Fatalf("manage page does not associate module delete button with an external form for %#v:\n%s", tc.principal, body)
 		}
 		for _, wantStyle := range []string{
 			`.module-details:hover`,
@@ -4642,17 +4703,23 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 			`.module-details > .release-list`,
 		} {
 			if !strings.Contains(body, wantStyle) {
-				t.Fatalf("manage page does not render module block highlight style %q for %#v:\n%s", wantStyle, principal, body)
+				t.Fatalf("manage page does not render module block highlight style %q for %#v:\n%s", wantStyle, tc.principal, body)
 			}
 		}
 		if strings.Contains(body, `class="delete-form"`) || strings.Contains(body, `>delete module</button>`) {
-			t.Fatalf("manage page renders legacy module delete control for %#v:\n%s", principal, body)
+			t.Fatalf("manage page renders legacy module delete control for %#v:\n%s", tc.principal, body)
 		}
-		if strings.Contains(body, `/manage/modules/teamname/apache/versions/1.2.3/delete`) {
-			t.Fatalf("manage page exposes active release delete action for %#v:\n%s", principal, body)
+		for _, want := range []string{
+			`Type <code>teamname/apache@1.2.3</code> to confirm`,
+			`Type <code>teamname/apache@2.0.0</code> to confirm`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("manage page misses protected release override %q for %#v:\n%s", want, tc.principal, body)
+			}
 		}
-		if strings.Contains(body, `/manage/modules/teamname/apache/versions/2.0.0/delete`) {
-			t.Fatalf("manage page exposes latest release delete action for %#v:\n%s", principal, body)
+		moduleConfirmation := `Type <code>teamname/apache</code> to confirm`
+		if strings.Contains(body, moduleConfirmation) != tc.forceModuleForm {
+			t.Fatalf("manage page module force-delete visibility mismatch for %#v:\n%s", tc.principal, body)
 		}
 	}
 }
@@ -4789,6 +4856,10 @@ func TestGlobalAdminViewsLegacyModuleUsage(t *testing.T) {
 		}
 	}
 	adminClient, serverURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{Team: "platform"}})
+	overviewBody := getBody(t, adminClient, serverURL+"/manage")
+	if !strings.Contains(overviewBody, `<a class="summary-item" href="/manage/admin/legacy"><span class="summary-value">2</span><span class="summary-label">Legacy module usage</span></a>`) {
+		t.Fatalf("overview page misses legacy usage summary:\n%s", overviewBody)
+	}
 
 	body := getBody(t, adminClient, serverURL+"/manage/admin/legacy?q=PRODUCTION")
 	for _, want := range []string{

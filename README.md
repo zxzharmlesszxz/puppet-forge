@@ -44,7 +44,7 @@ Implemented:
 - `ADMIN_TOKEN` provides bootstrap/break-glass access;
 - OIDC login supports global admins, team admins, and OIDC groups that grant publishing rights;
 - `PUBLIC_MODULE_ACCESS` controls anonymous machine-readable install/API access;
-- active release tracking blocks backend deletion of latest/in-use releases and hides unsafe delete actions in `/manage/modules`;
+- active release tracking blocks accidental deletion of latest/in-use releases while authorized administrators retain an explicit audited override in `/manage/modules`;
 - `GET /healthz` and `GET /readyz` expose health probes.
 
 Not implemented:
@@ -160,7 +160,7 @@ puppet-forge \
 | `TRUSTED_PROXY_CIDRS`             | empty                               | no                               | Comma- or space-separated direct ingress/reverse-proxy CIDRs. Use `*` for "trust all direct peers" (diagnostic only), or `0.0.0.0/0,::/0` as equivalent explicit form. These CIDRs may supply forwarded client identity and, only with `TRUST_FORWARDED_HEADERS=true`, forwarded host/proto.           |
 | `TRUST_FORWARDED_HEADERS`         | `false`                             | no                               | Accept validated `Forwarded`/`X-Forwarded-*` values only when the direct peer belongs to `TRUSTED_PROXY_CIDRS`. Otherwise every forwarded variant is removed before routing.                                                                                                                           |
 | `PUBLIC_MODULE_ACCESS`            | `false`                             | no                               | If `true`, read APIs, downloads, and `/v3/*` are open without a token. If `false`, install/API routes require a token with read, publish, or admin privileges. HTML catalog pages stay informationally public. Publishing, deletion, and management routes are always protected.                       |
-| `ACTIVE_RELEASE_TTL`              | `720h`                              | no                               | How long a release is considered active/in use after an r10k or `puppet module install` request. Active/latest versions cannot be deleted through API or `/manage/modules`.                                                                                                                            |
+| `ACTIVE_RELEASE_TTL`              | `720h`                              | no                               | How long a release is considered active/in use after an r10k or `puppet module install` request. Normal deletion protects active/latest versions; an owning team administrator or global administrator can explicitly override that protection with a reason and exact confirmation.                 |
 | `RELEASE_CONSUMER_TTL`            | `4320h`                             | no                               | Retention for named access-token observations of concrete module archive downloads. Set to `0s` to retain observations without automatic cleanup.                                                                                                                                                      |
 | `SECURITY_HSTS_ENABLED`           | `false`                             | no                               | Enables the `Strict-Transport-Security` response header. Keep disabled for local HTTP and enable only when the public endpoint is always HTTPS.                                                                                                                                                        |
 | `WEB_AUTH_MODE`                   | `none`                              | no                               | Web auth mode: `none` or `oidc`. API token auth is independent from this setting.                                                                                                                                                                                                                      |
@@ -466,7 +466,11 @@ The UI includes:
 ## Active Releases and Deletion
 
 - Releases requested by r10k or `puppet module install` within `ACTIVE_RELEASE_TTL` are marked as `in use`.
-- Latest and active releases cannot be deleted through API or `/manage/modules`.
+- Normal deletion rejects latest and active releases. An owning team administrator or global administrator can force-delete one after supplying a reason and typing the exact `owner/name@version` identity; this permits a corrected archive with the same version to be published again by CI.
+- Only a global administrator can force-delete an entire module. That operation requires a reason and exact `owner/name` confirmation.
+- The HTTP API accepts the same explicit override through `X-Puppet-Forge-Force-Delete: true`, `X-Puppet-Forge-Delete-Reason`, and `X-Puppet-Forge-Delete-Confirmation` headers.
+- Every normal and forced API or management deletion emits a structured `security_audit` event containing the authenticated actor, source address, resource, result, and operator justification. Retain these events in the centralized logging backend as the deletion journal.
+- Deleting the latest release automatically promotes the highest remaining semantic version. If no releases remain, the module record is removed.
 - Delete buttons are hidden for protected releases in `/manage/modules`.
 - `ACTIVE_RELEASE_TTL` defaults to `720h` / 30 days.
 - Release usage rows older than the active window are pruned by a daily lease-elected worker, including one asynchronous pass after startup.

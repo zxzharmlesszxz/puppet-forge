@@ -118,16 +118,17 @@ type managePageData struct {
 }
 
 type manageOverviewData struct {
-	Navigation  manageNavigationData
-	Modules     []domain.Module
-	ModuleTotal int
-	ModulePages paginationData
-	Spaces      []manageOverviewSpaceSummary
-	SpaceTotal  int
-	SpacePages  paginationData
-	Teams       []manageOverviewTeamSummary
-	TeamTotal   int
-	TeamPages   paginationData
+	Navigation       manageNavigationData
+	Modules          []domain.Module
+	ModuleTotal      int
+	ModulePages      paginationData
+	Spaces           []manageOverviewSpaceSummary
+	SpaceTotal       int
+	SpacePages       paginationData
+	Teams            []manageOverviewTeamSummary
+	TeamTotal        int
+	TeamPages        paginationData
+	LegacyUsageTotal int
 }
 
 type manageOverviewSpaceSummary struct {
@@ -416,15 +417,17 @@ func accessTokenFormRows(records []auth.AccessTokenRecord, kind string, now time
 }
 
 type manageModuleRow struct {
-	Module         domain.Module
-	Versions       []manageVersionRow
-	ReleaseCount   int
-	CanDelete      bool
-	VersionsLoaded bool
-	CardID         string
-	CardURL        string
-	Next           string
-	CSRFToken      string
+	Module                domain.Module
+	Versions              []manageVersionRow
+	ReleaseCount          int
+	CanDelete             bool
+	CanForceDeleteModule  bool
+	CanForceDeleteRelease bool
+	VersionsLoaded        bool
+	CardID                string
+	CardURL               string
+	Next                  string
+	CSRFToken             string
 }
 
 type manageVersionRow struct {

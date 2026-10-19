@@ -209,6 +209,9 @@ func TestPaginatedViewsUseSharedAsyncListContract(t *testing.T) {
 		!strings.Contains(pages[3].body, `class="module-details"`) {
 		t.Fatal("global and team module lists must use the shared module-card structure")
 	}
+	if !strings.Contains(pages[1].body, `<h2>Modules</h2>`) || strings.Contains(pages[1].body, `Owned Modules`) {
+		t.Fatal("global module catalog must not imply team ownership")
+	}
 
 	for _, want := range []string{
 		`const refreshList = async (targetID, requestURL, options = {}) =>`,

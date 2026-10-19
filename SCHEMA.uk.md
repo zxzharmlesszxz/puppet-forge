@@ -185,8 +185,8 @@ Request ID та observability охоплюють також запити, від
 | `GET`           | `/manage`                                                    | overview                           | global/team management capability                                                 |
 | `GET`           | `/manage/modules`                                            | manageable catalog                 | global/team management capability                                                 |
 | `POST`          | `/manage/modules`                                            | publish archive                    | publish space, CSRF, upload limit                                                 |
-| `POST`          | `/manage/modules/{owner}/{name}/delete`                      | delete module                      | delete capability, active protection                                              |
-| `POST`          | `/manage/modules/{owner}/{name}/versions/{version}/delete`   | delete release                     | delete capability, latest/active protection                                       |
+| `POST`          | `/manage/modules/{owner}/{name}/delete`                      | delete module                      | normal protection; global force з reason і exact confirmation                     |
+| `POST`          | `/manage/modules/{owner}/{name}/versions/{version}/delete`   | delete release                     | normal protection; team/global force з reason і confirmation                      |
 | `POST`          | `/manage/upstream`                                           | index upstream module              | global admin, CSRF                                                                |
 | `GET`           | `/manage/teams`                                              | teams list                         | global sees all, team admin assigned                                              |
 | `GET`, `POST`   | `/manage/teams/new`                                          | render/create team                 | global admin, CSRF on POST                                                        |
@@ -391,8 +391,16 @@ sequenceDiagram
 flowchart TD
     req["Delete module або release"] --> auth{"AUTH-5 allowed?"}
     auth -- no --> deny["403"]
-    auth -- yes --> lock["LOCK-1 module lock"]
+    auth -- yes --> override{"Explicit force override?"}
+    override -- no --> lock["LOCK-1 module lock"]
+    override -- yes --> forceAuth{"Force scope, reason і confirmation valid?"}
+    forceAuth -- no --> deny
+    forceAuth -- yes --> audit["security_audit із justification"]
+    audit --> forceLock["LOCK-1 module lock"]
     lock --> kind{"Release або module?"}
+    forceLock --> forceKind{"Release або module?"}
+    forceKind -- release --> releaseSQL
+    forceKind -- module --> moduleSQL
     kind -- release --> latest{"Latest?"}
     latest -- yes --> protected["409 protected"]
     latest -- no --> active{"Used in ACTIVE_RELEASE_TTL?"}

@@ -272,9 +272,15 @@ SQL. При помилці refresh застаріла access configuration ви�
 відмовляє одразу. Тому revoke та expiration закривають доступ на всіх replicas
 одразу після database commit без повного перечитування всіх teams.
 
-Latest releases та releases, активні в межах `ACTIVE_RELEASE_TTL`, не можна
-видалити. Module delete відхиляється, якщо є protected releases. Retention
-release usage запускається асинхронно під спільною SQL lease
+Звичайне видалення latest releases та releases, активних у межах
+`ACTIVE_RELEASE_TTL`, повертає `409`; module delete так само відхиляється, якщо є
+protected releases. Адміністратор команди-власника або глобальний адміністратор
+може явно примусово видалити такий release після введення причини й точного
+підтвердження `owner/name@version`. Примусове видалення module доступне лише
+глобальному адміністратору й вимагає підтвердження `owner/name`. Видалення latest
+призначає найвищу remaining semantic version, а видалення останнього release
+прибирає module. Кожна спроба створює structured security-audit event із
+justification. Retention release usage запускається асинхронно під спільною SQL lease
 `release-usage-cleanup` одразу після старту й щодня, тому read paths не виконують
 cleanup writes. SQL-позначки
 видалених upstream releases блокують фоновий refresh протягом

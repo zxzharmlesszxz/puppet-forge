@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
@@ -122,12 +123,15 @@ func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Princi
 
 	rows := make([]manageModuleRow, 0, len(modules))
 	for _, module := range modules {
+		canDelete := canDeleteInSpace(principal, module.Owner)
 		rows = append(rows, manageModuleRow{
-			Module:       module,
-			ReleaseCount: releaseCounts[module.Owner+"\x00"+module.Name],
-			CanDelete:    canDeleteInSpace(principal, module.Owner),
-			CardID:       manageModuleCardID(module.Owner, module.Name),
-			CardURL:      manageModuleCardURL(module.Owner, module.Name),
+			Module:                module,
+			ReleaseCount:          releaseCounts[module.Owner+"\x00"+module.Name],
+			CanDelete:             canDelete,
+			CanForceDeleteModule:  principal.CanAdmin,
+			CanForceDeleteRelease: canDelete,
+			CardID:                manageModuleCardID(module.Owner, module.Name),
+			CardURL:               manageModuleCardURL(module.Owner, module.Name),
 		})
 	}
 	return rows, total, nil
@@ -157,14 +161,17 @@ func (r *Router) loadManageModuleCard(ctx context.Context, principal auth.Princi
 		_, inUse := active[version.Version]
 		rows = append(rows, manageVersionRow{Version: version.Version, Active: inUse, Latest: version.Version == module.LatestVersion})
 	}
+	canDelete := canDeleteInSpace(principal, owner)
 	return manageModuleRow{
-		Module:         module,
-		Versions:       rows,
-		ReleaseCount:   len(rows),
-		CanDelete:      canDeleteInSpace(principal, owner),
-		VersionsLoaded: true,
-		CardID:         manageModuleCardID(owner, name),
-		CardURL:        manageModuleCardURL(owner, name),
+		Module:                module,
+		Versions:              rows,
+		ReleaseCount:          len(rows),
+		CanDelete:             canDelete,
+		CanForceDeleteModule:  principal.CanAdmin,
+		CanForceDeleteRelease: canDelete,
+		VersionsLoaded:        true,
+		CardID:                manageModuleCardID(owner, name),
+		CardURL:               manageModuleCardURL(owner, name),
 	}, nil
 }
 
@@ -384,12 +391,31 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 			respondManageMutationHTTPError(w, req, http.StatusForbidden, errors.New("admin or team admin access required"))
 			return
 		}
-		if err := r.modules.DeleteModuleIfAllowed(req.Context(), owner, name, time.Now().Add(-r.activeReleaseTTL)); err != nil {
-			r.audit(req, principal, "delete_module", "failure", auditReason(err), "space", owner, "module", owner+"/"+name)
+		force, justification, err := forceDeleteParameters(req, owner+"/"+name)
+		if err != nil {
+			r.audit(req, principal, "force_delete_module", "failure", auditReason(err), "space", owner, "module", owner+"/"+name)
+			respondManageMutationError(w, req, err)
+			return
+		}
+		if force && !principal.CanAdmin {
+			err := errors.New("global admin access required for force delete")
+			r.audit(req, principal, "force_delete_module", "failure", "forbidden", "space", owner, "module", owner+"/"+name)
+			respondManageMutationHTTPError(w, req, http.StatusForbidden, err)
+			return
+		}
+		action := "delete_module"
+		if force {
+			action = "force_delete_module"
+			err = r.modules.DeleteModule(req.Context(), owner, name)
+		} else {
+			err = r.modules.DeleteModuleIfAllowed(req.Context(), owner, name, time.Now().Add(-r.activeReleaseTTL))
+		}
+		if err != nil {
+			r.audit(req, principal, action, "failure", auditReason(err), "space", owner, "module", owner+"/"+name, "justification", justification)
 			respondManageMutationServiceError(w, req, err)
 			return
 		}
-		r.audit(req, principal, "delete_module", "success", "none", "space", owner, "module", owner+"/"+name)
+		r.audit(req, principal, action, "success", "none", "space", owner, "module", owner+"/"+name, "justification", justification)
 		respondManageMutationSuccess(w, req, "/manage/modules", "module deleted", "", manageModuleCardID(owner, name))
 		return
 	}
@@ -399,17 +425,63 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 			respondManageMutationHTTPError(w, req, http.StatusForbidden, errors.New("admin or team admin access required"))
 			return
 		}
-		if err := r.modules.DeleteReleaseIfAllowed(req.Context(), owner, name, version, time.Now().Add(-r.activeReleaseTTL)); err != nil {
-			r.audit(req, principal, "delete_release", "failure", auditReason(err), "space", owner, "module", owner+"/"+name, "release", version)
+		expectedConfirmation := owner + "/" + name + "@" + version
+		force, justification, err := forceDeleteParameters(req, expectedConfirmation)
+		if err != nil {
+			r.audit(req, principal, "force_delete_release", "failure", auditReason(err), "space", owner, "module", owner+"/"+name, "release", version)
+			respondManageMutationError(w, req, err)
+			return
+		}
+		action := "delete_release"
+		if force {
+			action = "force_delete_release"
+			err = r.modules.DeleteRelease(req.Context(), owner, name, version)
+		} else {
+			err = r.modules.DeleteReleaseIfAllowed(req.Context(), owner, name, version, time.Now().Add(-r.activeReleaseTTL))
+		}
+		if err != nil {
+			r.audit(req, principal, action, "failure", auditReason(err), "space", owner, "module", owner+"/"+name, "release", version, "justification", justification)
 			respondManageMutationServiceError(w, req, err)
 			return
 		}
-		r.audit(req, principal, "delete_release", "success", "none", "space", owner, "module", owner+"/"+name, "release", version)
-		respondManageMutationSuccess(w, req, "/manage/modules", "version deleted", manageModuleCardID(owner, name), "")
+		r.audit(req, principal, action, "success", "none", "space", owner, "module", owner+"/"+name, "release", version, "justification", justification)
+		refreshTarget, removeTarget := manageModuleCardID(owner, name), ""
+		if _, getErr := r.modules.GetModule(req.Context(), owner, name); errors.Is(getErr, store.ErrNotFound) {
+			refreshTarget, removeTarget = "", manageModuleCardID(owner, name)
+		}
+		respondManageMutationSuccess(w, req, "/manage/modules", "version deleted", refreshTarget, removeTarget)
 		return
 	}
 
 	writeError(w, http.StatusNotFound, errors.New("route not found"))
+}
+
+func forceDeleteParameters(req *http.Request, expectedConfirmation string) (bool, string, error) {
+	force := strings.EqualFold(strings.TrimSpace(req.FormValue("force")), "true") || strings.EqualFold(strings.TrimSpace(req.Header.Get("X-Puppet-Forge-Force-Delete")), "true")
+	if !force {
+		return false, "", nil
+	}
+	justification := strings.TrimSpace(req.FormValue("reason"))
+	if justification == "" {
+		justification = strings.TrimSpace(req.Header.Get("X-Puppet-Forge-Delete-Reason"))
+	}
+	if justification == "" {
+		return true, "", errors.New("force delete reason is required")
+	}
+	if len(justification) > 500 {
+		return true, "", errors.New("force delete reason must not exceed 500 characters")
+	}
+	if strings.ContainsFunc(justification, unicode.IsControl) {
+		return true, "", errors.New("force delete reason contains invalid control characters")
+	}
+	confirmation := strings.TrimSpace(req.FormValue("confirmation"))
+	if confirmation == "" {
+		confirmation = strings.TrimSpace(req.Header.Get("X-Puppet-Forge-Delete-Confirmation"))
+	}
+	if confirmation != expectedConfirmation {
+		return true, "", errors.New("invalid force delete confirmation")
+	}
+	return true, justification, nil
 }
 
 func canViewManageSpace(principal auth.Principal, owner string) bool {

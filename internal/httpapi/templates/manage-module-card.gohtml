@@ -19,6 +19,19 @@
     {{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}
   </form>
   {{end}}
+  {{if .CanForceDeleteModule}}
+  <details class="force-delete-panel">
+    <summary>Force delete module</summary>
+    <form method="post" action="/manage/modules/{{.Module.Owner}}/{{.Module.Name}}/delete" data-async-mutation data-remove-target="{{$cardID}}">
+      {{csrfInput .CSRFToken}}
+      {{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}
+      <input type="hidden" name="force" value="true">
+      <label>Reason <input name="reason" maxlength="500" required></label>
+      <label>Type <code>{{.Module.Owner}}/{{.Module.Name}}</code> to confirm <input name="confirmation" autocomplete="off" required></label>
+      <button class="danger-button" type="submit">Force delete module</button>
+    </form>
+  </details>
+  {{end}}
   <div class="release-list">
     {{if or .VersionsLoaded .Versions}}
       {{range .Versions}}
@@ -32,6 +45,19 @@
           {{if $.Next}}<input type="hidden" name="next" value="{{$.Next}}">{{end}}
           <button class="release-danger-button" type="submit">Delete</button>
         </form>
+        {{end}}
+        {{if and (or .Latest .Active) $.CanForceDeleteRelease}}
+        <details class="force-delete-panel">
+          <summary>Force delete</summary>
+          <form method="post" action="/manage/modules/{{$.Module.Owner}}/{{$.Module.Name}}/versions/{{.Version}}/delete" data-async-mutation>
+            {{csrfInput $.CSRFToken}}
+            {{if $.Next}}<input type="hidden" name="next" value="{{$.Next}}">{{end}}
+            <input type="hidden" name="force" value="true">
+            <label>Reason <input name="reason" maxlength="500" required></label>
+            <label>Type <code>{{$.Module.Owner}}/{{$.Module.Name}}@{{.Version}}</code> to confirm <input name="confirmation" autocomplete="off" required></label>
+            <button class="release-danger-button" type="submit">Force delete</button>
+          </form>
+        </details>
         {{end}}
       </div>
       {{else}}

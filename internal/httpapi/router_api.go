@@ -272,25 +272,25 @@ func (r *Router) getModule(w http.ResponseWriter, req *http.Request, owner, name
 	writeStoreResponse(w, module, err)
 }
 
-func (r *Router) requireDeleteAccess(w http.ResponseWriter, req *http.Request, owner string) bool {
+func (r *Router) requireDeleteAccess(w http.ResponseWriter, req *http.Request, owner string) (auth.Principal, bool) {
 	authorizer, err := r.currentAuthorizer(req.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err)
-		return false
+		return auth.Principal{}, false
 	}
 	if authorizer == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("authorizer is not configured"))
-		return false
+		return auth.Principal{}, false
 	}
 	principal, ok := authorizer.RequireDelete(w, req, owner)
 	if ok && r.requireActiveAccessToken(w, req, principal) {
 		r.recordAccessTokenUsed(req.Context(), principal)
-		return true
+		return principal, true
 	}
-	return false
+	return auth.Principal{}, false
 }
 
-func writeDeleteResponse(w http.ResponseWriter, entityType string, data map[string]string, err error) {
+func writeDeleteErrorResponse(w http.ResponseWriter, entityType string, err error) {
 	if errors.Is(err, store.ErrNotFound) {
 		metrics.ObserveDelete(entityType, err)
 		writeError(w, http.StatusNotFound, err)
@@ -301,25 +301,47 @@ func writeDeleteResponse(w http.ResponseWriter, entityType string, data map[stri
 		writeError(w, http.StatusConflict, err)
 		return
 	}
-	if err != nil {
-		metrics.ObserveDelete(entityType, err)
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	metrics.ObserveDelete(entityType, nil)
-	writeJSON(w, http.StatusOK, data)
+	metrics.ObserveDelete(entityType, err)
+	writeError(w, http.StatusInternalServerError, err)
 }
 
 func (r *Router) deleteModule(w http.ResponseWriter, req *http.Request, owner, name string) {
-	if !r.requireDeleteAccess(w, req, owner) {
+	principal, ok := r.requireDeleteAccess(w, req, owner)
+	if !ok {
 		return
 	}
-	err := r.modules.DeleteModuleIfAllowed(req.Context(), owner, name, time.Now().Add(-r.activeReleaseTTL))
-	writeDeleteResponse(w, "module", map[string]string{
+	force, justification, parameterErr := forceDeleteParameters(req, owner+"/"+name)
+	if parameterErr != nil {
+		r.audit(req, principal, "force_delete_module", "failure", auditReason(parameterErr), "space", owner, "module", owner+"/"+name)
+		writeError(w, http.StatusBadRequest, parameterErr)
+		return
+	}
+	action := "delete_module"
+	var deleteErr error
+	if force {
+		if !principal.CanAdmin {
+			deleteErr = errors.New("global admin access required for force delete")
+			r.audit(req, principal, "force_delete_module", "failure", "forbidden", "space", owner, "module", owner+"/"+name)
+			writeError(w, http.StatusForbidden, deleteErr)
+			return
+		}
+		action = "force_delete_module"
+		deleteErr = r.modules.DeleteModule(req.Context(), owner, name)
+	} else {
+		deleteErr = r.modules.DeleteModuleIfAllowed(req.Context(), owner, name, time.Now().Add(-r.activeReleaseTTL))
+	}
+	if deleteErr != nil {
+		r.audit(req, principal, action, "failure", auditReason(deleteErr), "space", owner, "module", owner+"/"+name, "justification", justification)
+		writeDeleteErrorResponse(w, "module", deleteErr)
+		return
+	}
+	r.audit(req, principal, action, "success", "none", "space", owner, "module", owner+"/"+name, "justification", justification)
+	metrics.ObserveDelete("module", nil)
+	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "deleted",
 		"owner":  owner,
 		"name":   name,
-	}, err)
+	})
 }
 
 func (r *Router) getRelease(w http.ResponseWriter, req *http.Request, owner, name, version string) {
@@ -339,16 +361,37 @@ func (r *Router) getRelease(w http.ResponseWriter, req *http.Request, owner, nam
 }
 
 func (r *Router) deleteRelease(w http.ResponseWriter, req *http.Request, owner, name, version string) {
-	if !r.requireDeleteAccess(w, req, owner) {
+	principal, ok := r.requireDeleteAccess(w, req, owner)
+	if !ok {
 		return
 	}
-	err := r.modules.DeleteReleaseIfAllowed(req.Context(), owner, name, version, time.Now().Add(-r.activeReleaseTTL))
-	writeDeleteResponse(w, "release", map[string]string{
+	force, justification, parameterErr := forceDeleteParameters(req, owner+"/"+name+"@"+version)
+	if parameterErr != nil {
+		r.audit(req, principal, "force_delete_release", "failure", auditReason(parameterErr), "space", owner, "module", owner+"/"+name, "release", version)
+		writeError(w, http.StatusBadRequest, parameterErr)
+		return
+	}
+	action := "delete_release"
+	var deleteErr error
+	if force {
+		action = "force_delete_release"
+		deleteErr = r.modules.DeleteRelease(req.Context(), owner, name, version)
+	} else {
+		deleteErr = r.modules.DeleteReleaseIfAllowed(req.Context(), owner, name, version, time.Now().Add(-r.activeReleaseTTL))
+	}
+	if deleteErr != nil {
+		r.audit(req, principal, action, "failure", auditReason(deleteErr), "space", owner, "module", owner+"/"+name, "release", version, "justification", justification)
+		writeDeleteErrorResponse(w, "release", deleteErr)
+		return
+	}
+	r.audit(req, principal, action, "success", "none", "space", owner, "module", owner+"/"+name, "release", version, "justification", justification)
+	metrics.ObserveDelete("release", nil)
+	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "deleted",
 		"owner":   owner,
 		"name":    name,
 		"version": version,
-	}, err)
+	})
 }
 
 func (r *Router) serveDownload(w http.ResponseWriter, req *http.Request, owner, name, version string) {
