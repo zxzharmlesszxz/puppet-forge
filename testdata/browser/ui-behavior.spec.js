@@ -2,19 +2,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { test, expect } = require("@playwright/test");
 
-function templateScript(name) {
-  const source = fs.readFileSync(path.join(__dirname, `../../internal/httpapi/templates/${name}`), "utf8");
-  const script = source.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1];
-  if (!script) throw new Error(`${name} does not contain a script`);
-  return script;
+function assetScript(name) {
+  return fs.readFileSync(path.join(__dirname, `../../internal/httpapi/assets/${name}`), "utf8");
 }
 
-const asyncLists = templateScript("async-lists.gohtml");
-const pageSizes = templateScript("page-size-persistence.gohtml");
-const clipboard = fs.readFileSync(
-  path.join(__dirname, "../../internal/httpapi/templates/clipboard.gohtml"),
-  "utf8",
-).replace(/^{{define[^\n]*}}|{{end}}$/gm, "");
+const asyncLists = assetScript("async-lists.js");
+const pageSizes = assetScript("page-size-persistence.js");
+const clipboard = assetScript("clipboard.js");
 
 test("copy helper uses the Clipboard API", async ({ page }) => {
   await page.setContent('<!doctype html><html lang="en"><body></body></html>');
@@ -33,6 +27,51 @@ test("copy helper uses the Clipboard API", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => window["copyTextToClipboard"]("module link"))).toBe(true);
   await expect.poll(() => page.evaluate(() => window.copiedValue)).toBe("module link");
 });
+
+for (const copied of [true, false]) {
+  test(`copy feedback restores its label after repeated clicks (${copied})`, async ({ page }) => {
+    await page.setContent('<button id="copy" type="button">Copy token</button>');
+    await page.evaluate((script) => { new Function(script)(); }, clipboard);
+    await page.evaluate((value) => {
+      window['copyTextToClipboard'] = async () => value;
+      const button = document.getElementById("copy");
+      button.addEventListener("click", () => window['copyTextWithStatus'](button, "token"));
+    }, copied);
+    const button = page.locator("#copy");
+    await button.click();
+    await expect(button).toHaveText(copied ? "Copied" : "Failed");
+    await button.click();
+    await expect(button).toHaveText("Copy token");
+  });
+}
+
+for (const state of [
+  { cookie: "50", local: "10", rendered: "20", expected: "50" },
+  { cookie: "invalid", local: "10", rendered: "20", expected: "10" },
+  { cookie: "%E0%A4%A", local: "10", rendered: "20", expected: "10" },
+  { cookie: "invalid", local: "invalid", rendered: "20", expected: "20" },
+]) {
+  test(`page-size preferences validate cookie and storage (${state.cookie}, ${state.local})`, async ({ page }) => {
+    await page.route("http://forge.test/**", (route) => route.fulfill({
+      contentType: "text/html",
+      body: '<form data-page-size-key="modules" data-page-size-cookie="modules_per_page"></form>',
+    }));
+    await page.goto("http://forge.test/");
+    await page.evaluate((script) => { new Function(script)(); }, pageSizes);
+    const result = await page.evaluate((value) => {
+      const form = document.querySelector("form");
+      form.dataset.renderedPageSize = value.rendered;
+      document.cookie = `modules_per_page=${value.cookie}; Path=/`;
+      localStorage.setItem("puppet-forge:page-size:modules", value.local);
+      const preferences = window['pageSizePreferences'];
+      const preferred = preferences.read(form);
+      preferences.write(form, "100");
+      preferences.write(form, "invalid");
+      return { preferred, stored: preferences.read(form), local: localStorage.getItem("puppet-forge:page-size:modules") };
+    }, state);
+    expect(result).toEqual({ preferred: state.expected, stored: "100", local: "100" });
+  });
+}
 
 test("async page size persists and refreshes only its list", async ({ page }) => {
   const fixture = (value, scripts = "") => `<!doctype html><html lang="en"><body>

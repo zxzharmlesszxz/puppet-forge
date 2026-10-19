@@ -1,0 +1,241 @@
+(() => {
+  const pageSizes = window['pageSizePreferences'];
+  const requests = new Map();
+  const inputTimers = new WeakMap();
+  const pendingMutations = new WeakSet();
+  const asyncLists = () => Array.from(document.querySelectorAll("[data-async-list][id]"));
+  const asyncList = (id) => id ? document.getElementById(id) : null;
+  const targetForForm = (form) => form.dataset.asyncFilter || form.closest("[data-async-list]")?.id || "";
+
+  /**
+   * @param {HTMLFormElement} form
+   * @returns {URL}
+   */
+  const formURL = (form) => {
+    const url = new URL(form.action, window.location.href);
+    url.search = new URLSearchParams(new FormData(form)).toString();
+    if (form.dataset.pageSizeParam) {
+      url.searchParams.delete(form.dataset.pageSizeParam);
+      if (form.dataset.pageParam) url.searchParams.delete(form.dataset.pageParam);
+    }
+    return url;
+  };
+  const replaceList = (current, replacement, forceOpen) => {
+    const preserveOpen = current instanceof HTMLDetailsElement && current.open;
+    current.replaceWith(replacement);
+    if (replacement instanceof HTMLDetailsElement && (preserveOpen || forceOpen)) replacement.open = true;
+    replacement.dispatchEvent(new CustomEvent("puppet-forge:list-updated", { bubbles: true }));
+    return replacement;
+  };
+  /**
+   * @param {string} targetID
+   * @param {string | URL} requestURL
+   * @param {Object} options
+   * @param {boolean} [options.forceOpen]
+   * @param {string} [options.history]
+   * @param {string} [options.focusName]
+   * @param {string | URL} [options.fallbackURL]
+   */
+  const refreshList = async (targetID, requestURL, options = {}) => {
+    const current = asyncList(targetID);
+    if (!current) return null;
+    const url = requestURL.toString();
+    const fallbackURL = options.fallbackURL ? options.fallbackURL.toString() : url;
+    requests.get(targetID)?.abort();
+    const request = new AbortController();
+    requests.set(targetID, request);
+    current.setAttribute("aria-busy", "true");
+    try {
+      const response = await window.fetch(url, {
+        headers: { Accept: "text/html", "X-Puppet-Forge-Fragment": targetID },
+        signal: request.signal,
+      });
+      if (requests.get(targetID) !== request) return;
+      if (response.redirected) {
+        window.location.assign(fallbackURL);
+        return;
+      }
+      if (!response.ok) {
+        window.location.assign(fallbackURL);
+        return;
+      }
+      const responseText = await response.text();
+      if (requests.get(targetID) !== request) return;
+      const nextPage = new DOMParser().parseFromString(responseText, "text/html");
+      const replacement = nextPage.getElementById(targetID);
+      if (!replacement) {
+        window.location.assign(fallbackURL);
+        return;
+      }
+      const updated = replaceList(current, replacement, options.forceOpen === true);
+      const canonicalURL = response.headers.get("X-Puppet-Forge-Canonical-URL") || url;
+      if (options.history === "push") window.history.pushState(null, "", canonicalURL);
+      if (options.history === "replace" || canonicalURL !== url) window.history.replaceState(null, "", canonicalURL);
+      if (options.focusName) {
+        const input = updated.querySelector(`[name="${CSS.escape(options.focusName)}"]`);
+        if (input instanceof HTMLInputElement) {
+          input.focus({ preventScroll: true });
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      }
+      return updated;
+    } catch (error) {
+      if (requests.get(targetID) === request && error.name !== "AbortError") window.location.assign(fallbackURL);
+      return null;
+    } finally {
+      if (requests.get(targetID) === request) {
+        requests.delete(targetID);
+        asyncList(targetID)?.removeAttribute("aria-busy");
+      }
+    }
+  };
+  const refreshAllLists = async () => {
+    const ids = asyncLists().map((list) => list.id);
+    if (!ids.length) return;
+    await Promise.all(ids.map((id) => refreshList(id, new URL(window.location.href))));
+  };
+
+  const showMutationNotice = (source, message, failed) => {
+    const scope = source.closest(".panel, .section-content, .module-details") || source.parentElement;
+    if (!scope) return;
+    if (failed && scope instanceof HTMLDetailsElement) scope.open = true;
+    const noticeScope = scope.matches(".module-details") ? scope.querySelector(":scope > .module-notice-slot") : scope;
+    if (!noticeScope) return;
+    noticeScope.querySelector(":scope > .async-mutation-notice")?.remove();
+    const notice = document.createElement("div");
+    notice.className = `notice ${failed ? "error" : "ok"} async-mutation-notice`;
+    notice.setAttribute("role", failed ? "alert" : "status");
+    notice.textContent = message;
+    noticeScope.prepend(notice);
+    window.setTimeout(() => notice.remove(), failed ? 12000 : 5000);
+  };
+
+  const submitMutation = async (form) => {
+    const buttons = Array.from(form.querySelectorAll('button[type="submit"], input[type="submit"]'));
+    buttons.forEach((button) => { button.disabled = true; });
+    const containingList = form.closest("[data-async-list][id]");
+    try {
+      const response = await window.fetch(form.action, {
+        method: (form.method || "post").toUpperCase(),
+        body: new FormData(form),
+        headers: { Accept: "application/json", "X-Puppet-Forge-Async-Mutation": "true" },
+      });
+      if (response.redirected) {
+        window.location.assign(response.url);
+        return;
+      }
+      if (!response.ok) {
+        let message = `Request failed (${response.status})`;
+        try {
+          const payload = await response.json();
+          if (typeof payload.error === "string" && payload.error) message = payload.error;
+        } catch (_) {}
+        showMutationNotice(form, message, true);
+        return;
+      }
+      const removeTarget = form.dataset.removeTarget || response.headers.get("X-Puppet-Forge-Remove") || "";
+      const refreshTarget = form.dataset.refreshTarget || response.headers.get("X-Puppet-Forge-Refresh") || "";
+      const message = response.headers.get("X-Puppet-Forge-Message") || "Updated";
+      if (form.enctype === "multipart/form-data") form.reset();
+      if (removeTarget) document.getElementById(removeTarget)?.remove();
+      let noticeTarget = containingList;
+      if (refreshTarget) {
+        const target = asyncList(refreshTarget);
+        const requestURL = target?.getAttribute("data-module-card-url") || window.location.href;
+        await refreshList(refreshTarget, new URL(requestURL, window.location.href), {
+          forceOpen: true,
+          fallbackURL: window.location.href,
+        });
+        noticeTarget = asyncList(refreshTarget);
+      } else if (removeTarget && containingList?.id) {
+        noticeTarget = await refreshList(containingList.id, new URL(window.location.href), { forceOpen: true });
+      }
+      showMutationNotice(noticeTarget instanceof Element ? noticeTarget : form, message, false);
+    } catch (_) {
+      showMutationNotice(form, "Request failed", true);
+    } finally {
+      buttons.forEach((button) => { button.disabled = false; });
+    }
+  };
+
+  document.addEventListener("submit", (event) => {
+    if (!(event.target instanceof HTMLFormElement)) return;
+    if (event.target.hasAttribute("data-async-mutation")) {
+      event.preventDefault();
+      if (pendingMutations.has(event.target)) return;
+      pendingMutations.add(event.target);
+      submitMutation(event.target).finally(() => pendingMutations.delete(event.target));
+      return;
+    }
+    if (!event.target.dataset.asyncFilter) return;
+    event.preventDefault();
+    const input = event.target.querySelector('input[type="search"]');
+    refreshList(targetForForm(event.target), formURL(event.target), {
+      history: "replace",
+      focusName: input?.name || "",
+      forceOpen: true,
+    });
+  });
+  document.addEventListener("input", (event) => {
+    if (!(event.target instanceof HTMLInputElement) || event.target.type !== "search") return;
+    const input = event.target;
+    const form = input.form;
+    if (!form?.dataset.asyncFilter) return;
+    window.clearTimeout(inputTimers.get(form));
+    requests.get(targetForForm(form))?.abort();
+    inputTimers.set(form, window.setTimeout(() => {
+      refreshList(targetForForm(form), formURL(form), {
+        history: "replace",
+        focusName: input.name,
+        forceOpen: true,
+      });
+    }, 500));
+  });
+  document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const link = event.target.closest("[data-async-list] .pagination-links a, [data-async-list] .list-filter-clear");
+    if (!(link instanceof HTMLAnchorElement)) return;
+    const list = link.closest("[data-async-list]");
+    if (!list?.id) return;
+    event.preventDefault();
+    refreshList(list.id, new URL(link.href, window.location.href), { history: "push", forceOpen: true });
+  });
+  document.addEventListener("change", (event) => {
+    if (!(event.target instanceof HTMLSelectElement)) return;
+    const form = event.target.closest("form[data-page-size-key]");
+    const targetID = form ? targetForForm(form) : "";
+    if (!(form instanceof HTMLFormElement) || !targetID || !asyncList(targetID)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    pageSizes.write(form, event.target.value);
+    refreshList(targetID, formURL(form), { history: "replace", forceOpen: true });
+  }, true);
+  document.addEventListener("toggle", (event) => {
+    if (!(event.target instanceof HTMLDetailsElement)) return;
+    const card = event.target;
+    if (!card.open || card.dataset.moduleCardLoaded || !card.id || !card.dataset.moduleCardUrl) return;
+    refreshList(card.id, new URL(card.dataset.moduleCardUrl, window.location.href), {
+      forceOpen: true,
+      fallbackURL: window.location.href,
+    });
+  }, true);
+  window.addEventListener("popstate", () => {
+    refreshAllLists().catch(() => window.location.reload());
+  });
+  window.addEventListener("pageshow", async () => {
+    for (const list of asyncLists()) {
+      const form = list.querySelector("form[data-page-size-key]");
+      const select = form?.querySelector("select");
+      if (!(form instanceof HTMLFormElement) || !(select instanceof HTMLSelectElement)) continue;
+      const preferred = pageSizes.read(form);
+      if (!pageSizes.isAllowed(preferred)) continue;
+      pageSizes.write(form, preferred);
+      select.value = preferred;
+      if (preferred !== form.dataset.renderedPageSize) {
+        const url = new URL(window.location.href);
+        if (form.dataset.pageParam) url.searchParams.delete(form.dataset.pageParam);
+        await refreshList(list.id, url, { history: "replace", forceOpen: list instanceof HTMLDetailsElement && list.open });
+      }
+    }
+  }, { once: true });
+})();

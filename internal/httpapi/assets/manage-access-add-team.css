@@ -1,0 +1,22 @@
+textarea {
+  min-height: 82px;
+  resize: vertical;
+}
+
+button {
+  height: 42px;
+  padding: 0 18px;
+  border: 0;
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+@media (max-width: 720px) {
+  header, .button-row { display: block; }
+  .button-row button { width: 100%; }
+}

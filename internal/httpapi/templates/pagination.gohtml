@@ -1,0 +1,19 @@
+{{define "page-size-control"}}
+<form class="page-size-control" method="get" action="{{.SizeAction}}{{if .SizeAnchor}}#{{.SizeAnchor}}{{end}}" data-page-size-key="{{.SizeStorageKey}}" data-page-size-cookie="{{.SizeCookieName}}" data-page-size-param="{{.SizeParam}}" data-page-param="{{.SizePageParam}}" data-rendered-page-size="{{.PageSize}}"{{if .SizeTarget}} data-async-filter="{{.SizeTarget}}"{{end}}>
+  {{range .SizeParams}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+  <label>Per page <select name="{{.SizeParam}}" aria-label="Items per page">{{range .SizeOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Value}}</option>{{end}}</select></label>
+</form>
+{{end}}
+
+{{define "pagination"}}
+{{if .Pages.Total}}
+<nav class="{{.Class}}" aria-label="{{.Label}}">
+  <span>{{.Pages.Total}} {{.Unit}} · page {{.Pages.Page}} of {{.Pages.TotalPages}}</span>
+  {{template "page-size-control" .Pages}}
+  <span class="pagination-links">
+    {{if .Pages.HasPrev}}<a href="{{.Pages.PrevURL}}">Previous</a>{{else}}<span class="pagination-disabled" aria-disabled="true">Previous</span>{{end}}
+    {{if .Pages.HasNext}}<a href="{{.Pages.NextURL}}">Next</a>{{else}}<span class="pagination-disabled" aria-disabled="true">Next</span>{{end}}
+  </span>
+</nav>
+{{end}}
+{{end}}

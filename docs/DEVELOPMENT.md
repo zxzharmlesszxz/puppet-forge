@@ -5,6 +5,40 @@
 Local development, integration environments, verification, CI, and release
 procedures.
 
+## HTML UI Structure
+
+The UI is server-rendered with Go `html/template`. Both templates and assets are
+embedded in the binary; there is no frontend build step.
+
+- `internal/httpapi/templates/layout.gohtml` owns the single document shell.
+  `manage-layout.gohtml` and `public-layout.gohtml` supply family navigation and
+  resources; the login page uses the shell without navigation.
+- Each page defines its title, content, optional heading/subtitle, stylesheet,
+  and scripts. Pages are parsed into separate template sets, so their named
+  blocks cannot overwrite another page's blocks.
+- Navigation, notices, list filters, pagination with page-size controls,
+  publication forms, and module cards are shared template components.
+- `internal/httpapi/assets/base.css` contains common tokens and controls;
+  `manage.css` and `public.css` contain family styles. Page stylesheets contain
+  only page-specific rules or overrides. Management components use shared
+  `content-panel`, `list-panel`, `compact-fields`, and `report-panel` classes;
+  page styles retain their spacing and responsive differences.
+- JavaScript lives in `internal/httpapi/assets/*.js`. Layouts load shared
+  controllers once with `defer`; section persistence reads the storage key from
+  the body rather than interpolating Go values into JavaScript.
+- `page-size-persistence.js` owns preference validation and cookie/local-storage
+  access and loads before `async-lists.js`. All current pagination controls use
+  async lists; there is no second controller that reloads the whole page.
+  `clipboard.js` shares copying and temporary button feedback across token and
+  module pages.
+- `/assets/` serves embedded CSS and JavaScript without authentication, supports
+  `GET`/`HEAD`, and uses `Cache-Control: no-cache` for deployment revalidation.
+  Script tags retain the response's CSP nonce.
+
+Keep shared behavior in components and controllers rather than copying document
+heads, styles, or scripts into a new page. Template tests cover the document and
+asset contract; browser tests exercise the rendered controllers.
+
 ## Local Development
 
 ```bash

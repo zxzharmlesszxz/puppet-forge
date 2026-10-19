@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,19 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
+
+func testAssetSource(t *testing.T, names ...string) string {
+	t.Helper()
+	var source strings.Builder
+	for _, name := range names {
+		contents, err := assetFS.ReadFile("assets/" + name)
+		if err != nil {
+			t.Fatalf("read asset %s: %v", name, err)
+		}
+		source.Write(contents)
+	}
+	return source.String()
+}
 
 func TestPublicTemplatesRenderContextBreadcrumbs(t *testing.T) {
 	t.Parallel()
@@ -70,12 +84,20 @@ func TestPublicTemplatesRenderContextBreadcrumbs(t *testing.T) {
 		`<section class="panel" id="readme">`,
 		`<details class="panel install-panel" id="install">`,
 		`<summary>Install</summary>`,
+		`src="/assets/module-page.js"`,
+		`href="/assets/module-page.css"`,
+	} {
+		if !strings.Contains(module.String(), want) {
+			t.Fatalf("module page misses public navigation %q:\n%s", want, module.String())
+		}
+	}
+	for _, want := range []string{
 		`if (installPanel) installPanel.open = true`,
 		`overflow-wrap: anywhere`,
 		`image.replaceWith(document.createTextNode(alternative))`,
 	} {
-		if !strings.Contains(module.String(), want) {
-			t.Fatalf("module page misses public navigation %q:\n%s", want, module.String())
+		if !strings.Contains(testAssetSource(t, "module-page.js", "module-page.css"), want) {
+			t.Errorf("module assets miss %q", want)
 		}
 	}
 	if strings.Count(module.String(), `<a href="/modules/teamname/apache">apache</a>`) != 1 {
@@ -107,7 +129,7 @@ func TestPageSizeSelectionPersistsAcrossNavigation(t *testing.T) {
 		t.Fatalf("render index page: %v", err)
 	}
 
-	body := page.String()
+	body := page.String() + testAssetSource(t, "async-lists.js", "page-size-persistence.js", "base.css")
 	for _, want := range []string{
 		`data-page-size-key="public-modules:per_page:module-list"`,
 		`data-page-size-cookie="puppet_forge_page_size_public-modules_per_page_module-list"`,
@@ -115,16 +137,17 @@ func TestPageSizeSelectionPersistsAcrossNavigation(t *testing.T) {
 		`data-page-param="page"`,
 		`data-rendered-page-size="20"`,
 		`typeof value === "string" && allowedPageSizes.has(value)`,
-		`const rendered = form.dataset.renderedPageSize`,
-		`preferred !== rendered && cookieStored`,
+		`window['pageSizePreferences'] = Object.freeze`,
+		`const cookieValue = readCookie(form.dataset.pageSizeCookie)`,
+		`if (preferred !== form.dataset.renderedPageSize)`,
 		`document.cookie =`,
-		`return readCookie(name) === value`,
+		`pageSizes.write(form, preferred)`,
 		`window.localStorage.getItem(storagePrefix + key)`,
 		`url.searchParams.delete(form.dataset.pageParam)`,
 		`url.searchParams.delete(form.dataset.pageSizeParam)`,
 		`data-async-list`,
 		`current.replaceWith(replacement)`,
-		`window.location.assign(url)`,
+		`window.location.assign(fallbackURL)`,
 		`.pagination-links a:hover`,
 		`box-shadow: 0 0 0 3px #dceced`,
 	} {
@@ -148,15 +171,14 @@ func TestPageSizeSelectionPersistsAcrossNavigation(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("render manage overview: %v", err)
 	}
-	manageBody := managePage.String()
-	if strings.Contains(manageBody, `<script nonce="">`) {
+	manageBody := managePage.String() + testAssetSource(t, "page-size-persistence.js", "base.css", "manage.css")
+	if strings.Contains(manageBody, `<script nonce=""`) {
 		t.Fatalf("manage page renders a script without its CSP nonce:\n%s", manageBody)
 	}
-	if !strings.Contains(manageBody, `<script nonce="manage-page-size-nonce">`) ||
+	if !strings.Contains(manageBody, `<script nonce="manage-page-size-nonce" src="/assets/page-size-persistence.js" defer>`) ||
 		!strings.Contains(manageBody, `document.cookie =`) ||
 		!strings.Contains(manageBody, `data-rendered-page-size="20"`) ||
 		!strings.Contains(manageBody, `.pagination-links a:hover`) ||
-		!strings.Contains(manageBody, `.list-pagination-links a:hover`) ||
 		!strings.Contains(manageBody, `.module-details > summary.catalog-item`) ||
 		!strings.Contains(manageBody, `.module-details > .release-list`) {
 		t.Fatalf("manage page misses nonce-authorized page-size persistence:\n%s", manageBody)
@@ -233,8 +255,8 @@ func TestPaginatedViewsUseSharedAsyncListContract(t *testing.T) {
 		`window.addEventListener("popstate"`,
 		`window.addEventListener("pageshow"`,
 	} {
-		if !strings.Contains(pages[0].body, want) {
-			t.Fatalf("shared async-list controller misses %q:\n%s", want, pages[0].body)
+		if !strings.Contains(testAssetSource(t, "async-lists.js"), want) {
+			t.Fatalf("shared async-list controller misses %q", want)
 		}
 	}
 }
@@ -373,13 +395,14 @@ func TestManageModulesShowsAllManagedTeams(t *testing.T) {
 		t.Fatalf("render manage modules: %v", err)
 	}
 	rendered := page.String()
-	if strings.Contains(rendered, "\n    details {\n      margin-top: 14px;") {
+	styles := testAssetSource(t, "manage.css", "manage-page.css")
+	if strings.Contains(styles, "\ndetails {") {
 		t.Fatalf("manage modules applies content spacing to the Administration details element:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, ".module-details {\n      margin-top: 14px;") {
+	if !strings.Contains(styles, ".module-details {") || !strings.Contains(styles, "margin-top: 14px;") {
 		t.Fatalf("manage modules does not scope details spacing to content disclosures:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, ".primary {\n      height: 42px;\n      margin-top: 16px;") {
+	if !strings.Contains(styles, "margin-top: 16px;") {
 		t.Fatalf("manage module form actions do not keep vertical spacing from their fields:\n%s", rendered)
 	}
 	body := strings.Join(strings.Fields(rendered), " ")
@@ -427,7 +450,7 @@ func TestManageBreadcrumbLinksHaveInteractiveStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render manage breadcrumbs: %v", err)
 	}
-	body := page.String()
+	body := page.String() + testAssetSource(t, "manage.css")
 	for _, want := range []string{
 		`.breadcrumbs a:hover,`,
 		`.breadcrumbs a:focus-visible`,
@@ -456,7 +479,7 @@ func TestManageActionNoticesAutoDismissAccessibly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render management notices: %v", err)
 	}
-	body := page.String()
+	body := page.String() + testAssetSource(t, "notices.js", "manage.css")
 	for _, want := range []string{
 		`class="notice ok" role="status"`,
 		`class="notice error" role="alert"`,
@@ -485,8 +508,8 @@ func TestManageActionNoticesAutoDismissAccessibly(t *testing.T) {
 		if readErr != nil {
 			t.Fatalf("read %s: %v", templateName, readErr)
 		}
-		if !strings.Contains(string(contents), `class="notice error" role="alert"`) {
-			t.Errorf("%s does not expose errors as alerts", templateName)
+		if !strings.Contains(string(contents), `{{template "notices"`) {
+			t.Errorf("%s does not use shared accessible notices", templateName)
 		}
 	}
 }
@@ -512,25 +535,173 @@ func TestAuthenticatedManagePagesUseConsistentWidth(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", page, err)
 		}
-		if !strings.Contains(string(contents), `<link rel="stylesheet" href="/assets/manage-layout.css">`) {
-			t.Errorf("%s does not use the shared management page width", page)
+		if !strings.HasPrefix(string(contents), `{{template "layout" .}}`) {
+			t.Errorf("%s does not use the shared page layout", page)
 		}
 	}
-	if !strings.Contains(manageLayoutCSS, "max-width: 1440px") {
+	if !strings.Contains(testAssetSource(t, "manage.css"), "max-width: 1440px") {
 		t.Error("shared management page width is not 1440px")
+	}
+}
+
+func TestPagesRenderOneLayoutWithEmbeddedAssets(t *testing.T) {
+	t.Parallel()
+	navigation := newManageNavigation(auth.Principal{CanAdmin: true}, "csrf", "overview", "")
+	navigation.CSPNonce = "layout-nonce"
+	public := newPublicNavigation("/manage", "Manage")
+	public.CSPNonce = navigation.CSPNonce
+	pages := []struct {
+		tmpl   *template.Template
+		data   any
+		family string
+	}{
+		{manageLoginTemplate, manageLoginData{}, ""},
+		{indexPageTemplate, indexPageData{Navigation: public}, "public"},
+		{modulePageTemplate, modulePageData{Navigation: public}, "public"},
+		{managePageTemplate, managePageData{Navigation: navigation}, "manage"},
+		{manageOverviewTemplate, manageOverviewData{Navigation: navigation}, "manage"},
+		{manageAccessTemplate, manageAccessData{Navigation: navigation}, "manage"},
+		{manageAccessAddTeamTemplate, manageAccessAddTeamData{Navigation: navigation}, "manage"},
+		{managePublishSpacesTemplate, managePublishSpacesData{Navigation: navigation}, "manage"},
+		{manageLegacyUsageTemplate, manageLegacyUsageData{Navigation: navigation, Title: "Legacy usage"}, "manage"},
+		{manageAuditTemplate, manageAuditData{Navigation: navigation, Title: "Audit log"}, "manage"},
+		{manageTokenCreatedTemplate, manageTokenCreatedData{Navigation: navigation}, "manage"},
+		{manageForceDeleteTemplate, manageForceDeleteData{Navigation: navigation, Title: "Force delete"}, "manage"},
+		{manageTeamsTemplate, manageTeamsData{Navigation: navigation}, "manage"},
+		{manageTeamTemplate, manageTeamData{Navigation: navigation}, "manage"},
+	}
+	assetReference := regexp.MustCompile(`(?:src|href)="(/assets/[^"?]+)"`)
+	scriptTag := regexp.MustCompile(`<script[^>]*>`)
+	for _, page := range pages {
+		t.Run(page.tmpl.Name(), func(t *testing.T) {
+			var output bytes.Buffer
+			if err := page.tmpl.Execute(&output, page.data); err != nil {
+				t.Fatalf("render page: %v", err)
+			}
+			body := output.String()
+			for _, element := range []string{"<!DOCTYPE html>", "<html", "<head>", "<title>", "<body", "<main>", "</main>", "</html>"} {
+				if count := strings.Count(body, element); count != 1 {
+					t.Errorf("%s occurs %d times, want 1", element, count)
+				}
+			}
+			if strings.Contains(body, "<style") || strings.Contains(body, "<title></title>") {
+				t.Error("page contains inline styles or an empty title")
+			}
+			if page.family != "" && !strings.Contains(body, `href="/assets/`+page.family+`.css"`) {
+				t.Error("page does not load its family stylesheet")
+			}
+			seen := make(map[string]bool)
+			for _, ref := range assetReference.FindAllStringSubmatch(body, -1) {
+				if seen[ref[1]] {
+					t.Errorf("asset %s is loaded twice", ref[1])
+				}
+				seen[ref[1]] = true
+				if _, err := assetFS.ReadFile(strings.TrimPrefix(ref[1], "/")); err != nil {
+					t.Errorf("asset %s is not embedded: %v", ref[1], err)
+				}
+			}
+			if !seen["/assets/base.css"] || len(seen) < 2 {
+				t.Error("page does not load base and page styles")
+			}
+			for _, tag := range scriptTag.FindAllString(body, -1) {
+				if !strings.Contains(tag, `nonce="layout-nonce"`) || !strings.Contains(tag, `src="/assets/`) || !strings.Contains(tag, " defer>") {
+					t.Errorf("script must be an external deferred asset with a CSP nonce: %s", tag)
+				}
+			}
+			if page.family == "manage" && !seen["/assets/async-lists.js"] {
+				t.Error("manage page does not load the shared list controller")
+			}
+			for _, dependency := range []struct{ consumer, provider string }{
+				{"async-lists.js", "page-size-persistence.js"},
+				{"module-page.js", "clipboard.js"},
+				{"manage-token-created.js", "clipboard.js"},
+			} {
+				if seen["/assets/"+dependency.consumer] && (!seen["/assets/"+dependency.provider] || strings.Index(body, `src="/assets/`+dependency.provider+`"`) > strings.Index(body, `src="/assets/`+dependency.consumer+`"`)) {
+					t.Errorf("%s must load before %s", dependency.provider, dependency.consumer)
+				}
+			}
+		})
 	}
 }
 
 func TestAsyncFiltersDoNotUseExceptionsForExpectedFallbacks(t *testing.T) {
 	t.Parallel()
 
-	for _, templateName := range []string{"index-page.gohtml", "manage-navigation.gohtml"} {
-		contents, err := templateFS.ReadFile("templates/" + templateName)
-		if err != nil {
-			t.Fatalf("read %s: %v", templateName, err)
+	for _, name := range []string{"async-lists.js", "notices.js"} {
+		if strings.Contains(testAssetSource(t, name), "throw new Error") {
+			t.Errorf("%s uses exceptions for an expected navigation fallback", name)
 		}
-		if strings.Contains(string(contents), "throw new Error") {
-			t.Errorf("%s uses exceptions for an expected navigation fallback", templateName)
+	}
+}
+
+func TestStaticAssetsRejectMissingPathsAndUnsupportedMethods(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		method string
+		path   string
+		status int
+	}{
+		{http.MethodGet, "/assets/async-lists.js", http.StatusOK},
+		{http.MethodHead, "/assets/base.css", http.StatusOK},
+		{http.MethodGet, "/assets/missing.css", http.StatusNotFound},
+		{http.MethodGet, "/assets/../templates/layout.gohtml", http.StatusNotFound},
+		{http.MethodPost, "/assets/manage.css", http.StatusMethodNotAllowed},
+	} {
+		t.Run(tc.method+tc.path, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			serveStaticAsset(recorder, httptest.NewRequest(tc.method, tc.path, nil))
+			if recorder.Code != tc.status {
+				t.Fatalf("status = %d, want %d", recorder.Code, tc.status)
+			}
+			if tc.status == http.StatusOK {
+				if recorder.Header().Get("Cache-Control") != "no-cache" {
+					t.Error("assets must be revalidated after deployments")
+				}
+				if tc.method == http.MethodHead && recorder.Body.Len() != 0 {
+					t.Error("HEAD must not return a body")
+				}
+				if strings.HasSuffix(tc.path, ".js") && !strings.Contains(recorder.Header().Get("Content-Type"), "javascript") {
+					t.Errorf("unexpected script content type: %q", recorder.Header().Get("Content-Type"))
+				}
+			}
+			if tc.status == http.StatusMethodNotAllowed && recorder.Header().Get("Allow") != "GET, HEAD" {
+				t.Error("unsupported methods must advertise GET and HEAD")
+			}
+		})
+	}
+}
+
+func TestSharedPaginationAndPublishFormKeepContext(t *testing.T) {
+	t.Parallel()
+	var pagination bytes.Buffer
+	err := managePageTemplate.ExecuteTemplate(&pagination, "pagination", paginationViewData{
+		Pages: paginationData{Total: 30, Page: 2, TotalPages: 3, HasPrev: true, HasNext: true, PrevURL: "/manage?q=example#modules", NextURL: "/manage?modules_page=3#modules"},
+		Unit:  "modules", Class: "panel-pagination", Label: "Module pages",
+	})
+	if err != nil {
+		t.Fatalf("render pagination: %v", err)
+	}
+	for _, want := range []string{`30 modules · page 2 of 3`, `href="/manage?q=example#modules">Previous`, `href="/manage?modules_page=3#modules">Next`} {
+		if !strings.Contains(pagination.String(), want) {
+			t.Errorf("pagination misses %q", want)
+		}
+	}
+	for _, canReplace := range []bool{false, true} {
+		var form bytes.Buffer
+		err = manageTeamTemplate.ExecuteTemplate(&form, "publish-form", publishFormData{
+			Spaces: []string{"teamname", "shared"}, CSRFToken: "csrf", Next: "/manage/teams/teamname/modules",
+			Target: "module-list", SpaceID: "team-space", ArchiveID: "team-archive", CanReplace: canReplace,
+		})
+		if err != nil {
+			t.Fatalf("render publish form: %v", err)
+		}
+		for _, want := range []string{`action="/manage/modules"`, `data-refresh-target="module-list"`, `name="next" value="/manage/teams/teamname/modules"`, `name="csrf_token" value="csrf"`, `id="team-space" name="space" required`, `<option value="shared">shared</option>`, `id="team-archive" name="file"`} {
+			if !strings.Contains(form.String(), want) {
+				t.Errorf("publish form misses %q", want)
+			}
+		}
+		if strings.Contains(form.String(), `name="replace"`) != canReplace {
+			t.Error("publish form must preserve the replacement capability")
 		}
 	}
 }
@@ -611,7 +782,7 @@ func TestTeamAdminCanDiscoverAndManageOwnTeamTokens(t *testing.T) {
 	for _, want := range []string{
 		`href="/manage/teams" aria-current="page">Teams</a>`,
 		`href="/manage/teams/teamname/tokens" aria-current="page">Tokens</a>`,
-		`<section id="team-tokens" class="panel">`,
+		`<section id="team-tokens" class="panel compact-fields">`,
 		`action="/manage/access/token"`,
 		`name="name" required`,
 		`name="role" required`,
@@ -845,7 +1016,7 @@ func TestManageTeamTokenFiltersSubmitAfterTypingPause(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render token filters: %v", err)
 	}
-	body := page.String()
+	body := page.String() + testAssetSource(t, "async-lists.js")
 	for _, want := range []string{
 		`data-async-list`,
 		`const targetForForm = (form) => form.dataset.asyncFilter`,
@@ -896,12 +1067,13 @@ func TestCreatedTokenCopyMatchesModuleCodeCopyBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render created token page: %v", err)
 	}
-	body := page.String()
+	body := page.String() + testAssetSource(t, "clipboard.js", "manage-token-created.js")
 	for _, want := range []string{
 		`window['copyTextToClipboard'] = async (text)`,
 		`navigator.clipboard.writeText(text)`,
 		`document.execCommand('copy')`,
-		`setCopyStatus(await copyText(value) ? 'Copied' : 'Failed')`,
+		`await window['copyTextWithStatus'](button, value)`,
+		`button.textContent = copied ? 'Copied' : 'Failed'`,
 		`}, 1400);`,
 	} {
 		if !strings.Contains(body, want) {
@@ -928,12 +1100,12 @@ func TestModuleCopySupportsSecureAndHTTPOrigins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render module page: %v", err)
 	}
-	body := page.String()
+	body := page.String() + testAssetSource(t, "clipboard.js", "module-page.js")
 	for _, want := range []string{
 		`navigator.clipboard.writeText(text)`,
 		`document.execCommand('copy')`,
 		`await copyText(url.toString())`,
-		`await copyText(text) ? 'Copied' : 'Failed'`,
+		`await window['copyTextWithStatus'](button, text)`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("module page misses clipboard behavior %q:\n%s", want, body)

@@ -9,6 +9,61 @@ async function signIn(page) {
   ]);
 }
 
+test("layouts load embedded styles and deferred scripts", async ({ page }) => {
+  const failedAssets = [];
+  const errors = [];
+  page.on("response", (response) => {
+    if (new URL(response.url()).pathname.startsWith("/assets/") && !response.ok()) {
+      failedAssets.push(response.url());
+    }
+  });
+  page.on("pageerror", (error) => errors.push(error.message));
+
+  await signIn(page);
+  for (const path of ["/", "/modules/teamname/module-00", "/manage", "/manage/modules", "/manage/teams", "/manage/teams/teamname/modules"]) {
+    await page.goto(path);
+    await expect(page.locator("main")).toHaveCount(1);
+    await expect(page.locator("style, script:not([src])")).toHaveCount(0);
+    const sources = await page.locator('link[rel="stylesheet"], script[src]').evaluateAll((elements) => elements.map((element) => element.getAttribute("href") || element.getAttribute("src")));
+    expect(new Set(sources).size).toBe(sources.length);
+    await expect(page.locator('link[href="/assets/base.css"]')).toHaveCount(1);
+    await expect(page.locator("h1")).toBeVisible();
+  }
+  expect(failedAssets).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test("shared section controller restores open module cards", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/manage/modules");
+  const module = page.locator("#item-teamname-module-00");
+  await module.locator(":scope > summary").click();
+  await expect(module).toHaveAttribute("open", "");
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("puppet-forge:manage:open-sections") || "[]"))).toContain("module:teamname/module-00");
+  await page.reload();
+  await expect(module).toHaveAttribute("open", "");
+});
+
+test("shared styles preserve panel, badge, and control dimensions", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/manage/modules");
+  expect(await page.locator(".content-panel").first().evaluate((element) => getComputedStyle(element).padding)).toBe("22px");
+
+  await page.goto("/manage/teams");
+  expect(await page.locator(".team-row .badge").first().evaluate((element) => getComputedStyle(element).minHeight)).toBe("26px");
+
+  await page.goto("/manage/teams/teamname/modules");
+  const heights = await page.evaluate(() => [
+    ".meta .badge", "#team-module-archive", ".replace-option input", ".page-size-control select",
+  ].map((selector) => {
+    const element = document.querySelector(selector);
+    if (!element) throw new Error(`missing control: ${selector}`);
+    const style = getComputedStyle(element);
+    return selector.endsWith(".badge") ? style.minHeight : style.height;
+  }));
+  expect(heights).toEqual(["24px", "42px", "18px", "32px"]);
+});
+
 test("public and manage catalogs share the same search component", async ({ page }) => {
   await page.goto("/");
   const publicFilter = page.locator("#module-filter-form.list-filter");

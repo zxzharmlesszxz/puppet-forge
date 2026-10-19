@@ -1,0 +1,40 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{template "page-title" .}}</title>
+  <link rel="stylesheet" href="/assets/base.css">
+  {{template "layout-styles" .}}
+  {{template "page-styles" .}}
+</head>
+<body data-section-storage-key="{{template "page-section-key" .}}">
+  <main>
+    {{template "page-navigation" .}}
+    {{template "page-content" .}}
+  </main>
+  {{template "layout-scripts" .}}
+  {{template "page-scripts" .}}
+</body>
+</html>
+{{end}}
+
+{{define "page-title"}}{{end}}
+{{define "page-heading"}}{{template "page-title" .}}{{end}}
+{{define "page-subtitle"}}{{end}}
+{{define "page-styles"}}{{end}}
+{{define "page-scripts"}}{{end}}
+{{define "page-section-key"}}{{end}}
+{{define "page-navigation"}}{{end}}
+{{define "layout-styles"}}{{end}}
+{{define "layout-scripts"}}{{end}}
+
+{{define "page-header"}}
+<header><div><h1>{{template "page-heading" .}}</h1>{{template "page-subtitle" .}}</div></header>
+{{end}}
+
+{{define "notices"}}
+{{if .Message}}<div class="notice ok" role="status">{{.Message}}</div>{{end}}
+{{if .Error}}<div class="notice error" role="alert">{{.Error}}</div>{{end}}
+{{end}}

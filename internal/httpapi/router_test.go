@@ -238,8 +238,8 @@ func TestRouterSecurityHeaders(t *testing.T) {
 		t.Fatalf("manage Content-Security-Policy has malformed nonce: %q", managePolicy)
 	}
 	nonce := managePolicy[nonceStart : nonceStart+nonceEnd]
-	if !strings.Contains(manageRec.Body.String(), `nonce="`+nonce+`"`) {
-		t.Fatalf("manage login body does not use CSP nonce %q", nonce)
+	if !strings.Contains(manageRec.Body.String(), `href="/assets/manage-login.css"`) || strings.Contains(manageRec.Body.String(), "<style") {
+		t.Fatal("manage login must use its external stylesheet")
 	}
 	if strings.Contains(policy, nonce) {
 		t.Fatalf("CSP nonce was reused across requests: %q", nonce)
@@ -709,7 +709,8 @@ func TestIndexFilterRefreshesPaginatedResultsWithoutReload(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("indexPageTemplate.Execute() error = %v", err)
 	}
-	if !strings.Contains(page.String(), ".list {\n      padding: 10px 0;\n      overflow: hidden;") {
+	styles := testAssetSource(t, "index-page.css")
+	if !strings.Contains(styles, "padding: 10px 0;") || !strings.Contains(styles, "overflow: hidden;") {
 		t.Fatalf("index page does not clip module rows to the rounded list boundary:\n%s", page.String())
 	}
 	for _, want := range []string{
@@ -723,7 +724,7 @@ func TestIndexFilterRefreshesPaginatedResultsWithoutReload(t *testing.T) {
 		`current.replaceWith(replacement)`,
 		`window.setTimeout(() =>`,
 	} {
-		if !strings.Contains(page.String(), want) {
+		if !strings.Contains(page.String()+testAssetSource(t, "async-lists.js"), want) {
 			t.Fatalf("index page misses paginated live filtering %q:\n%s", want, page.String())
 		}
 	}
@@ -1151,7 +1152,7 @@ func TestManageLayoutStylesheetIsServedWithoutAuthentication(t *testing.T) {
 
 	_, server, _ := setupManageTestWithModule(t)
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
-		req, err := http.NewRequest(method, server.URL+"/assets/manage-layout.css", nil)
+		req, err := http.NewRequest(method, server.URL+"/assets/manage.css", nil)
 		if err != nil {
 			t.Fatalf("NewRequest() error = %v", err)
 		}
@@ -1505,7 +1506,7 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 		`.release-version:has(.release-danger-button:hover)`,
 		`.release-version:has(.release-danger-button:focus-visible)`,
 	} {
-		if !strings.Contains(pageBody, wantStyle) {
+		if !strings.Contains(testAssetSource(t, "manage.css"), wantStyle) {
 			t.Fatalf("manage page does not render release highlight style %q:\n%s", wantStyle, pageBody)
 		}
 	}
@@ -2351,7 +2352,8 @@ func TestModulePageDoesNotExposeVersionDeleteAction(t *testing.T) {
 	if count := strings.Count(body, `class="copy-button"`); count != 5 {
 		t.Fatalf("expected five copy buttons, got %d", count)
 	}
-	if !strings.Contains(body, "navigator.clipboard") || !strings.Contains(body, "document.querySelectorAll('button.copy-button')") {
+	copySource := testAssetSource(t, "clipboard.js", "module-page.js")
+	if !strings.Contains(copySource, "navigator.clipboard") || !strings.Contains(copySource, "document.querySelectorAll('button.copy-button')") {
 		t.Fatalf("module page does not include copy button handler:\n%s", body)
 	}
 	for _, want := range []string{
@@ -2361,7 +2363,7 @@ func TestModulePageDoesNotExposeVersionDeleteAction(t *testing.T) {
 		`await copyText(url.toString())`,
 		`document.execCommand('copy')`,
 	} {
-		if !strings.Contains(body, want) {
+		if !strings.Contains(body+copySource, want) {
 			t.Fatalf("module page does not include version permalink control %q:\n%s", want, body)
 		}
 	}
@@ -4598,17 +4600,21 @@ func TestManageOverviewLinksCountersTeamsAndSpaces(t *testing.T) {
 	}})
 
 	body := getBody(t, client, serverURL+"/manage")
+	styles := getBody(t, client, serverURL+"/assets/manage-overview.css")
+	if !strings.Contains(styles, `grid-template-columns: repeat(2, minmax(0, 1fr));`) {
+		t.Fatal("manage overview stylesheet misses the two-column layout")
+	}
 	for _, want := range []string{
-		`grid-template-columns: repeat(2, minmax(0, 1fr));`,
+		`href="/assets/manage-overview.css"`,
 		`class="summary-item" href="/manage/modules"`,
 		`class="summary-item" href="/manage/admin/spaces"`,
 		`class="summary-item" href="/manage/teams"`,
 		`<span class="summary-value">2</span><span class="summary-label">Available spaces</span>`,
 		`<a class="resource-link" href="/manage/teams/teamname/access">teamname</a>`,
-		`<a class="count-link" href="/manage/teams/teamname/modules">1 module</a>`,
-		`<section class="panel spaces-panel" id="spaces" data-async-list`,
+		`<a class="badge count-link" href="/manage/teams/teamname/modules">1 module</a>`,
+		`<section class="panel list-panel spaces-panel" id="spaces" data-async-list`,
 		`<a class="resource-link" href="/manage/modules?q=shared%2F">shared</a>`,
-		`<a class="count-link" href="/manage/modules?q=teamname%2F">1 module</a>`,
+		`<a class="badge count-link" href="/manage/modules?q=teamname%2F">1 module</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("manage overview misses linked resource %q:\n%s", want, body)
@@ -4651,7 +4657,7 @@ func TestManageOverviewPaginatesModulesWithTeamModulesFirst(t *testing.T) {
 		`const replacement = nextPage.getElementById(targetID)`,
 		`event.stopImmediatePropagation()`,
 	} {
-		if !strings.Contains(body, want) {
+		if !strings.Contains(body+testAssetSource(t, "async-lists.js"), want) {
 			t.Fatalf("overview misses asynchronous panel behavior %q:\n%s", want, body)
 		}
 	}
@@ -4785,7 +4791,7 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 				{Version: "2.0.0", Latest: true},
 			},
 			CanDelete:             true,
-			CanForceDeleteModule:  tc.forceModuleForm,
+			CanForceDeleteModule:  tc.forceModuleLink,
 			CanForceDeleteRelease: true,
 		}}
 		configureManageModuleRows(rows, "csrf", "/manage/modules")
@@ -4816,7 +4822,7 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 			`.module-details > .release-list`,
 			`.force-delete-link`,
 		} {
-			if !strings.Contains(body, wantStyle) {
+			if !strings.Contains(testAssetSource(t, "manage.css"), wantStyle) {
 				t.Fatalf("manage page does not render module block highlight style %q for %#v:\n%s", wantStyle, tc.principal, body)
 			}
 		}
@@ -5489,7 +5495,7 @@ func TestManageModulesRemembersOpenSections(t *testing.T) {
 
 	_, server, client := setupManageTestWithModule(t)
 
-	body := getBody(t, client, server.URL+"/manage/modules")
+	body := getBody(t, client, server.URL+"/manage/modules") + testAssetSource(t, "sections.js")
 	for _, want := range []string{
 		`data-section-key="module:teamname/apache"`,
 		`puppet-forge:manage:open-sections`,

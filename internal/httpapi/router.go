@@ -135,7 +135,7 @@ func NewRouter(config RouterConfig, opts ...RouterOption) (http.Handler, error) 
 	obs := observability.NewMiddleware()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/assets/manage-layout.css", serveManageLayoutCSS)
+	mux.HandleFunc("/assets/", serveStaticAsset)
 	mux.HandleFunc("/auth/login", r.loginPage)
 	mux.HandleFunc("/auth/callback", r.callbackPage)
 	mux.HandleFunc("/auth/logout", r.logoutPage)

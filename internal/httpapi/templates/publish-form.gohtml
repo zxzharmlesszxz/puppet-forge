@@ -1,0 +1,24 @@
+{{define "publish-form"}}
+<form method="post" action="/manage/modules" enctype="multipart/form-data" data-async-mutation data-refresh-target="{{.Target}}">
+  {{csrfInput .CSRFToken}}
+  {{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}
+  <div class="grid">
+    <div>
+      <label for="{{.SpaceID}}">Space</label>
+      <select id="{{.SpaceID}}" name="space" required>{{range .Spaces}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+    </div>
+    <div>
+      <label for="{{.ArchiveID}}">Archive</label>
+      <input id="{{.ArchiveID}}" name="file" type="file" accept=".gz,.tgz,.tar.gz" required>
+      <p class="field-hint">Module identity and metadata are read from metadata.json.</p>
+    </div>
+    {{if .CanReplace}}
+    <label class="replace-option">
+      <input name="replace" type="checkbox" value="true">
+      <span>Replace an existing release with the same version<small>Admin-only correction. Cached clients may need to retry.</small></span>
+    </label>
+    {{end}}
+  </div>
+  <button class="primary" type="submit">Publish</button>
+</form>
+{{end}}

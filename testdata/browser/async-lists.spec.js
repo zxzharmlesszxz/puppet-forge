@@ -2,9 +2,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { test, expect } = require("@playwright/test");
 
-const template = fs.readFileSync(path.join(__dirname, "../../internal/httpapi/templates/async-lists.gohtml"), "utf8");
-const controller = template.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1];
-if (!controller) throw new Error("async-list controller script was not found");
+const controller = ["page-size-persistence.js", "async-lists.js"]
+  .map((name) => fs.readFileSync(path.join(__dirname, "../../internal/httpapi/assets", name), "utf8"))
+  .join("\n");
 
 function pageHTML(value = "initial", includeController = false) {
   const scripts = includeController ? "<script>" + controller + "</script>" : "";

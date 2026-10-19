@@ -1,109 +1,39 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Title}}</title>
-  <link rel="stylesheet" href="/assets/manage-layout.css">
-  <style nonce="{{.Navigation.CSPNonce}}">
-    :root { color-scheme: light; --bg: #f3f0ea; --panel: #fff; --ink: #1f2428; --muted: #66717a; --accent: #2f6f73; --line: #d9e0e2; --danger: #9a4038; --success: #39754c; }
-    {{template "manage-navigation-styles" .Navigation}}
-    * { box-sizing: border-box; }
-    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
-    header { margin-bottom: 20px; }
-    h1 { margin: 0; font-size: 32px; }
-    .subtitle { max-width: 900px; margin-top: 8px; color: var(--muted); line-height: 1.5; }
-    .panel { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
-    .table-wrap { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; text-align: left; }
-    th, td { padding: 13px 15px; vertical-align: top; }
-    th { color: var(--muted); font-size: 12px; text-transform: uppercase; white-space: nowrap; }
-    tbody tr { border-top: 1px solid var(--line); }
-    tbody tr:hover { background: #faf7f2; }
-    time, code { font-size: 12px; }
-    time span { display: block; white-space: nowrap; }
-    time span + span { margin-top: 3px; color: var(--muted); }
-    .actor strong, .actor span { display: block; }
-    .actor span, .context { margin-top: 3px; color: var(--muted); font-size: 12px; }
-    .event { min-width: 150px; }
-    .action { display: block; font-weight: 700; }
-    .target { min-width: 180px; }
-    .target code { white-space: normal; overflow-wrap: anywhere; }
-    .details { min-width: 280px; overflow-wrap: anywhere; }
-    .change-summary { line-height: 1.45; }
-    .comment { margin-top: 7px; padding-left: 9px; border-left: 3px solid #c58c84; color: #71362f; }
-    .comment strong { margin-right: 5px; font-size: 11px; text-transform: uppercase; }
-    .result { font-weight: 700; }
-    .result.success { color: var(--success); }
-    .result.failure { color: var(--danger); }
-    .technical-context { margin-top: 8px; color: var(--muted); font-size: 12px; }
-    .technical-context summary { width: fit-content; cursor: pointer; font-weight: 700; }
-    .technical-context dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 9px; margin: 7px 0 0; }
-    .technical-context dt { font-weight: 700; }
-    .technical-context dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
-    .technical-context code { white-space: normal; overflow-wrap: anywhere; }
-    .empty { padding: 32px 20px; color: var(--muted); text-align: center; }
-    @media (max-width: 900px) {
-      main { padding-inline: 12px; }
-      h1 { font-size: 27px; }
-      .table-wrap { overflow: visible; }
-      table, tbody { display: block; }
-      thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); }
-      tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; padding: 15px; }
-      td { display: block; min-width: 0; padding: 0; }
-      td::before { display: block; margin-bottom: 5px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }
-      td:nth-child(1)::before { content: "When"; }
-      td:nth-child(2)::before { content: "Event"; }
-      td:nth-child(3)::before { content: "Actor"; }
-      td:nth-child(4)::before { content: "Target"; }
-      td:nth-child(5)::before { content: "Details"; }
-      .details { grid-column: 1 / -1; }
-    }
-    @media (max-width: 520px) { tbody tr { grid-template-columns: 1fr; } .details { grid-column: auto; } }
-  </style>
-</head>
-<body>
-  <main>
-    {{template "manage-navigation" .Navigation}}
-    <header>
-      <h1>{{.Title}}</h1>
-      <div class="subtitle">Persistent security events for administrative changes, publication, authentication, and module deletion. Force-delete comments are shown with their target and request ID.</div>
-    </header>
+{{template "layout" .}}
 
-    <section class="panel" id="audit-list" data-async-list aria-label="Security audit events">
-      {{template "list-filter" .Filter}}
-      {{if .Events}}<div class="table-wrap"><table>
-        <thead><tr><th scope="col">When</th><th scope="col">Event</th><th scope="col">Actor</th><th scope="col">Target</th><th scope="col">Details</th></tr></thead>
-        <tbody>{{range .Events}}<tr>
-          <td><time datetime="{{.OccurredAt}}"><span>{{.OccurredDate}}</span><span>{{.OccurredTime}}</span></time></td>
-          <td class="event"><span class="action">{{.Action}}</span><span class="result {{.Result}}">{{.Result}}</span>{{if ne .Reason "none"}}<div class="context">{{.Reason}}</div>{{end}}</td>
-          <td class="actor"><strong>{{.Actor}}</strong><span>{{.AuthMethod}}</span></td>
-          <td class="target"><code>{{.Target}}</code></td>
-          <td class="details">
-            {{if .Details}}<div class="change-summary">{{.Details}}</div>{{end}}
-            {{if .Justification}}<div class="comment"><strong>Comment</strong>{{.Justification}}</div>{{end}}
-            {{if and (not .Details) (not .Justification)}}<span class="context">No additional details</span>{{end}}
-            <details class="technical-context"><summary>Technical context</summary><dl>
-              <dt>Request</dt><dd><code>{{.RequestID}}</code></dd>
-              <dt>Source</dt><dd>{{.SourceIP}}</dd>
-              <dt>Auth</dt><dd>{{.AuthMethod}}</dd>
-              <dt>Reason</dt><dd>{{.Reason}}</dd>
-              {{if .TargetTokenID}}<dt>Target token ID</dt><dd><code>{{.TargetTokenID}}</code></dd>{{end}}
-              {{if .ActorTokenID}}<dt>Actor token ID</dt><dd><code>{{.ActorTokenID}}</code></dd>{{end}}
-              {{if .OIDCSubject}}<dt>OIDC subject</dt><dd><code>{{.OIDCSubject}}</code></dd>{{end}}
-            </dl></details>
-          </td>
-        </tr>{{end}}</tbody>
-      </table></div>{{else}}<div class="empty">{{if .Query}}No audit events match this filter.{{else}}No audit events have been recorded yet.{{end}}</div>{{end}}
-      {{if .Pagination.Total}}<nav class="list-pagination" aria-label="Audit log pages">
-        <span>{{.Pagination.Total}} events &middot; page {{.Pagination.Page}} of {{.Pagination.TotalPages}}</span>
-        {{template "page-size-control" .Pagination}}
-        <span class="list-pagination-links">
-          {{if .Pagination.HasPrev}}<a href="{{.Pagination.PrevURL}}">Previous</a>{{else}}<span class="list-pagination-disabled">Previous</span>{{end}}
-          {{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">Next</a>{{else}}<span class="list-pagination-disabled">Next</span>{{end}}
-        </span>
-      </nav>{{end}}
-    </section>
-  </main>
-</body>
-</html>
+{{define "page-title"}}{{.Title}}{{end}}
+
+{{define "page-styles"}}<link rel="stylesheet" href="/assets/manage-audit.css">{{end}}
+
+{{define "page-subtitle"}}<div class="subtitle">Persistent security events for administrative changes, publication, authentication, and module deletion. Force-delete comments are shown with their target and request ID.</div>{{end}}
+
+{{define "page-content"}}
+{{template "page-header" .}}
+
+<section class="panel list-panel report-panel" id="audit-list" data-async-list aria-label="Security audit events">
+  {{template "list-filter" .Filter}}
+  {{if .Events}}<div class="table-wrap"><table>
+    <thead><tr><th scope="col">When</th><th scope="col">Event</th><th scope="col">Actor</th><th scope="col">Target</th><th scope="col">Details</th></tr></thead>
+    <tbody>{{range .Events}}<tr>
+      <td><time datetime="{{.OccurredAt}}"><span>{{.OccurredDate}}</span><span>{{.OccurredTime}}</span></time></td>
+      <td class="event"><span class="action">{{.Action}}</span><span class="result {{.Result}}">{{.Result}}</span>{{if ne .Reason "none"}}<div class="context">{{.Reason}}</div>{{end}}</td>
+      <td class="actor"><strong>{{.Actor}}</strong><span>{{.AuthMethod}}</span></td>
+      <td class="target"><code>{{.Target}}</code></td>
+      <td class="details">
+        {{if .Details}}<div class="change-summary">{{.Details}}</div>{{end}}
+        {{if .Justification}}<div class="comment"><strong>Comment</strong>{{.Justification}}</div>{{end}}
+        {{if and (not .Details) (not .Justification)}}<span class="context">No additional details</span>{{end}}
+        <details class="technical-context"><summary>Technical context</summary><dl>
+          <dt>Request</dt><dd><code>{{.RequestID}}</code></dd>
+          <dt>Source</dt><dd>{{.SourceIP}}</dd>
+          <dt>Auth</dt><dd>{{.AuthMethod}}</dd>
+          <dt>Reason</dt><dd>{{.Reason}}</dd>
+          {{if .TargetTokenID}}<dt>Target token ID</dt><dd><code>{{.TargetTokenID}}</code></dd>{{end}}
+          {{if .ActorTokenID}}<dt>Actor token ID</dt><dd><code>{{.ActorTokenID}}</code></dd>{{end}}
+          {{if .OIDCSubject}}<dt>OIDC subject</dt><dd><code>{{.OIDCSubject}}</code></dd>{{end}}
+        </dl></details>
+      </td>
+    </tr>{{end}}</tbody>
+  </table></div>{{else}}<div class="empty">{{if .Query}}No audit events match this filter.{{else}}No audit events have been recorded yet.{{end}}</div>{{end}}
+  {{template "pagination" (paginationView .Pagination "events" "list-pagination" "Audit log pages")}}
+</section>
+{{end}}

@@ -512,7 +512,38 @@ type pageSizeOption struct {
 	Selected bool
 }
 
-var csrfFuncs = template.FuncMap{
+type noticeData struct {
+	Message string
+	Error   string
+}
+
+type paginationViewData struct {
+	Pages paginationData
+	Unit  string
+	Class string
+	Label string
+}
+
+type publishFormData struct {
+	Spaces     []string
+	CSRFToken  string
+	Next       string
+	Target     string
+	SpaceID    string
+	ArchiveID  string
+	CanReplace bool
+}
+
+var pageFuncs = template.FuncMap{
+	"notices": func(message, failure string) noticeData {
+		return noticeData{Message: message, Error: failure}
+	},
+	"paginationView": func(pages paginationData, unit, class, label string) paginationViewData {
+		return paginationViewData{Pages: pages, Unit: unit, Class: class, Label: label}
+	},
+	"publishForm": func(spaces []string, csrfToken, next, target, spaceID, archiveID string, canReplace bool) publishFormData {
+		return publishFormData{Spaces: spaces, CSRFToken: csrfToken, Next: next, Target: target, SpaceID: spaceID, ArchiveID: archiveID, CanReplace: canReplace}
+	},
 	"csrfInput": func(token string) template.HTML {
 		// #nosec G203 -- token is HTML-escaped before constructing the fixed hidden input element.
 		return template.HTML(`<input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(token) + `">`)
@@ -529,59 +560,64 @@ var csrfFuncs = template.FuncMap{
 //go:embed templates/*.gohtml
 var templateFS embed.FS
 
-//go:embed templates/manage-layout.css
-var manageLayoutCSS string
+//go:embed assets/*
+var assetFS embed.FS
 
-func serveManageLayoutCSS(w http.ResponseWriter, req *http.Request) {
+func serveStaticAsset(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodGet && req.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	name := strings.TrimPrefix(req.URL.Path, "/assets/")
+	content, err := assetFS.ReadFile("assets/" + name)
+	if err != nil {
+		http.NotFound(w, req)
+		return
+	}
 	w.Header().Set("Cache-Control", "no-cache")
-	http.ServeContent(w, req, "manage-layout.css", time.Time{}, strings.NewReader(manageLayoutCSS))
+	http.ServeContent(w, req, name, time.Time{}, bytes.NewReader(content))
 }
 
-func mustParseTemplate(filename string) *template.Template {
-	return template.Must(template.New(filename).ParseFS(templateFS, "templates/"+filename))
+func mustParsePage(filename, layout string) *template.Template {
+	files := []string{
+		"templates/layout.gohtml", "templates/manage-navigation.gohtml", "templates/public-navigation.gohtml",
+		"templates/manage-module-card.gohtml", "templates/list-filter.gohtml", "templates/pagination.gohtml", "templates/publish-form.gohtml",
+	}
+	if layout != "" {
+		files = append(files, "templates/"+layout)
+	}
+	files = append(files, "templates/"+filename)
+	return template.Must(template.New(filename).Funcs(pageFuncs).ParseFS(templateFS, files...))
 }
 
-func mustParsePublicTemplate(filename string) *template.Template {
-	return template.Must(template.New(filename).ParseFS(templateFS, "templates/public-navigation.gohtml", "templates/list-filter.gohtml", "templates/clipboard.gohtml", "templates/page-size-persistence.gohtml", "templates/async-lists.gohtml", "templates/"+filename))
-}
+var manageLoginTemplate = mustParsePage("manage-login.gohtml", "")
 
-func mustParseCSRFTemplate(filename string) *template.Template {
-	return template.Must(template.New(filename).Funcs(csrfFuncs).ParseFS(templateFS, "templates/manage-navigation.gohtml", "templates/manage-module-card.gohtml", "templates/list-filter.gohtml", "templates/clipboard.gohtml", "templates/page-size-persistence.gohtml", "templates/async-lists.gohtml", "templates/"+filename))
-}
+var managePageTemplate = mustParsePage("manage-page.gohtml", "manage-layout.gohtml")
 
-var manageLoginTemplate = mustParseTemplate("manage-login.gohtml")
+var manageOverviewTemplate = mustParsePage("manage-overview.gohtml", "manage-layout.gohtml")
 
-var managePageTemplate = mustParseCSRFTemplate("manage-page.gohtml")
+var manageAccessTemplate = mustParsePage("manage-access.gohtml", "manage-layout.gohtml")
 
-var manageOverviewTemplate = mustParseCSRFTemplate("manage-overview.gohtml")
+var manageAccessAddTeamTemplate = mustParsePage("manage-access-add-team.gohtml", "manage-layout.gohtml")
 
-var manageAccessTemplate = mustParseCSRFTemplate("manage-access.gohtml")
+var managePublishSpacesTemplate = mustParsePage("manage-publish-spaces.gohtml", "manage-layout.gohtml")
 
-var manageAccessAddTeamTemplate = mustParseCSRFTemplate("manage-access-add-team.gohtml")
+var manageLegacyUsageTemplate = mustParsePage("manage-legacy-usage.gohtml", "manage-layout.gohtml")
 
-var managePublishSpacesTemplate = mustParseCSRFTemplate("manage-publish-spaces.gohtml")
+var manageAuditTemplate = mustParsePage("manage-audit.gohtml", "manage-layout.gohtml")
 
-var manageLegacyUsageTemplate = mustParseCSRFTemplate("manage-legacy-usage.gohtml")
+var manageTokenCreatedTemplate = mustParsePage("manage-token-created.gohtml", "manage-layout.gohtml")
 
-var manageAuditTemplate = mustParseCSRFTemplate("manage-audit.gohtml")
+var manageForceDeleteTemplate = mustParsePage("manage-force-delete.gohtml", "manage-layout.gohtml")
 
-var manageTokenCreatedTemplate = mustParseCSRFTemplate("manage-token-created.gohtml")
+var manageTeamsTemplate = mustParsePage("manage-teams.gohtml", "manage-layout.gohtml")
 
-var manageForceDeleteTemplate = mustParseCSRFTemplate("manage-force-delete.gohtml")
+var manageTeamTemplate = mustParsePage("manage-team.gohtml", "manage-layout.gohtml")
 
-var manageTeamsTemplate = mustParseCSRFTemplate("manage-teams.gohtml")
+var indexPageTemplate = mustParsePage("index-page.gohtml", "public-layout.gohtml")
 
-var manageTeamTemplate = mustParseCSRFTemplate("manage-team.gohtml")
-
-var indexPageTemplate = mustParsePublicTemplate("index-page.gohtml")
-
-var modulePageTemplate = mustParsePublicTemplate("module-page.gohtml")
+var modulePageTemplate = mustParsePage("module-page.gohtml", "public-layout.gohtml")
 
 func executeHTMLTemplate(w http.ResponseWriter, tmpl *template.Template, data any) {
 	executeHTMLTemplateNamed(w, tmpl, "", data)

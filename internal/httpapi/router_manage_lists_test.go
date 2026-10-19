@@ -234,14 +234,22 @@ func TestManageListTemplatesExposeAsyncFiltersAndPagination(t *testing.T) {
 		`href="/manage/admin/spaces?page=2&amp;q=primary#publish-space-list"`,
 		`data-href="/manage/modules?q=platform%2F"`,
 		`aria-label="View modules in platform publish space"`,
-		`event.target.closest("a, button, input, select, textarea, form")`,
-		`event.key !== "Enter" && event.key !== " "`,
+		`src="/assets/manage-publish-spaces.js"`,
 		`<span class="muted">Official Forge</span>`,
 		`<span class="badge upstream">Upstream</span>`,
 		`<span class="badge read-only">Read only</span>`,
 	} {
 		if !strings.Contains(spacesPage.String(), want) {
 			t.Fatalf("publish spaces page misses %q:\n%s", want, spacesPage.String())
+		}
+	}
+	script := testAssetSource(t, "manage-publish-spaces.js")
+	for _, want := range []string{
+		`event.target.closest("a, button, input, select, textarea, form")`,
+		`event.key !== "Enter" && event.key !== " "`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("publish spaces controller misses %q", want)
 		}
 	}
 }

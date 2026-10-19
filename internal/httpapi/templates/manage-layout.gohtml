@@ -1,0 +1,8 @@
+{{define "layout-styles"}}<link rel="stylesheet" href="/assets/manage.css">{{end}}
+{{define "page-navigation"}}{{template "manage-navigation" .Navigation}}{{end}}
+{{define "layout-scripts"}}
+<script nonce="{{.Navigation.CSPNonce}}" src="/assets/notices.js" defer></script>
+<script nonce="{{.Navigation.CSPNonce}}" src="/assets/page-size-persistence.js" defer></script>
+<script nonce="{{.Navigation.CSPNonce}}" src="/assets/async-lists.js" defer></script>
+<script nonce="{{.Navigation.CSPNonce}}" src="/assets/sections.js" defer></script>
+{{end}}

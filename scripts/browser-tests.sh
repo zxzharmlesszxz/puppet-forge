@@ -50,7 +50,7 @@ if ! "${DOCKER:-docker}" run --rm --init --ipc=host \
   --tmpfs /work:rw,exec,nosuid,size=768m \
   --workdir /work \
   "${PLAYWRIGHT_IMAGE:?PLAYWRIGHT_IMAGE is required}" \
-  sh -c 'mkdir -p testdata internal/httpapi && cp /source/package.json /source/package-lock.json /source/playwright.config.js . && cp -R /source/testdata/browser testdata/browser && cp -R /source/internal/httpapi/templates internal/httpapi/templates && npm ci && npm run test:browser'; then
+  sh -c 'mkdir -p testdata internal/httpapi && cp /source/package.json /source/package-lock.json /source/playwright.config.js . && cp -R /source/testdata/browser testdata/browser && cp -R /source/internal/httpapi/assets internal/httpapi/assets && npm ci && npm run test:browser'; then
   cat "$fixture_log" >&2
   exit 1
 fi

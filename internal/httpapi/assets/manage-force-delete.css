@@ -1,0 +1,35 @@
+:root { --danger: #9a4038; }
+
+h1 { margin:0 0 8px; }
+
+.subtitle { margin: 0 0 20px; line-height: 1.5; }
+
+.panel { border-color:#d6a09b; }
+
+.resource { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 18px; margin: 0 0 20px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+
+.resource dt { color: var(--muted); font-weight: 700; }
+
+.resource dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+
+.badge { min-height: 24px; margin-right: 6px; padding: 2px 8px; border-color: #d6a09b; background: #fff4f2; color: var(--danger); }
+
+.content-panel form { display: grid; gap: 16px; width: 100%; }
+
+input { margin-top: 6px; }
+
+input:focus { border-color: #b56760; outline: 3px solid #f2d7d4; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.danger-button, .cancel { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 16px; border-radius: 6px; font: inherit; font-weight: 800; text-decoration: none; }
+
+.danger-button { border: 1px solid var(--danger); background: var(--danger); color: #fff; cursor: pointer; }
+
+.danger-button:hover, .danger-button:focus-visible { background: #7f312b; outline: none; }
+
+.cancel { border: 1px solid var(--line); background: #fff; color: var(--accent); }
+
+.cancel:hover, .cancel:focus-visible { border-color: var(--accent); outline: none; }
+
+@media (max-width: 640px) { main { padding: 24px 14px 40px; } .panel { padding: 16px; } .resource { grid-template-columns: 1fr; gap: 3px; } }

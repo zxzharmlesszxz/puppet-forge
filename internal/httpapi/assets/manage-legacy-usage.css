@@ -1,0 +1,21 @@
+.subtitle { max-width: 850px; line-height: 1.5; }
+
+th, td { padding: 12px 15px; vertical-align: top; }
+
+a:hover, a:focus-visible { text-decoration: underline; }
+
+.consumer { min-width: 180px; }
+
+.consumer strong, .consumer span { display: block; }
+
+.consumer span { margin-top: 3px; color: var(--muted); font-size: 12px; }
+
+.version { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.legacy-version { color: var(--legacy); font-weight: 700; }
+
+time { white-space: nowrap; color: var(--muted); font-size: 13px; }
+
+.observations { text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 760px) { main { padding-inline: 12px; } h1 { font-size: 27px; } th, td { padding-inline: 11px; } }
