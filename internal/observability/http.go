@@ -3,6 +3,7 @@ package observability
 import (
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -73,7 +74,7 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 				if !rec.headerWritten {
 					http.Error(rec, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				}
-				slog.Default().Error("http handler panic", "panic", recovered, "request_id", RequestID(r.Context()), "method", r.Method, "path", r.URL.Path, "route", route)
+				slog.Default().Error("http handler panic", "panic", recovered, "stack", string(debug.Stack()), "request_id", RequestID(r.Context()), "method", r.Method, "path", r.URL.Path, "route", route)
 				if !rec.headerWritten {
 					rec.status = http.StatusInternalServerError
 				}
@@ -85,7 +86,11 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 			m.requestsTotal.WithLabelValues(r.Method, route, status).Inc()
 			m.requestDuration.WithLabelValues(r.Method, route, status).Observe(duration)
 
-			slog.Default().Info("http request",
+			level := slog.LevelInfo
+			if (r.URL.Path == "/healthz" || r.URL.Path == "/readyz") && rec.status < http.StatusBadRequest {
+				level = slog.LevelDebug
+			}
+			slog.Default().Log(r.Context(), level, "http request",
 				"request_id", RequestID(r.Context()),
 				"method", r.Method,
 				"path", r.URL.Path,

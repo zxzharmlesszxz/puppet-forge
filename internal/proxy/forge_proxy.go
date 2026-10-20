@@ -1084,7 +1084,7 @@ func relayUpstreamResponse(w http.ResponseWriter, resp *http.Response, body []by
 
 func writeProxyError(w http.ResponseWriter, status int, message string) {
 	if status >= http.StatusInternalServerError {
-		slog.Error("upstream proxy request failed", "status", status, "err", message)
+		slog.Error("upstream proxy request failed", "request_id", w.Header().Get("X-Request-ID"), "status", status, "err", message)
 		message = "upstream service is unavailable"
 	}
 	http.Error(w, message, status)
@@ -1212,10 +1212,12 @@ func (p *ForgeProxy) serveStoredArtifact(w http.ResponseWriter, req *http.Reques
 	result := "success"
 	if err != nil {
 		result = "error"
+		level := slog.LevelWarn
 		if req.Context().Err() != nil {
 			result = "client_cancel"
+			level = slog.LevelDebug
 		}
-		slog.Warn("stream cached upstream artifact", "err", err, "object_path", objectPath)
+		slog.Log(req.Context(), level, "stream cached upstream artifact", "request_id", req.Header.Get("X-Request-ID"), "path", req.URL.Path, "result", result, "bytes", written, "err", err, "object_path", objectPath)
 	}
 	metrics.ObserveArtifactStream("upstream_cache", result, written)
 }

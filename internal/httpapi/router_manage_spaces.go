@@ -42,7 +42,7 @@ func (r *Router) managePublishSpacesPage(w http.ResponseWriter, req *http.Reques
 		}
 		if err != nil {
 			r.audit(req, principal, "change_publish_spaces", "failure", auditReason(err), "assignment_action", req.FormValue("action"), "team", req.FormValue("team"), "space", req.FormValue("space"))
-			redirectManageResult(w, req, "/manage/admin/spaces", "error", err.Error())
+			redirectManageResult(w, req, "/manage/admin/spaces", "error", manageErrorMessage(w, manageFormErrorStatus(err), err))
 			return
 		}
 		r.audit(req, principal, "change_publish_spaces", "success", "none", "assignment_action", req.FormValue("action"), "team", req.FormValue("team"), "space", req.FormValue("space"))
@@ -123,7 +123,7 @@ func (r *Router) publishSpaceConfigsFromForm(req *http.Request) ([]auth.TeamConf
 
 	configs, err := r.modules.LoadTeamConfigs(req.Context())
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("%w: %w", errManageBackend, err)
 	}
 	cfg := findAccessConfig(configs, team)
 	if cfg == nil || isGlobalAdminConfig(*cfg) {
@@ -140,7 +140,7 @@ func (r *Router) publishSpaceConfigsFromForm(req *http.Request) ([]auth.TeamConf
 	if action == "assign" {
 		upstreamSpaces, err := r.modules.CountUpstreamModulesByOwner(req.Context())
 		if err != nil {
-			return nil, "", err
+			return nil, "", fmt.Errorf("%w: %w", errManageBackend, err)
 		}
 		if _, upstream := upstreamSpaces[space]; upstream {
 			return nil, "", fmt.Errorf("publish space %q belongs to Official Forge and is read only", space)

@@ -41,7 +41,7 @@ func (r *Router) manageAccessTokenPage(w http.ResponseWriter, req *http.Request)
 	next := manageReturnPath(req, "/manage/teams/"+team+"/tokens")
 	configs, err := r.modules.LoadTeamConfigs(req.Context())
 	if err != nil {
-		redirectManageResult(w, req, next, "error", err.Error())
+		redirectManageResult(w, req, next, "error", manageErrorMessage(w, http.StatusInternalServerError, err))
 		return
 	}
 	cfg := findAccessConfig(configs, team)

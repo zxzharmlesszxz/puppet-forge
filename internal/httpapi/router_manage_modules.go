@@ -359,7 +359,7 @@ func (r *Router) manageUpstreamModule(w http.ResponseWriter, req *http.Request) 
 	}
 	if err := r.modules.SyncUpstreamModule(req.Context(), owner, name); err != nil {
 		r.audit(req, principal, "import_upstream_module", "failure", auditReason(err), "module", owner+"/"+name)
-		respondManageMutationError(w, req, err)
+		respondManageMutationServiceError(w, req, err)
 		return
 	}
 	r.audit(req, principal, "import_upstream_module", "success", "none", "module", owner+"/"+name)
@@ -602,15 +602,11 @@ func respondManageMutationHTTPError(w http.ResponseWriter, req *http.Request, st
 		writeError(w, status, err)
 		return
 	}
-	redirectManageError(w, req, err)
+	redirectManageError(w, req, status, err)
 }
 
 func respondManageMutationServiceError(w http.ResponseWriter, req *http.Request, err error) {
-	if isAsyncManageMutation(req) {
-		writeServiceError(w, err)
-		return
-	}
-	redirectManageError(w, req, err)
+	respondManageMutationHTTPError(w, req, serviceErrorStatus(err), err)
 }
 
 func respondManageMutationSuccess(w http.ResponseWriter, req *http.Request, fallback, message, refreshTarget, removeTarget string) {
@@ -656,14 +652,23 @@ func parseUpstreamModuleFormValue(raw string) (string, string, error) {
 	return owner, name, nil
 }
 
-func redirectManageError(w http.ResponseWriter, req *http.Request, err error) {
+func manageErrorMessage(w http.ResponseWriter, status int, err error) string {
+	logHTTPError(w, status, err)
+	message := safeErrorMessage(status, err)
+	if requestID := w.Header().Get(requestIDHeader); status >= http.StatusInternalServerError && requestID != "" {
+		message += " (request_id: " + requestID + ")"
+	}
+	return message
+}
+
+func redirectManageError(w http.ResponseWriter, req *http.Request, status int, err error) {
 	target := manageErrorReturnPath(req, "/manage/modules")
 	separator := "?"
 	if strings.Contains(target, "?") {
 		separator = "&"
 	}
 	// #nosec G710 -- manageErrorReturnPath accepts only validated local force-delete paths or a fixed local fallback.
-	http.Redirect(w, req, target+separator+"error="+url.QueryEscape(err.Error()), http.StatusFound)
+	http.Redirect(w, req, target+separator+"error="+url.QueryEscape(manageErrorMessage(w, status, err)), http.StatusFound)
 }
 
 func redirectManageResult(w http.ResponseWriter, req *http.Request, fallback, key, message string) {

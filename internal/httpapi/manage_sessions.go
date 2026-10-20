@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"time"
 
+	"github.com/zxzharmlesszxz/puppet-forge/internal/observability"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
@@ -63,6 +65,9 @@ func (s *manageSessionStore) Session(ctx context.Context, sessionID string, now 
 		return store.ManageSession{}, false
 	}
 	session, err := s.backend.GetManageSession(ctx, s.hashSessionID(sessionID), now.UTC())
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		slog.Error("read manage session failed", "request_id", observability.RequestID(ctx), "err", err)
+	}
 	return session, err == nil
 }
 

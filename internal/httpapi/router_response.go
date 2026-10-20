@@ -11,6 +11,7 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/httputil"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/observability"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/service"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/storage"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
@@ -28,9 +29,7 @@ func writeError(w http.ResponseWriter, status int, err error) {
 	code := errorCode(status, err)
 	message := safeErrorMessage(status, err)
 	requestID := w.Header().Get(requestIDHeader)
-	if status >= http.StatusInternalServerError {
-		slog.Error("http request failed", "request_id", requestID, "status", status, "error_code", code, "err", err)
-	}
+	logHTTPError(w, status, err)
 	writeJSON(w, status, map[string]string{
 		"error":      message,
 		"code":       code,
@@ -38,7 +37,17 @@ func writeError(w http.ResponseWriter, status int, err error) {
 	})
 }
 
+func logHTTPError(w http.ResponseWriter, status int, err error) {
+	if status >= http.StatusInternalServerError {
+		slog.Error("http request failed", "request_id", w.Header().Get(requestIDHeader), "status", status, "error_code", errorCode(status, err), "err", err)
+	}
+}
+
 func writeServiceError(w http.ResponseWriter, err error) {
+	writeError(w, serviceErrorStatus(err), err)
+}
+
+func serviceErrorStatus(err error) int {
 	status := http.StatusInternalServerError
 	switch {
 	case errors.Is(err, service.ErrValidation):
@@ -50,7 +59,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, service.ErrUpstreamHydration):
 		status = http.StatusBadGateway
 	}
-	writeError(w, status, err)
+	return status
 }
 
 func errorCode(status int, err error) string {
@@ -139,7 +148,7 @@ func (r *Router) writeReleaseArchive(w http.ResponseWriter, req *http.Request, r
 	}
 	defer func() {
 		if err := object.Body.Close(); err != nil {
-			slog.Warn("close object response", "err", err)
+			slog.Warn("close object response", "request_id", observability.RequestID(req.Context()), "owner", release.Owner, "name", release.Name, "version", release.Version, "err", err)
 		}
 	}()
 	w.WriteHeader(response.Status)
@@ -147,10 +156,12 @@ func (r *Router) writeReleaseArchive(w http.ResponseWriter, req *http.Request, r
 	result := "success"
 	if err != nil {
 		result = "error"
+		level := slog.LevelWarn
 		if req.Context().Err() != nil {
 			result = "client_cancel"
+			level = slog.LevelDebug
 		}
-		slog.Warn("stream object response", "err", err)
+		slog.Log(req.Context(), level, "stream object response", "request_id", observability.RequestID(req.Context()), "owner", release.Owner, "name", release.Name, "version", release.Version, "result", result, "bytes", written, "err", err)
 	}
 	source := "local"
 	if release.Source == "upstream" {

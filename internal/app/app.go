@@ -169,7 +169,7 @@ func NewContext(ctx context.Context, cfg config.Config) (*App, error) {
 	forgeProxy.SetModuleObserver(func(ctx context.Context, module proxy.UpstreamModule, fresh bool) {
 		if fresh {
 			if err := moduleSvc.IndexUpstreamModule(ctx, module); err != nil {
-				slog.Default().Error("upstream module indexing failed", "err", err)
+				slog.Default().Error("upstream module indexing failed", "request_id", observability.RequestID(ctx), "owner", module.Owner, "name", module.Name, "err", err)
 			}
 		}
 	})

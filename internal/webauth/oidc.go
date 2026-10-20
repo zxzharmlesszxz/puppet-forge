@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/httputil"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/observability"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -181,6 +182,7 @@ func (a *OIDCAuth) Session(r *http.Request) (Session, bool) {
 	}
 	persisted, err := a.sessionStore.GetOIDCSession(r.Context(), a.hashSessionID(cookie.Value), time.Now().UTC())
 	if err != nil {
+		logOIDCStoreFailure(r.Context(), "read_session", err)
 		return Session{}, false
 	}
 	return Session{
@@ -192,19 +194,19 @@ func (a *OIDCAuth) Session(r *http.Request) (Session, bool) {
 func (a *OIDCAuth) Login(w http.ResponseWriter, r *http.Request) {
 	state, err := randomString(32)
 	if err != nil {
-		slog.Error("generate OIDC state token", "err", err)
+		slog.Error("generate OIDC state token", "request_id", observability.RequestID(r.Context()), "err", err)
 		http.Error(w, "failed to start OIDC login", http.StatusInternalServerError)
 		return
 	}
 	nonce, err := randomString(32)
 	if err != nil {
-		slog.Error("generate OIDC nonce", "err", err)
+		slog.Error("generate OIDC nonce", "request_id", observability.RequestID(r.Context()), "err", err)
 		http.Error(w, "failed to start OIDC login", http.StatusInternalServerError)
 		return
 	}
 	pkceVerifier, err := randomString(32)
 	if err != nil {
-		slog.Error("generate OIDC PKCE verifier", "err", err)
+		slog.Error("generate OIDC PKCE verifier", "request_id", observability.RequestID(r.Context()), "err", err)
 		http.Error(w, "failed to start OIDC login", http.StatusInternalServerError)
 		return
 	}
@@ -217,17 +219,19 @@ func (a *OIDCAuth) Login(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:    now,
 		ExpiresAt:    now.Add(oidcStateTTL),
 	}); err != nil {
+		logOIDCStoreFailure(r.Context(), "create_state", err)
 		http.Error(w, "failed to persist OIDC state", http.StatusInternalServerError)
 		return
 	}
 	if err := a.setStateCookie(w, r, state, r.URL.Query().Get("next")); err != nil {
-		slog.Error("encode OIDC state cookie", "err", err)
+		slog.Error("encode OIDC state cookie", "request_id", observability.RequestID(r.Context()), "err", err)
 		http.Error(w, "failed to start OIDC login", http.StatusInternalServerError)
 		return
 	}
 
 	oauth2Config := a.oauth2Config(r)
 	slog.Debug("oidc login started",
+		"request_id", observability.RequestID(r.Context()),
 		"next", safeRedirectPath(r.URL.Query().Get("next")),
 		"redirect_url", oauth2Config.RedirectURL,
 		"state_ttl", oidcStateTTL,
@@ -246,7 +250,8 @@ func (a *OIDCAuth) Callback(w http.ResponseWriter, r *http.Request) {
 	statePayload := map[string]string{}
 	if err := a.cookies.Decode(a.stateName, stateCookie.Value, &statePayload); err != nil {
 		slog.Default().Warn("decode oidc state cookie failed",
-			"err", err,
+			"request_id", observability.RequestID(r.Context()),
+			"error_type", fmt.Sprintf("%T", err),
 			"host", r.Host,
 			"path", r.URL.Path,
 			"cookie_len", len(stateCookie.Value),
@@ -264,33 +269,38 @@ func (a *OIDCAuth) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 	state, err := a.stateStore.ConsumeOIDCState(r.Context(), a.hashState(callbackState), time.Now().UTC())
 	if err != nil {
+		logOIDCStoreFailure(r.Context(), "consume_state", err)
 		a.failState(w, r, "OIDC session expired or was already used. Start login again.")
 		return
 	}
-	slog.Debug("oidc callback state accepted", "next", state.NextPath)
+	slog.Debug("oidc callback state accepted", "request_id", observability.RequestID(r.Context()), "next", state.NextPath)
 	a.clearCookie(w, a.stateName, requestIsHTTPS(r, a.publicBaseURL))
 
 	oauth2Config := a.oauth2Config(r)
 	oidcContext := context.WithValue(r.Context(), oauth2.HTTPClient, a.httpClient)
 	token, err := oauth2Config.Exchange(oidcContext, r.URL.Query().Get("code"), oauth2.VerifierOption(state.PKCEVerifier))
 	if err != nil {
+		logOIDCProtocolFailure(r, "exchange_code", err)
 		http.Error(w, "oidc exchange failed", http.StatusBadGateway)
 		return
 	}
-	slog.Debug("oidc code exchange succeeded")
+	slog.Debug("oidc code exchange succeeded", "request_id", observability.RequestID(r.Context()))
 
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok {
+		logOIDCProtocolFailure(r, "missing_id_token", nil)
 		http.Error(w, "missing id_token", http.StatusBadGateway)
 		return
 	}
 
 	idToken, err := a.verifier.Verify(oidcContext, rawIDToken)
 	if err != nil {
+		logOIDCProtocolFailure(r, "verify_id_token", err)
 		http.Error(w, "invalid id_token", http.StatusUnauthorized)
 		return
 	}
 	if !hmac.Equal([]byte(idToken.Nonce), []byte(state.Nonce)) {
+		logOIDCProtocolFailure(r, "nonce_mismatch", nil)
 		http.Error(w, "invalid id_token nonce", http.StatusUnauthorized)
 		return
 	}
@@ -302,20 +312,22 @@ func (a *OIDCAuth) Callback(w http.ResponseWriter, r *http.Request) {
 		Groups []string `json:"groups"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
+		logOIDCProtocolFailure(r, "decode_claims", err)
 		http.Error(w, "invalid claims", http.StatusUnauthorized)
 		return
 	}
-	slog.Debug("oidc id token verified", "groups", len(claims.Groups), "has_email", claims.Email != "", "has_name", claims.Name != "")
+	slog.Debug("oidc id token verified", "request_id", observability.RequestID(r.Context()), "groups", len(claims.Groups), "has_email", claims.Email != "", "has_name", claims.Name != "")
 
 	sessionID, err := a.createSession(r.Context(), Session{
 		Sub: claims.Sub, Email: claims.Email, Name: claims.Name, Groups: claims.Groups,
 	})
 	if err != nil {
+		logOIDCStoreFailure(r.Context(), "create_session", err)
 		http.Error(w, "failed to persist session", http.StatusInternalServerError)
 		return
 	}
 	a.setSessionCookie(w, r, sessionID)
-	slog.Debug("oidc session created", "next", state.NextPath, "groups", len(claims.Groups))
+	slog.Debug("oidc session created", "request_id", observability.RequestID(r.Context()), "next", state.NextPath, "groups", len(claims.Groups))
 
 	http.Redirect(w, r, state.NextPath, http.StatusFound)
 }

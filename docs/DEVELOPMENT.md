@@ -135,6 +135,26 @@ The issuer must also be reachable from the `app` container. With Docker Desktop
 and an identity provider running on the host, use `host.docker.internal` for the
 issuer host while keeping the browser-facing Forge URL as the redirect URI.
 
+## Authentication Diagnostics
+
+OIDC storage failures log the operation, `request_id`, and underlying database
+error. Expired, revoked, or missing sessions do not produce error logs.
+Protocol failures log their stage, error type, upstream HTTP status when available,
+and recognized OAuth error codes. Raw token responses, authorization codes, JWTs,
+and session cookies are not included in these diagnostics.
+
+Management forms and async mutations use the same server-error classification.
+Unexpected failures are logged once at the response boundary. HTML responses show
+a generic message with `request_id`, not the underlying database or storage error;
+async responses return the corresponding status and request ID as JSON.
+Validation messages remain visible without generating server-error logs.
+
+Proxy and artifact-stream failures include the request ID and available resource
+identity; stream logs also include the outcome and transferred bytes. Client
+cancellations and successful `/healthz` and `/readyz` requests are logged at DEBUG.
+Failed probes remain visible at INFO, with the underlying service error at ERROR.
+Recovered handler panics include a server-side stack trace, never in the response.
+
 ## Makefile
 
 Common commands:

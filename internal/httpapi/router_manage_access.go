@@ -16,6 +16,15 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
+var errManageBackend = errors.New("manage backend operation failed")
+
+func manageFormErrorStatus(err error) int {
+	if errors.Is(err, errManageBackend) {
+		return http.StatusInternalServerError
+	}
+	return http.StatusBadRequest
+}
+
 func (r *Router) manageAccessPage(w http.ResponseWriter, req *http.Request) {
 	principal, ok := r.requireManage(w, req)
 	if !ok {
@@ -56,20 +65,22 @@ func (r *Router) manageAccessPage(w http.ResponseWriter, req *http.Request) {
 		configs, message, err := r.accessConfigsFromForm(req, principal)
 		if err != nil {
 			r.audit(req, principal, auditAction, "failure", auditReason(err), auditAttrs...)
+			message := manageErrorMessage(w, manageFormErrorStatus(err), err)
 			if next := manageReturnPath(req, ""); next != "" {
-				redirectManageResult(w, req, next, "error", err.Error())
+				redirectManageResult(w, req, next, "error", message)
 				return
 			}
-			r.renderManageAccess(w, req, principal, err.Error())
+			r.renderManageAccess(w, req, principal, message)
 			return
 		}
 		if err := r.saveAccessConfigs(req.Context(), configs); err != nil {
 			r.audit(req, principal, auditAction, "failure", auditReason(err), auditAttrs...)
+			message := manageErrorMessage(w, manageFormErrorStatus(err), err)
 			if next := manageReturnPath(req, ""); next != "" {
-				redirectManageResult(w, req, next, "error", err.Error())
+				redirectManageResult(w, req, next, "error", message)
 				return
 			}
-			r.renderManageAccess(w, req, principal, err.Error())
+			r.renderManageAccess(w, req, principal, message)
 			return
 		}
 		auditAttrs = append(auditAttrs, "changes", accessConfigChangeSummary(beforeConfigs, configs, actionTeam(req)))
@@ -133,12 +144,14 @@ func (r *Router) manageAccessAddPage(w http.ResponseWriter, req *http.Request) {
 		configs, message, err := r.accessConfigsWithUpsertedTeam(req, principal)
 		if err != nil {
 			r.audit(req, principal, "create_team", "failure", auditReason(err))
-			r.renderManageAccessAddPage(w, req, principal, err.Error(), http.StatusBadRequest)
+			status := manageFormErrorStatus(err)
+			r.renderManageAccessAddPage(w, req, principal, manageErrorMessage(w, status, err), status)
 			return
 		}
 		if err := r.saveAccessConfigs(req.Context(), configs); err != nil {
 			r.audit(req, principal, "create_team", "failure", auditReason(err))
-			r.renderManageAccessAddPage(w, req, principal, err.Error(), http.StatusInternalServerError)
+			status := manageFormErrorStatus(err)
+			r.renderManageAccessAddPage(w, req, principal, manageErrorMessage(w, status, err), status)
 			return
 		}
 		team := strings.TrimSpace(req.FormValue("team"))
@@ -307,7 +320,7 @@ func (r *Router) accessConfigsFromForm(req *http.Request, principal auth.Princip
 func (r *Router) accessConfigsWithUpsertedTeam(req *http.Request, principal auth.Principal) ([]auth.TeamConfig, string, error) {
 	configs, err := r.modules.LoadTeamConfigs(req.Context())
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("%w: %w", errManageBackend, err)
 	}
 	if err := req.ParseForm(); err != nil {
 		return nil, "", fmt.Errorf("parse access form: %w", err)
@@ -377,7 +390,7 @@ func findAccessConfig(configs []auth.TeamConfig, team string) *auth.TeamConfig {
 func (r *Router) accessConfigsWithoutTeam(req *http.Request) ([]auth.TeamConfig, string, error) {
 	configs, err := r.modules.LoadTeamConfigs(req.Context())
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("%w: %w", errManageBackend, err)
 	}
 
 	team := strings.TrimSpace(req.FormValue("team"))
@@ -415,7 +428,7 @@ func (r *Router) saveAccessConfigs(ctx context.Context, configs []auth.TeamConfi
 		return errors.New("access config must contain at least one access credential")
 	}
 	if err := r.modules.ReplaceTeamConfigs(ctx, configs); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errManageBackend, err)
 	}
 	r.setAuthorizer(newAuthorizer, time.Now())
 	return nil
@@ -433,7 +446,7 @@ func releaseAccessConfigLock(unlock store.AccessConfigUnlock) {
 func (r *Router) renderManageAccess(w http.ResponseWriter, req *http.Request, principal auth.Principal, errorMessage string) {
 	configs, err := r.modules.LoadTeamConfigs(req.Context())
 	if err != nil && errorMessage == "" {
-		errorMessage = err.Error()
+		errorMessage = manageErrorMessage(w, http.StatusInternalServerError, err)
 	}
 	adminGroups, adminEmails, adminSubjects := globalAdminFormValues(configs)
 	csrfToken, csrfErr := r.ensureManageCSRFToken(w, req)
@@ -564,7 +577,7 @@ func extraPublishOwnersForForm(team string, owners []string) []string {
 func (r *Router) accessConfigsWithGlobalAdmins(req *http.Request) ([]auth.TeamConfig, string, error) {
 	configs, err := r.modules.LoadTeamConfigs(req.Context())
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("%w: %w", errManageBackend, err)
 	}
 	if err := req.ParseForm(); err != nil {
 		return nil, "", fmt.Errorf("parse admin access form: %w", err)

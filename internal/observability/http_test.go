@@ -1,6 +1,9 @@
 package observability
 
 import (
+	"bytes"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -129,5 +132,64 @@ func TestMiddlewareRecordsPanicAfterHeadersWithoutChangingStatus(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(middleware.panicsTotal.WithLabelValues(http.MethodGet, "/modules/*")) - beforePanics; got != 1 {
 		t.Fatalf("panic counter delta = %v, want 1", got)
+	}
+}
+
+func TestMiddlewareLogLevelsAndPanicStack(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	for _, tc := range []struct {
+		path    string
+		status  int
+		minimum slog.Level
+		want    string
+		panics  bool
+	}{
+		{"/healthz", http.StatusOK, slog.LevelInfo, "", false},
+		{"/readyz", http.StatusOK, slog.LevelInfo, "", false},
+		{"/readyz", http.StatusServiceUnavailable, slog.LevelInfo, "INFO", false},
+		{"/healthz", http.StatusOK, slog.LevelDebug, "DEBUG", false},
+		{"/manage", http.StatusOK, slog.LevelInfo, "INFO", false},
+		{"/manage", http.StatusInternalServerError, slog.LevelInfo, "INFO", true},
+	} {
+		output.Reset()
+		slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: tc.minimum})))
+		handler := NewMiddleware().Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if tc.panics {
+				panic("test-panic")
+			}
+			w.WriteHeader(tc.status)
+		}))
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		req = req.WithContext(ContextWithRequestID(req.Context(), "logging-request"))
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+		completionLevel := ""
+		foundStack := false
+		for line := range strings.SplitSeq(strings.TrimSpace(output.String()), "\n") {
+			if line == "" {
+				continue
+			}
+			var record map[string]any
+			if err := json.Unmarshal([]byte(line), &record); err != nil {
+				t.Fatal(err)
+			}
+			if record["request_id"] != "logging-request" {
+				t.Errorf("log misses request ID: %s", line)
+			}
+			if record["msg"] == "http request" {
+				completionLevel, _ = record["level"].(string)
+			}
+			if record["msg"] == "http handler panic" {
+				stack, _ := record["stack"].(string)
+				foundStack = strings.Contains(stack, "runtime/debug.Stack") && record["level"] == "ERROR"
+			}
+		}
+		if completionLevel != tc.want {
+			t.Errorf("%s status %d: level=%q, want %q", tc.path, tc.status, completionLevel, tc.want)
+		}
+		if tc.panics && !foundStack {
+			t.Error("panic diagnostic misses stack trace")
+		}
 	}
 }
