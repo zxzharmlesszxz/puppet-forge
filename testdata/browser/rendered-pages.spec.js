@@ -1,8 +1,8 @@
 const { test, expect } = require("@playwright/test");
 
-async function signIn(page) {
+async function signIn(page, token = "admin-token") {
   await page.goto("/manage/login");
-  await page.locator("#token").fill("admin-token");
+  await page.locator("#token").fill(token);
   await Promise.all([
     page.waitForURL("**/manage"),
     page.locator('button[type="submit"]').click(),
@@ -53,15 +53,27 @@ test("shared styles preserve panel, badge, and control dimensions", async ({ pag
   expect(await page.locator(".team-row .badge").first().evaluate((element) => getComputedStyle(element).minHeight)).toBe("26px");
 
   await page.goto("/manage/teams/teamname/modules");
+  await expect(page.locator("#team-module-archive")).toHaveCount(0);
   const heights = await page.evaluate(() => [
-    ".meta .badge", "#team-module-archive", ".replace-option input", ".page-size-control select",
+    ".meta .badge", ".page-size-control select",
   ].map((selector) => {
     const element = document.querySelector(selector);
     if (!element) throw new Error(`missing control: ${selector}`);
     const style = getComputedStyle(element);
     return selector.endsWith(".badge") ? style.minHeight : style.height;
   }));
-  expect(heights).toEqual(["24px", "42px", "18px", "32px"]);
+  expect(heights).toEqual(["24px", "32px"]);
+});
+
+test("publisher upload controls use shared dimensions without replacement privileges", async ({ page }) => {
+  await signIn(page, "browser-publish-token");
+  await page.goto("/manage/modules");
+  const archive = page.locator("#module-archive-input");
+  await expect(archive).toHaveCount(1);
+  await archive.locator("xpath=ancestor::details").evaluate((element) => { element.open = true; });
+  await expect(archive).toBeVisible();
+  expect(await archive.evaluate((element) => getComputedStyle(element).height)).toBe("42px");
+  await expect(page.locator(".replace-option input")).toHaveCount(0);
 });
 
 test("public and manage catalogs share the same search component", async ({ page }) => {

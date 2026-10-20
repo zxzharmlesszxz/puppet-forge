@@ -38,7 +38,11 @@ func (fixtureStorage) Stat(context.Context, string) (storage.ObjectAttrs, error)
 
 func main() {
 	ctx := context.Background()
-	metadataStore, err := store.NewSQLiteStore("sqlite://:memory:")
+	tokenHasher, err := auth.NewTokenHasher("browser-fixture-token-pepper-32-bytes")
+	if err != nil {
+		log.Fatal(err)
+	}
+	metadataStore, err := store.NewSQLiteStore("sqlite://:memory:", tokenHasher)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -75,14 +79,13 @@ func main() {
 	}
 
 	moduleService := service.NewModuleService(metadataStore, fixtureStorage{}, "modules", nil)
-	if err := moduleService.ReplaceTeamConfigs(ctx, []auth.TeamConfig{{Team: "teamname"}, {Team: "platform"}}); err != nil {
+	if err := moduleService.ReplaceTeamConfigs(ctx, []auth.TeamConfig{
+		{Team: "teamname", PublishTokens: []string{"browser-publish-token"}},
+		{Team: "platform"},
+	}); err != nil {
 		log.Fatal(err)
 	}
 	authorizer, err := auth.NewAuthorizer(nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	tokenHasher, err := auth.NewTokenHasher("browser-fixture-token-pepper-32-bytes")
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -1,5 +1,5 @@
 {{define "publish-form"}}
-<form method="post" action="/manage/modules" enctype="multipart/form-data" data-async-mutation data-refresh-target="{{.Target}}">
+<form class="compact-fields" method="post" action="/manage/modules" enctype="multipart/form-data" data-async-mutation data-refresh-target="{{.Target}}">
   {{csrfInput .CSRFToken}}
   {{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}
   <div class="grid">
