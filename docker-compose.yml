@@ -9,8 +9,8 @@ services:
         condition: service_healthy
       gcs:
         condition: service_started
-      minio-init:
-        condition: service_completed_successfully
+      seaweedfs:
+        condition: service_healthy
     environment:
       APP_ENV: dev
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -38,13 +38,13 @@ services:
 #      ARTIFACT_ENDPOINT: http://gcs:4443
 #      ARTIFACT_GCS_ANONYMOUS: "true"
       # gcs
-      # minio
+      # s3
       ARTIFACT_BACKEND: s3
-      ARTIFACT_ENDPOINT: http://minio:9000
-      ARTIFACT_ACCESS_KEY_ID: minioadmin
-      ARTIFACT_SECRET_ACCESS_KEY: minioadmin
-      ARTIFACT_PATH_STYLE: true
-      # minio
+      ARTIFACT_ENDPOINT: http://seaweedfs:8333
+      ARTIFACT_ACCESS_KEY_ID: forge-local
+      ARTIFACT_SECRET_ACCESS_KEY: forge-local-secret
+      ARTIFACT_PATH_STYLE: "true"
+      # s3
       ARTIFACT_BUCKET: puppet-forge-artifacts
       ARTIFACT_PROJECT: local-dev
       ARTIFACT_ENSURE_BUCKET: "true"
@@ -116,39 +116,32 @@ services:
     ports:
       - "4443:4443"
 
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
     command:
-      - server
-      - /data
-      - --console-address
-      - :9001
+      - mini
+      - -dir=/data
+      - -ip=seaweedfs
+      - -ip.bind=0.0.0.0
+      - -master.volumeSizeLimitMB=128
+      - -master.telemetry=false
+      - -s3.autoCreateBucket=false
+      - -s3.allowDeleteBucketNotEmpty=false
+      - -webdav=false
+      - -admin.ui=false
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      AWS_ACCESS_KEY_ID: forge-local
+      AWS_SECRET_ACCESS_KEY: forge-local-secret
+      S3_BUCKET: puppet-forge-artifacts
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "http://localhost:8333/readyz"]
       interval: 5s
       timeout: 5s
       retries: 20
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:8333:8333"
     volumes:
-      - minio-data:/data
-
-  minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint:
-      - /bin/sh
-      - -lc
-    command:
-      - >
-        mc alias set local http://minio:9000 minioadmin minioadmin &&
-        mc mb --ignore-existing local/puppet-forge-artifacts
+      - seaweedfs-data:/data
 
   prometheus:
     image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
@@ -280,4 +273,4 @@ volumes:
   grafana-data:
   postgres-data:
   prometheus-data:
-  minio-data:
+  seaweedfs-data:

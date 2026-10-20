@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -59,20 +60,39 @@ func TestS3StorageIntegrationLifecycle(t *testing.T) {
 	verifyArtifactStorageLifecycle(t, ctx, storage, key, original)
 
 	concurrentKey := "modules/teamname/module/2.0.0/sha256.tar.gz"
-	payloads := [][]byte{[]byte("first concurrent body"), []byte("second concurrent body")}
+	payloads := make([][]byte, 8)
+	for i := range payloads {
+		payloads[i] = []byte(fmt.Sprintf("concurrent body %d", i))
+	}
 	createdResults := make([]bool, len(payloads))
 	errorsByUpload := make([]error, len(payloads))
 	var wg sync.WaitGroup
 	for i, payload := range payloads {
 		wg.Go(func() {
-			createdResults[i], errorsByUpload[i] = storage.UploadReaderIfAbsent(ctx, concurrentKey, "application/gzip", bytes.NewReader(payload))
+			client, err := NewS3Storage(ctx, endpoint, "us-east-1", bucket,
+				os.Getenv("PUPPET_FORGE_TEST_S3_ACCESS_KEY_ID"), os.Getenv("PUPPET_FORGE_TEST_S3_SECRET_ACCESS_KEY"), true)
+			if err != nil {
+				errorsByUpload[i] = err
+				return
+			}
+			createdResults[i], errorsByUpload[i] = client.UploadReaderIfAbsent(ctx, concurrentKey, "application/gzip", bytes.NewReader(payload))
 		})
 	}
 	wg.Wait()
 	if errors.Join(errorsByUpload...) != nil {
 		t.Fatalf("concurrent upload errors = %v", errorsByUpload)
 	}
-	if createdResults[0] == createdResults[1] {
+	winner := -1
+	for i, created := range createdResults {
+		if !created {
+			continue
+		}
+		if winner != -1 {
+			t.Fatalf("concurrent create results = %#v, want exactly one winner", createdResults)
+		}
+		winner = i
+	}
+	if winner == -1 {
 		t.Fatalf("concurrent create results = %#v, want exactly one winner", createdResults)
 	}
 	concurrentObject, err := storage.Open(ctx, concurrentKey)
@@ -84,7 +104,7 @@ func TestS3StorageIntegrationLifecycle(t *testing.T) {
 	if err := errors.Join(readErr, closeErr); err != nil {
 		t.Fatalf("read concurrent object: %v", err)
 	}
-	if !bytes.Equal(concurrentBody, payloads[0]) && !bytes.Equal(concurrentBody, payloads[1]) {
+	if !bytes.Equal(concurrentBody, payloads[winner]) {
 		t.Fatalf("concurrent object contains unexpected bytes: %q", concurrentBody)
 	}
 

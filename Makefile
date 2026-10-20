@@ -166,7 +166,7 @@ test-postgres: ## Run store parity and concurrent schema tests against PostgreSQ
 	@test -n "$(PUPPET_FORGE_TEST_POSTGRES_DSN)" || (echo "PUPPET_FORGE_TEST_POSTGRES_DSN is required"; exit 1)
 	PUPPET_FORGE_TEST_POSTGRES_DSN="$(PUPPET_FORGE_TEST_POSTGRES_DSN)" $(GO) test -buildvcs=false ./internal/store -run 'TestStoreParity|TestPostgresStoreConcurrentSchemaSetup'
 
-test-s3-storage: ## Run S3 lifecycle integration tests against MinIO or another S3-compatible endpoint.
+test-s3-storage: ## Run S3 lifecycle integration tests against an S3-compatible endpoint.
 	@test -n "$(PUPPET_FORGE_TEST_S3_ENDPOINT)" || (echo "PUPPET_FORGE_TEST_S3_ENDPOINT is required"; exit 1)
 	PUPPET_FORGE_TEST_S3_ENDPOINT="$(PUPPET_FORGE_TEST_S3_ENDPOINT)" \
 	PUPPET_FORGE_TEST_S3_ACCESS_KEY_ID="$(PUPPET_FORGE_TEST_S3_ACCESS_KEY_ID)" \
@@ -224,7 +224,7 @@ coverage-integration-check: coverage-integration ## Enforce the merged integrati
 coverage-integration-docker: ## Run merged integration coverage with disposable local service containers.
 	DOCKER="$(DOCKER)" \
 	POSTGRES_TEST_IMAGE="$(POSTGRES_TEST_IMAGE)" \
-	MINIO_TEST_IMAGE="$(MINIO_TEST_IMAGE)" \
+	S3_TEST_IMAGE="$(S3_TEST_IMAGE)" \
 	GCS_TEST_IMAGE="$(GCS_TEST_IMAGE)" \
 	INTEGRATION_RUNNER_IMAGE="$(INTEGRATION_RUNNER_IMAGE)" \
 	bash scripts/with-integration-services.sh make coverage-integration-check
@@ -313,7 +313,7 @@ compose-config: ## Validate the Docker Compose config.
 	$(MAKE) compose COMPOSE_ARGS="config >/dev/null"
 
 compose-smoke: ## Start the local Compose stack and run HTTP plus r10k smoke checks.
-	$(MAKE) compose COMPOSE_ARGS="up -d --build postgres minio minio-init app"
+	$(MAKE) compose COMPOSE_ARGS="up -d --build postgres seaweedfs app"
 	$(MAKE) http-smoke
 	$(MAKE) r10k
 

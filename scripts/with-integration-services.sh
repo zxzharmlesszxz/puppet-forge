@@ -11,11 +11,11 @@ docker_bin="${DOCKER:-docker}"
 suffix="$$-${RANDOM}"
 network="puppet-forge-integration-${suffix}"
 postgres_container="puppet-forge-integration-postgres-${suffix}"
-minio_container="puppet-forge-integration-minio-${suffix}"
+s3_container="puppet-forge-integration-s3-${suffix}"
 gcs_container="puppet-forge-integration-gcs-${suffix}"
 
 cleanup() {
-  "$docker_bin" rm --force --volumes "$gcs_container" "$minio_container" "$postgres_container" >/dev/null 2>&1 || true
+  "$docker_bin" rm --force --volumes "$gcs_container" "$s3_container" "$postgres_container" >/dev/null 2>&1 || true
   "$docker_bin" network rm "$network" >/dev/null 2>&1 || true
 }
 
@@ -87,16 +87,20 @@ trap 'exit 143' TERM
   --health-retries 60 \
   "${POSTGRES_TEST_IMAGE:?POSTGRES_TEST_IMAGE is required}" >/dev/null
 
-"$docker_bin" run --detach --name "$minio_container" \
+"$docker_bin" run --detach --name "$s3_container" \
   --network "$network" \
-  --network-alias minio \
-  --env MINIO_ROOT_USER=minioadmin \
-  --env MINIO_ROOT_PASSWORD=minioadmin \
-  --health-cmd 'curl -f http://localhost:9000/minio/health/live || exit 1' \
+  --network-alias seaweedfs \
+  --env AWS_ACCESS_KEY_ID=forge-local \
+  --env AWS_SECRET_ACCESS_KEY=forge-local-secret \
+  --health-cmd 'curl --fail --silent --show-error --max-time 3 http://localhost:8333/readyz || exit 1' \
   --health-interval 1s \
   --health-timeout 5s \
   --health-retries 60 \
-  "${MINIO_TEST_IMAGE:?MINIO_TEST_IMAGE is required}" server /data >/dev/null
+  "${S3_TEST_IMAGE:?S3_TEST_IMAGE is required}" \
+  mini -dir=/data -ip=seaweedfs -ip.bind=0.0.0.0 \
+  -master.volumeSizeLimitMB=128 -master.telemetry=false \
+  -s3.autoCreateBucket=false -s3.allowDeleteBucketNotEmpty=false \
+  -webdav=false -admin.ui=false >/dev/null
 
 "$docker_bin" run --detach --name "$gcs_container" \
   --network "$network" \
@@ -105,7 +109,7 @@ trap 'exit 143' TERM
   -scheme http -backend memory -public-host gcs:4443 >/dev/null
 
 wait_healthy "$postgres_container"
-wait_healthy "$minio_container"
+wait_healthy "$s3_container"
 wait_http "$gcs_container" gcs 4443 /storage/v1/b
 
 "$docker_bin" run --rm \
@@ -117,9 +121,9 @@ wait_http "$gcs_container" gcs 4443 /storage/v1/b
   --env GOCACHE=/tmp/go-build \
   --env GOMODCACHE=/tmp/go-mod \
   --env PUPPET_FORGE_TEST_POSTGRES_DSN=postgres://forge:forge@postgres:5432/forge?sslmode=disable \
-  --env PUPPET_FORGE_TEST_S3_ENDPOINT=http://minio:9000 \
-  --env PUPPET_FORGE_TEST_S3_ACCESS_KEY_ID=minioadmin \
-  --env PUPPET_FORGE_TEST_S3_SECRET_ACCESS_KEY=minioadmin \
+  --env PUPPET_FORGE_TEST_S3_ENDPOINT=http://seaweedfs:8333 \
+  --env PUPPET_FORGE_TEST_S3_ACCESS_KEY_ID=forge-local \
+  --env PUPPET_FORGE_TEST_S3_SECRET_ACCESS_KEY=forge-local-secret \
   --env PUPPET_FORGE_TEST_GCS_ENDPOINT=http://gcs:4443 \
   "${INTEGRATION_RUNNER_IMAGE:?INTEGRATION_RUNNER_IMAGE is required}" \
   "$@"

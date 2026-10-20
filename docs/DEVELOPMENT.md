@@ -52,7 +52,7 @@ PostgreSQL parity tests are opt-in so ordinary `go test ./...` does not depend o
 make test-postgres
 ```
 
-Object-storage integration tests are also opt-in. With MinIO and fake-gcs-server from the local Compose stack running, execute:
+Object-storage integration tests are also opt-in. With SeaweedFS and fake-gcs-server from the local Compose stack running, execute:
 
 ```bash
 make test-object-storage
@@ -60,9 +60,9 @@ make test-object-storage
 
 The combined target runs the S3 and GCS storage contracts. They cover immutable create-only uploads, streamed full/range reads, listing, and idempotent deletion; the S3 contract additionally verifies concurrent same-key writes and cancellation cleanup. Use `make test-s3-storage` or `make test-gcs-storage` to run one backend, and override the corresponding `PUPPET_FORGE_TEST_*_ENDPOINT` variables for other isolated emulators.
 
-`make coverage-check` enforces 65% total unit coverage plus package-specific floors for critical business logic. With PostgreSQL, MinIO, and fake-gcs-server available, `make coverage-integration-check` runs the unit and integration suites, merges their atomic coverage profiles without duplicating statements, and requires 70% total coverage while retaining the package-specific floors. CI produces these profiles in isolated jobs and checks their merged result.
+`make coverage-check` enforces 65% total unit coverage plus package-specific floors for critical business logic. With PostgreSQL, SeaweedFS, and fake-gcs-server available, `make coverage-integration-check` runs the unit and integration suites, merges their atomic coverage profiles without duplicating statements, and requires 70% total coverage while retaining the package-specific floors. CI produces these profiles in isolated jobs and checks their merged result.
 
-For a self-contained local run, `make coverage-integration-docker` starts disposable PostgreSQL, MinIO, fake-gcs-server, and Go runner containers in an isolated Docker network. It uses the services' standard internal ports, waits for readiness, runs the same combined gate, and removes the containers, anonymous volumes, and network on success, failure, or interruption.
+For a self-contained local run, `make coverage-integration-docker` starts disposable PostgreSQL, SeaweedFS, fake-gcs-server, and Go runner containers in an isolated Docker network. It uses the services' standard internal ports, waits for readiness, runs the same combined gate, and removes the containers, anonymous volumes, and network on success, failure, or interruption.
 
 ## Docker Compose
 
@@ -85,13 +85,27 @@ Compose starts:
 - `app` with this service;
 - `postgres`, with tables created by the service on startup;
 - `fake-gcs-server` as a local GCS emulator;
-- `minio` and `minio-init` for local S3-compatible object storage;
+- `seaweedfs` for local S3-compatible object storage;
 - `r10k`, based on `puppet/r10k`, running `puppetfile install` as a one-shot container.
 
 Local storage backend switches:
 
 - `ARTIFACT_BACKEND=gcs` uses `fake-gcs-server` through `ARTIFACT_ENDPOINT=http://gcs:4443`;
-- `ARTIFACT_BACKEND=s3` uses MinIO through `ARTIFACT_ENDPOINT=http://minio:9000`.
+- `ARTIFACT_BACKEND=s3` uses SeaweedFS through `ARTIFACT_ENDPOINT=http://seaweedfs:8333`.
+
+The pinned SeaweedFS image runs `weed mini` with a separate `seaweedfs-data`
+volume. It creates the `puppet-forge-artifacts` bucket and local-only credentials
+`forge-local` / `forge-local-secret`; the host S3 endpoint is `http://localhost:8333`.
+WebDAV, the admin UI, telemetry, automatic bucket creation on upload, and recursive
+deletion of nonempty buckets are disabled. Startup waits for the S3 `/readyz` probe.
+`S3_TEST_IMAGE` selects the image used by disposable integration services.
+
+This replaces MinIO only in development and CI; Forge still uses the generic S3
+adapter. Existing MinIO volumes are not reused or deleted. Before switching an
+existing S3-backed instance, copy its objects through S3 APIs or use a separate
+development database: existing metadata does not migrate artifacts automatically.
+Production GCS deployments are unchanged. Contract tests verify create-only writes
+from eight independent clients, range reads, object metadata, listing, and deletion.
 
 Standalone r10k smoke with Compose:
 
@@ -216,7 +230,7 @@ The workflow first verifies that committed Helm `version` and `appVersion` match
 
 All publication steps are safe to retry for the same tag: the GitHub Release is edited in place, the versioned image remains content-addressed, and chart-releaser skips an existing chart package. Do not recreate the tag or rebuild different artifacts under the same version.
 
-Before publishing, update `deploy/puppet-forge/Chart.yaml` so `version` equals the release version without the leading `v` and `appVersion` equals the complete tag. Commit that change, then run the complete local release gate with the same canonical version. The gate starts isolated PostgreSQL, MinIO, and fake-gcs-server containers for combined integration coverage and always removes them afterward:
+Before publishing, update `deploy/puppet-forge/Chart.yaml` so `version` equals the release version without the leading `v` and `appVersion` equals the complete tag. Commit that change, then run the complete local release gate with the same canonical version. The gate starts isolated PostgreSQL, SeaweedFS, and fake-gcs-server containers for combined integration coverage and always removes them afterward:
 
 ```bash
 make release-preflight VERSION=v1.2.3

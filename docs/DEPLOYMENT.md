@@ -46,7 +46,7 @@ puppet-forge \
   --database-dsn "postgres://forge:forge@postgres:5432/forge?sslmode=disable" \
   --admin-token "replace-me-bootstrap-token" \
   --artifact-backend s3 \
-  --artifact-endpoint "http://minio:9000" \
+  --artifact-endpoint "http://seaweedfs:8333" \
   --artifact-bucket "puppet-forge-artifacts" \
   --public-module-access=false
 ```
@@ -86,7 +86,7 @@ puppet-forge \
 | `ARTIFACT_REGION`                | `us-east-1`                      | no                             | Region used by the S3-compatible client.                                                                                                                                                                                                                                                             |
 | `ARTIFACT_ACCESS_KEY_ID`         | empty                            | for private `s3`               | Access key for S3-compatible storage.                                                                                                                                                                                                                                                                |
 | `ARTIFACT_SECRET_ACCESS_KEY`     | empty                            | for private `s3`               | Secret key for S3-compatible storage.                                                                                                                                                                                                                                                                |
-| `ARTIFACT_PATH_STYLE`            | `true`                           | no                             | Enables path-style S3 URLs. Useful for MinIO, GCS interoperability, and local endpoints.                                                                                                                                                                                                             |
+| `ARTIFACT_PATH_STYLE`            | `true`                           | no                             | Enables path-style S3 URLs. Useful for SeaweedFS, GCS interoperability, and local endpoints.                                                                                                                                                                                                         |
 | `PUBLIC_BASE_URL`                | empty                            | no                             | Optional fallback for building absolute URLs. If empty, the service derives URLs from the validated request host and, when explicitly trusted, forwarded host/proto.                                                                                                                                 |
 | `ALLOWED_PUBLIC_HOSTS`           | empty                            | no                             | Optional comma- or space-separated allowlist of accepted public hosts, with optional ports. Disallowed hosts receive `421`; an entry without a port accepts that hostname on any port.                                                                                                               |
 | `README_IMAGE_ALLOWED_HOSTS`     | See README Images and Badges     | no                             | Exact HTTPS image hosts for README badges, separated by commas or spaces. Empty disables external images; see README Images and Badges.                                                                                                                                                              |
@@ -172,9 +172,9 @@ provided; fix that badge URL in the module README.
 - `ARTIFACT_PROJECT` identifies the project only when startup bucket provisioning is enabled.
 - Production GCS runtime access requires object create/get/delete/list permissions on the pre-provisioned bucket (for example `roles/storage.objectAdmin` scoped to that bucket). `ARTIFACT_ENSURE_BUCKET=true` additionally requires `storage.buckets.get` and `storage.buckets.create`; keep it disabled for the workload identity unless bucket provisioning is intentional.
 - `ARTIFACT_PREFIX` sets the prefix for locally published module artifacts.
-- `ARTIFACT_BACKEND=s3` uses S3-compatible object storage, including GCS interoperability, MinIO, or Ceph. The backend must atomically enforce `If-None-Match: *` on `PutObject`; this is required for immutable create-only artifact writes and is covered by the integration test for supported backends.
+- `ARTIFACT_BACKEND=s3` uses S3-compatible object storage, including GCS interoperability, SeaweedFS, or Ceph. The backend must atomically enforce `If-None-Match: *` on `PutObject`; this is required for immutable create-only artifact writes and is covered by the integration test for supported backends.
 - For `s3`, set `ARTIFACT_ENDPOINT`, `ARTIFACT_BUCKET`, `ARTIFACT_ACCESS_KEY_ID`, and `ARTIFACT_SECRET_ACCESS_KEY`.
-- `ARTIFACT_PATH_STYLE=true` is useful for GCS/MinIO-style endpoints.
+- `ARTIFACT_PATH_STYLE=true` is useful for GCS/SeaweedFS-style endpoints.
 
 ### GCS Service Account Authentication
 

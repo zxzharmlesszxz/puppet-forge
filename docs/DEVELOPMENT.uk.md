@@ -52,7 +52,7 @@ go run ./cmd/server
 make test-postgres
 ```
 
-Інтеграційні тести об'єктних сховищ також запускаються окремо. Коли MinIO та fake-gcs-server з локального набору Compose запущені, виконай:
+Інтеграційні тести об'єктних сховищ також запускаються окремо. Коли SeaweedFS та fake-gcs-server з локального набору Compose запущені, виконай:
 
 ```bash
 make test-object-storage
@@ -60,9 +60,9 @@ make test-object-storage
 
 Об'єднаний target запускає контракти S3 та GCS. Вони перевіряють незмінні create-only завантаження, потокове повне й діапазонне читання, отримання списку та ідемпотентне видалення; контракт S3 додатково перевіряє конкурентний запис одного ключа й очищення після скасування. Для одного backend використовуй `make test-s3-storage` або `make test-gcs-storage`; адреси інших ізольованих емуляторів передаються через відповідні змінні `PUPPET_FORGE_TEST_*_ENDPOINT`.
 
-`make coverage-check` вимагає щонайменше 65% загального unit coverage та окремі мінімальні значення для критичної бізнес-логіки. Коли доступні PostgreSQL, MinIO і fake-gcs-server, `make coverage-integration-check` запускає unit та integration suites, об'єднує їхні atomic coverage profiles без дублювання statements і вимагає 70% загального coverage, зберігаючи окремі мінімальні значення для пакетів. У CI профілі створюються в ізольованих jobs, після чого перевіряється їхній об'єднаний результат.
+`make coverage-check` вимагає щонайменше 65% загального unit coverage та окремі мінімальні значення для критичної бізнес-логіки. Коли доступні PostgreSQL, SeaweedFS і fake-gcs-server, `make coverage-integration-check` запускає unit та integration suites, об'єднує їхні atomic coverage profiles без дублювання statements і вимагає 70% загального coverage, зберігаючи окремі мінімальні значення для пакетів. У CI профілі створюються в ізольованих jobs, після чого перевіряється їхній об'єднаний результат.
 
-Для самодостатнього локального запуску `make coverage-integration-docker` піднімає одноразові контейнери PostgreSQL, MinIO, fake-gcs-server і Go runner в ізольованій Docker-мережі. Він використовує стандартні внутрішні порти сервісів, очікує їхньої готовності, запускає той самий об'єднаний gate і видаляє контейнери, анонімні volumes та мережу після успіху, помилки або переривання.
+Для самодостатнього локального запуску `make coverage-integration-docker` піднімає одноразові контейнери PostgreSQL, SeaweedFS, fake-gcs-server і Go runner в ізольованій Docker-мережі. Він використовує стандартні внутрішні порти сервісів, очікує їхньої готовності, запускає той самий об'єднаний gate і видаляє контейнери, анонімні volumes та мережу після успіху, помилки або переривання.
 
 ## Docker Compose
 
@@ -85,13 +85,27 @@ Compose запускає:
 - `app` з цим сервісом;
 - `postgres`; сервіс сам створює потрібні таблиці при старті;
 - `fake-gcs-server` як локальний емулятор GCS;
-- `minio` і `minio-init` для локального S3-сумісного сховища;
+- `seaweedfs` для локального S3-сумісного сховища;
 - `r10k` контейнер на базі `puppet/r10k`, який автоматично запускає `puppetfile install` і завершує роботу.
 
 Локальне сховище можна перемикати так:
 
 - `ARTIFACT_BACKEND=gcs` використовує `fake-gcs-server` через `ARTIFACT_ENDPOINT=http://gcs:4443`
-- `ARTIFACT_BACKEND=s3` використовує `MinIO` через `ARTIFACT_ENDPOINT=http://minio:9000`
+- `ARTIFACT_BACKEND=s3` використовує `SeaweedFS` через `ARTIFACT_ENDPOINT=http://seaweedfs:8333`
+
+Зафіксований образ SeaweedFS запускає `weed mini` з окремим volume `seaweedfs-data`.
+Він створює bucket `puppet-forge-artifacts` і лише локальні credentials
+`forge-local` / `forge-local-secret`; S3 доступний з хоста на `http://localhost:8333`.
+WebDAV, адмінський UI, телеметрія, автоматичне створення bucket під час upload
+і рекурсивне видалення непорожніх buckets вимкнені. Перед стартом Forge
+перевіряється S3 `/readyz`. `S3_TEST_IMAGE` задає образ одноразового S3 для integration.
+
+MinIO замінюється лише в development та CI; Forge залишається на загальному
+S3-адаптері. Старі volumes MinIO не використовуються й не видаляються. Перед
+перемиканням наявного S3-інстансу перенеси об'єкти через S3 API або використовуй
+окрему development-базу: метадані не переносять артефакти автоматично.
+Production GCS не змінюється. Контрактні тести перевіряють create-only записи
+восьми незалежних клієнтів, range reads, метадані об'єктів, listing і видалення.
 
 Окрема перевірка `r10k` через Compose:
 
@@ -215,7 +229,7 @@ Chromium не потрібні, а версії браузера й test runner 
 
 Усі кроки публікації можна безпечно повторити для того самого тегу: GitHub Release редагується на місці, версійний image лишається адресованим за вмістом, а chart-releaser пропускає вже наявний пакет чарту. Не створюй тег повторно й не збирай під тією самою версією інші артефакти.
 
-Перед публікацією онови `deploy/puppet-forge/Chart.yaml`: `version` має дорівнювати версії релізу без початкової `v`, а `appVersion` — повному тегу. Закоміть цю зміну, а потім запусти повний локальний release gate із тією самою канонічною версією. Gate сам піднімає ізольовані контейнери PostgreSQL, MinIO та fake-gcs-server для перевірки об'єднаного integration coverage і завжди видаляє їх після завершення:
+Перед публікацією онови `deploy/puppet-forge/Chart.yaml`: `version` має дорівнювати версії релізу без початкової `v`, а `appVersion` — повному тегу. Закоміть цю зміну, а потім запусти повний локальний release gate із тією самою канонічною версією. Gate сам піднімає ізольовані контейнери PostgreSQL, SeaweedFS та fake-gcs-server для перевірки об'єднаного integration coverage і завжди видаляє їх після завершення:
 
 ```bash
 make release-preflight VERSION=v1.2.3
