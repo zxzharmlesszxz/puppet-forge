@@ -3,9 +3,10 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-fixture_url="${BROWSER_FIXTURE_URL:-http://127.0.0.1:18085}"
-container_fixture_url="${BROWSER_CONTAINER_FIXTURE_URL:-http://host.docker.internal:18085}"
-fixture_log="$(mktemp)"
+fixture_url="${BROWSER_FIXTURE_URL:-}"
+container_fixture_url="${BROWSER_CONTAINER_FIXTURE_URL:-}"
+fixture_dir="$(mktemp -d)"
+fixture_log="$fixture_dir/fixture.log"
 fixture_pid=""
 
 cleanup() {
@@ -13,24 +14,37 @@ cleanup() {
     kill "$fixture_pid" 2>/dev/null || true
     wait "$fixture_pid" 2>/dev/null || true
   fi
-  rm -f "$fixture_log"
+  rm -rf "$fixture_dir"
 }
 
 trap cleanup EXIT INT TERM
 
 cd "$repo_root"
-if ! "${CURL:-curl}" --fail --silent --show-error "$fixture_url/healthz" >/dev/null 2>&1; then
-  BROWSER_FIXTURE_ADDR="${BROWSER_FIXTURE_ADDR:-0.0.0.0:18085}" "${GO:-go}" run ./testdata/browser/fixture >"$fixture_log" 2>&1 &
+if [[ -z "$fixture_url" ]]; then
+  "${GO:-go}" build -o "$fixture_dir/fixture" ./testdata/browser/fixture
+  BROWSER_FIXTURE_ADDR="${BROWSER_FIXTURE_ADDR:-0.0.0.0:0}" \
+    "$fixture_dir/fixture" >"$fixture_dir/port" 2>"$fixture_log" &
   fixture_pid="$!"
+else
+  : >"$fixture_log"
+  if [[ -z "$container_fixture_url" ]]; then
+    printf '%s\n' 'BROWSER_CONTAINER_FIXTURE_URL is required with BROWSER_FIXTURE_URL' >&2
+    exit 1
+  fi
 fi
 
 ready=false
 for _ in {1..120}; do
-  if "${CURL:-curl}" --fail --silent --show-error "$fixture_url/healthz" >/dev/null 2>&1; then
-    ready=true
-    break
+  if [[ -z "$fixture_url" && -s "$fixture_dir/port" ]]; then
+    port="$(<"$fixture_dir/port")"
+    fixture_url="http://127.0.0.1:$port"
+    container_fixture_url="${BROWSER_CONTAINER_FIXTURE_URL:-http://host.docker.internal:$port}"
   fi
   if [[ -n "$fixture_pid" ]] && ! kill -0 "$fixture_pid" 2>/dev/null; then
+    break
+  fi
+  if [[ -n "$fixture_url" ]] && "${CURL:-curl}" --fail --silent --show-error "$fixture_url/healthz" >/dev/null 2>&1; then
+    ready=true
     break
   fi
   sleep 1

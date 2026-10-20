@@ -198,6 +198,10 @@ make helm-package
 suite in the pinned official Playwright Docker image. Dependencies are installed in
 an ephemeral container filesystem, so no local Node.js, npm, or Chromium installation
 is required and the browser and test-runner versions remain aligned locally and in CI.
+Each run builds a fresh fixture binary, binds an available port, and stops that
+process during cleanup; an existing server is never reused implicitly. To use an
+external fixture, explicitly set both `BROWSER_FIXTURE_URL` (host access) and
+`BROWSER_CONTAINER_FIXTURE_URL` (container access).
 
 By default, the Makefile uses `go`, `gofmt`, and `golangci-lint` from `PATH`. Override tools with variables:
 

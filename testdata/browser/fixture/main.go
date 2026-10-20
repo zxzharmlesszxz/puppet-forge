@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -114,5 +115,16 @@ func main() {
 		Handler:           fixtureMux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	log.Fatal(server.ListenAndServe())
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		log.Fatal(err)
+	}
+	if _, err := fmt.Fprintln(os.Stdout, port); err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(server.Serve(listener))
 }
