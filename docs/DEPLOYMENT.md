@@ -121,6 +121,15 @@ puppet-forge \
 | `RECONCILE_ARTIFACTS`            | `false`                          | no                             | Run one-shot SQL/object-storage reconciliation, emit JSON, and exit without starting listeners.                                                                                                                                                                                                      |
 | `RECONCILE_REPAIR`               | `false`                          | no                             | With reconciliation enabled, delete only orphan objects; missing/corrupt release records remain untouched.                                                                                                                                                                                           |
 
+## Login Rate-Limit Failures
+
+If the login page reports `login rate limit service is unavailable`, the shared
+database-backed limiter failed; this is not an exhausted login quota. Login is
+blocked and the response is HTTP 503. The server logs `shared rate limit check failed`
+with `request_id`, `scope`, and the underlying error. Use that error to diagnose
+database availability, schema, or query failures. Do not disable the limiter to
+work around the failure.
+
 ## README Images and Badges
 
 The administrator controls external image sources through

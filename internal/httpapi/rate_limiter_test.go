@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -197,5 +198,30 @@ func TestSharedRateLimitFailsClosedWithoutStore(t *testing.T) {
 	}
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestManageLoginFailsClosedWhenRateLimitStoreIsUnavailable(t *testing.T) {
+	t.Parallel()
+	router := &Router{
+		modules:     service.NewModuleService(nil, nil, "modules", nil),
+		rateLimiter: newRateLimiter(time.Now),
+	}
+	req := httptest.NewRequest(http.MethodPost, "/manage/login", strings.NewReader("token=private-token"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	router.manageLoginPage(response, req)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, "login rate limit service is unavailable") {
+		t.Fatal("login page misses the availability error")
+	}
+	if strings.Contains(body, "shared rate limit store is not available") || strings.Contains(body, "private-token") {
+		t.Fatal("login page exposes internal errors or submitted credentials")
+	}
+	if response.Header().Get("Location") != "" || len(response.Result().Cookies()) != 0 {
+		t.Fatal("failed login must not redirect or create session cookies")
 	}
 }

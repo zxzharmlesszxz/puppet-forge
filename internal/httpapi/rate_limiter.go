@@ -5,12 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zxzharmlesszxz/puppet-forge/internal/observability"
 )
 
 const defaultRateLimiterMaxEntries = 10_000
@@ -124,7 +127,11 @@ func (r *Router) rateLimited(scope string, limit int, window time.Duration, next
 func (r *Router) allowSharedRateLimit(req *http.Request, scope string, limit int, window time.Duration) (bool, error) {
 	keyDigest := sha256.Sum256([]byte(r.rateLimitKey(req, scope)))
 	key := scope + ":" + hex.EncodeToString(keyDigest[:])
-	return r.modules.ConsumeRateLimit(req.Context(), key, limit, window, r.rateLimiter.now().UTC())
+	allowed, err := r.modules.ConsumeRateLimit(req.Context(), key, limit, window, r.rateLimiter.now().UTC())
+	if err != nil {
+		slog.Error("shared rate limit check failed", "request_id", observability.RequestID(req.Context()), "scope", scope, "err", err)
+	}
+	return allowed, err
 }
 
 func (r *Router) requireSharedRateLimit(w http.ResponseWriter, req *http.Request, scope string, limit int, window time.Duration, message string) bool {

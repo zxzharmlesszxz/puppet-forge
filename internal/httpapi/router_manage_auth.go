@@ -56,7 +56,7 @@ func (r *Router) manageLoginPage(w http.ResponseWriter, req *http.Request) {
 	case http.MethodPost:
 		allowed, err := r.allowSharedRateLimit(req, "manage-login", 20, time.Minute)
 		if err != nil {
-			r.renderManageLogin(w, req, "login rate limit service is unavailable")
+			r.renderManageLoginStatus(w, req, "login rate limit service is unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		if !allowed {
@@ -111,7 +111,14 @@ func (r *Router) manageLoginPage(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) renderManageLogin(w http.ResponseWriter, req *http.Request, errorMessage string) {
+	r.renderManageLoginStatus(w, req, errorMessage, http.StatusOK)
+}
+
+func (r *Router) renderManageLoginStatus(w http.ResponseWriter, req *http.Request, errorMessage string, status int) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if status != http.StatusOK {
+		w.WriteHeader(status)
+	}
 	executeHTMLTemplate(w, manageLoginTemplate, manageLoginData{CSPNonce: cspNonce(req), Error: errorMessage, HasOIDC: r.webAuth != nil})
 }
 
