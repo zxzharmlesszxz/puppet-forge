@@ -4,15 +4,52 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/observability"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/webauth"
 )
 
+func (r *Router) auditOIDCLogin(req *http.Request, session webauth.Session) {
+	configs, err := r.modules.LoadTeamConfigs(req.Context())
+	var teams []string
+	if err == nil {
+		teams, err = oidcAuditTeams(configs, session)
+	}
+	if err != nil {
+		slog.Error("resolve OIDC login audit teams", "request_id", observability.RequestID(req.Context()), "err", err)
+	}
+	r.auditWithOIDCSession(req, auth.Principal{}, &session, "oidc_login", "success", "none", "actor_teams", strings.Join(teams, ","))
+}
+
+func oidcAuditTeams(configs []auth.TeamConfig, session webauth.Session) ([]string, error) {
+	teams := make([]string, 0, len(configs))
+	for _, cfg := range configs {
+		if auth.IsGlobalAdminConfig(cfg) {
+			continue
+		}
+		authorizer, err := auth.NewAuthorizer([]auth.TeamConfig{cfg})
+		if err != nil {
+			return nil, err
+		}
+		principal, ok := authorizer.AuthenticateOIDC(session.Email, session.Sub, session.Groups)
+		if ok && (principal.CanPublish || principal.CanManageTeam) {
+			teams = append(teams, cfg.Team)
+		}
+	}
+	sort.Strings(teams)
+	return teams, nil
+}
+
 func (r *Router) audit(req *http.Request, principal auth.Principal, action, result, reason string, attrs ...any) {
+	r.auditWithOIDCSession(req, principal, nil, action, result, reason, attrs...)
+}
+
+func (r *Router) auditWithOIDCSession(req *http.Request, principal auth.Principal, session *webauth.Session, action, result, reason string, attrs ...any) {
 	authMethod := "anonymous"
 	actor := "anonymous"
 	identityAttrs := make([]any, 0, 4)
@@ -23,8 +60,13 @@ func (r *Router) audit(req *http.Request, principal auth.Principal, action, resu
 			actor = "token:" + principal.TokenName
 		}
 		identityAttrs = append(identityAttrs, "actor_token_id", principal.TokenID)
-	} else if r.webAuth != nil {
-		if session, ok := r.webAuth.Session(req); ok {
+	} else {
+		if session == nil && r.webAuth != nil {
+			if current, ok := r.webAuth.Session(req); ok {
+				session = &current
+			}
+		}
+		if session != nil {
 			authMethod = "oidc"
 			actor = auditOIDCActor(session.Name, session.Email, session.Sub)
 			identityAttrs = append(identityAttrs, "oidc_subject", session.Sub)

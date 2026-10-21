@@ -264,7 +264,10 @@ func TestOIDCFlowUsesNoncePKCEAndRejectsStateReplay(t *testing.T) {
 	callbackReq := httptest.NewRequest(http.MethodGet, callbackPath, nil)
 	callbackReq.AddCookie(stateCookie)
 	callbackRec := httptest.NewRecorder()
-	oidcAuth.Callback(callbackRec, callbackReq)
+	verifiedSession, authenticated := oidcAuth.Callback(callbackRec, callbackReq)
+	if !authenticated || verifiedSession.Sub == "" {
+		t.Fatalf("successful callback did not return a verified identity: %#v", verifiedSession)
+	}
 	callbackResp := callbackRec.Result()
 	defer func() { _ = callbackResp.Body.Close() }()
 	if callbackResp.StatusCode != http.StatusFound || callbackResp.Header.Get("Location") != "/manage" {
@@ -283,7 +286,9 @@ func TestOIDCFlowUsesNoncePKCEAndRejectsStateReplay(t *testing.T) {
 	replayReq := httptest.NewRequest(http.MethodGet, callbackPath, nil)
 	replayReq.AddCookie(stateCookie)
 	replayRec := httptest.NewRecorder()
-	oidcAuth.Callback(replayRec, replayReq)
+	if session, authenticated := oidcAuth.Callback(replayRec, replayReq); authenticated || session.Sub != "" {
+		t.Fatal("replayed callback returned an authenticated identity")
+	}
 	replayResp := replayRec.Result()
 	defer func() { _ = replayResp.Body.Close() }()
 	if replayResp.StatusCode != http.StatusFound || !strings.HasPrefix(replayResp.Header.Get("Location"), "/manage/login?error=") {

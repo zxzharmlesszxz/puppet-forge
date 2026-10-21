@@ -40,6 +40,7 @@ func (s *PostgresStore) ListAuditEvents(ctx context.Context, scopes []string, qu
 			or attributes_json->>'team' = any($1::text[])
 			or attributes_json->>'new_team' = any($1::text[])
 			or attributes_json->>'space' = any($1::text[])
+			or (action = 'oidc_login' and string_to_array(attributes_json->>'actor_teams', ',') && $1::text[])
 			or split_part(attributes_json->>'module', '/', 1) = any($1::text[]))
 		and ($2 = '' or position(lower($2) in lower(concat_ws(' ', request_id, actor, auth_method, action, result, reason, source_ip, attributes_json::text))) > 0)`
 	var total int
@@ -108,6 +109,7 @@ func (s *SQLiteStore) ListAuditEvents(ctx context.Context, scopes []string, quer
 				json_extract(attributes_json, '$.space'),
 				substr(json_extract(attributes_json, '$.module'), 1, instr(json_extract(attributes_json, '$.module'), '/') - 1)
 			)
+			or (action = 'oidc_login' and instr(',' || coalesce(json_extract(attributes_json, '$.actor_teams'), '') || ',', ',' || scope.value || ',') > 0)
 		))
 		and (?3 = '' or instr(lower(request_id || ' ' || actor || ' ' || auth_method || ' ' || action || ' ' || result || ' ' || reason || ' ' || source_ip || ' ' || attributes_json), lower(?3)) > 0)`
 	countArgs := []any{len(scopes), string(scopeJSON), query}

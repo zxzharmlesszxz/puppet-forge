@@ -151,6 +151,15 @@ issuer host while keeping the browser-facing Forge URL as the redirect URI.
 
 ## Authentication Diagnostics
 
+The audit event `oidc_login` records success only after the callback verifies the
+ID token and creates the local session. It uses the verified name/email as the
+actor and retains `oidc_subject` for correlation. Starting a login is not audited
+as successful authentication; old `oidc_login_start` records remain historical.
+Login events retain the user's team memberships at login time in `actor_teams`.
+The same event appears once in the global audit and in each matching team's
+audit. Global administrator access alone does not grant membership in every team.
+Older login events without this attribute are not retroactively assigned to teams.
+
 OIDC storage failures log the operation, `request_id`, and underlying database
 error. Expired, revoked, or missing sessions do not produce error logs.
 Protocol failures log their stage, error type, upstream HTTP status when available,

@@ -99,6 +99,38 @@ func TestStoreParityAuditEvents(t *testing.T) {
 	}
 }
 
+func TestStoreParityOIDCLoginTeamScopes(t *testing.T) {
+	for _, tc := range parityStoreCases(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			st := tc.open(t)
+			t.Cleanup(st.Close)
+			if err := st.RecordAuditEvent(ctx, AuditEvent{
+				Actor: "member@example.com", AuthMethod: "oidc", Action: "oidc_login", Result: "success", Reason: "none",
+				Attributes: map[string]string{"actor_teams": "teamone,teamtwo"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			for _, filter := range []struct {
+				scopes []string
+				want   int
+			}{
+				{nil, 1}, {[]string{"teamone"}, 1}, {[]string{"teamtwo"}, 1},
+				{[]string{"teamone", "teamtwo"}, 1}, {[]string{"team"}, 0},
+				{[]string{"unrelated"}, 0}, {[]string{"teamone') OR 1=1 --"}, 0},
+			} {
+				events, total, err := st.ListAuditEvents(ctx, filter.scopes, "oidc_login", 10, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if total != filter.want || len(events) != filter.want {
+					t.Errorf("scopes=%v: total=%d events=%d, want %d", filter.scopes, total, len(events), filter.want)
+				}
+			}
+		})
+	}
+}
+
 func TestStoreParityReleaseConsumers(t *testing.T) {
 	for _, tc := range parityStoreCases(t) {
 		t.Run(tc.name, func(t *testing.T) {

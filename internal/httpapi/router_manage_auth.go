@@ -25,7 +25,6 @@ func (r *Router) loginPage(w http.ResponseWriter, req *http.Request) {
 	}
 	clearManageTokenCookie(w, req)
 	clearManageCSRFToken(w, req)
-	r.audit(req, auth.Principal{}, "oidc_login_start", "success", "none")
 	r.webAuth.Login(w, req)
 }
 
@@ -37,7 +36,9 @@ func (r *Router) callbackPage(w http.ResponseWriter, req *http.Request) {
 	if !r.requireSharedRateLimit(w, req, "auth-callback", 60, time.Minute, "too many login callback attempts") {
 		return
 	}
-	r.webAuth.Callback(w, req)
+	if session, ok := r.webAuth.Callback(w, req); ok {
+		r.auditOIDCLogin(req, session)
+	}
 }
 
 func (r *Router) logoutPage(w http.ResponseWriter, req *http.Request) {
