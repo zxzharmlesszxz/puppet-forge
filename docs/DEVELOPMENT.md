@@ -214,6 +214,9 @@ external fixture, explicitly set both `BROWSER_FIXTURE_URL` (host access) and
 
 By default, the Makefile uses `go`, `gofmt`, and `golangci-lint` from `PATH`. Override tools with variables:
 
+Go 1.27.3 or newer is required; it includes the standard-library security fix for
+GO-2026-6809. Docker builds, integration runners, and CI use the same patch version.
+
 ```bash
 GO=go GOLANGCI_LINT=golangci-lint make check
 ```

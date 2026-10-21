@@ -204,6 +204,9 @@ make helm-package
 
 За замовчуванням Makefile використовує `go`, `gofmt` і `golangci-lint` з `PATH`. Інструменти можна перевизначати через змінні:
 
+Потрібен Go 1.27.3 або новіший із виправленням GO-2026-6809 у стандартній
+бібліотеці. Docker-збірки, integration runners та CI використовують однакову patch-версію.
+
 ```bash
 GO=go GOLANGCI_LINT=golangci-lint make check
 ```
