@@ -402,6 +402,11 @@ service account.
 
 ## Сховище бази даних
 
+PostgreSQL використовує окремі пули для SQL і advisory locks, щоб очікування
+блокування не забирало з'єднання для мутацій. `DATABASE_MAX_CONNS` обмежує кожен
+пул: закладай до `2 * DATABASE_MAX_CONNS` з'єднань на репліку, помножених на
+максимум HPA. `DATABASE_MIN_CONNS` стосується лише пулу SQL.
+
 - `DATABASE_DSN=postgres://...` вмикає PostgreSQL;
 - `DATABASE_DSN=sqlite:///data/puppet-forge.db` вмикає SQLite;
 - тип бази даних визначається схемою DSN, тому окремий `DB_BACKEND` не потрібен;

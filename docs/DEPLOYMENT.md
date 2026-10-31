@@ -253,6 +253,11 @@ create or store long-lived Google service-account keys.
 
 ## Database Backend
 
+PostgreSQL uses independent data and advisory-lock pools so lock waiters cannot
+starve SQL mutations. `DATABASE_MAX_CONNS` limits each pool: budget up to
+`2 * DATABASE_MAX_CONNS` connections per replica, multiplied by the HPA maximum.
+`DATABASE_MIN_CONNS` applies only to the data pool.
+
 - `DATABASE_DSN=postgres://...` enables PostgreSQL.
 - `DATABASE_DSN=sqlite:///data/puppet-forge.db` enables SQLite.
 - The database backend is selected from the DSN scheme; no separate `DB_BACKEND` setting is required.

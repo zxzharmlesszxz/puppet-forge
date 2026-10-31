@@ -103,11 +103,12 @@ type ReleaseChecksumStore interface {
 
 type PostgresStore struct {
 	pool        *pgxpool.Pool
+	lockPool    *pgxpool.Pool
 	tokenHasher *auth.TokenHasher
 }
 
 func (s *PostgresStore) LockAccessConfig(ctx context.Context) (AccessConfigUnlock, error) {
-	conn, err := s.pool.Acquire(ctx)
+	conn, err := s.lockPool.Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("acquire access config lock connection: %w", err)
 	}
@@ -154,9 +155,17 @@ func newPostgresStore(ctx context.Context, dsn string, tokenHasher *auth.TokenHa
 		return nil, fmt.Errorf("create pg pool: %w", err)
 	}
 
-	store := &PostgresStore{pool: pool, tokenHasher: tokenHasher}
-	if err := store.ensureOperationalTables(ctx); err != nil {
+	lockConfig := poolConfig.Copy()
+	lockConfig.MinConns = 0
+	lockConfig.MinIdleConns = 0
+	lockPool, err := pgxpool.NewWithConfig(ctx, lockConfig)
+	if err != nil {
 		pool.Close()
+		return nil, fmt.Errorf("create advisory lock pool: %w", err)
+	}
+	store := &PostgresStore{pool: pool, lockPool: lockPool, tokenHasher: tokenHasher}
+	if err := store.ensureOperationalTables(ctx); err != nil {
+		store.Close()
 		return nil, err
 	}
 
@@ -178,6 +187,7 @@ func postgresPoolConfig(dsn string, options *PostgresPoolConfig) (*pgxpool.Confi
 }
 
 func (s *PostgresStore) Close() {
+	s.lockPool.Close()
 	s.pool.Close()
 }
 
@@ -186,7 +196,7 @@ func (s *PostgresStore) Ping(ctx context.Context) error {
 }
 
 func (s *PostgresStore) LockModule(ctx context.Context, owner, name string) (ModuleUnlock, error) {
-	conn, err := s.pool.Acquire(ctx)
+	conn, err := s.lockPool.Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("acquire module lock connection: %w", err)
 	}
