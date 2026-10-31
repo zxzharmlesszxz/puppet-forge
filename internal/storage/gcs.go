@@ -136,10 +136,14 @@ func (s *GCSStorage) upload(ctx context.Context, object *storage.ObjectHandle, c
 }
 
 func (s *GCSStorage) uploadReader(ctx context.Context, object *storage.ObjectHandle, contentType string, body io.Reader, createOnly bool) (bool, error) {
-	writer := object.NewWriter(ctx)
+	uploadCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	writer := object.NewWriter(uploadCtx)
 	writer.ContentType = contentType
 
 	if _, err := io.Copy(writer, body); err != nil {
+		// Close finalizes buffered bytes unless the writer context is canceled first.
+		cancel()
 		combined := objectWriterError(err, writer.Close())
 		if createOnly && isGCSPreconditionFailed(combined) {
 			return false, nil

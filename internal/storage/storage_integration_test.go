@@ -7,6 +7,7 @@ import (
 	"io"
 	"slices"
 	"testing"
+	"testing/iotest"
 )
 
 type integrationArtifactStorage interface {
@@ -66,5 +67,28 @@ func verifyArtifactStorageLifecycle(t *testing.T, ctx context.Context, artifactS
 	}
 	if _, err := artifactStorage.Stat(ctx, key); !errors.Is(err, ErrObjectNotFound) {
 		t.Fatalf("Stat(deleted) error = %v, want ErrObjectNotFound", err)
+	}
+
+	broken := io.MultiReader(bytes.NewReader(original[:10]), iotest.ErrReader(io.ErrUnexpectedEOF))
+	if created, err := artifactStorage.UploadReaderIfAbsent(ctx, key, "application/gzip", broken); created || !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("UploadReaderIfAbsent(partial) = %v, %v", created, err)
+	}
+	if _, err := artifactStorage.Stat(ctx, key); !errors.Is(err, ErrObjectNotFound) {
+		t.Fatalf("partial object must not exist: %v", err)
+	}
+	if created, err := artifactStorage.UploadReaderIfAbsent(ctx, key, "application/gzip", bytes.NewReader(original)); err != nil || !created {
+		t.Fatalf("UploadReaderIfAbsent(retry) = %v, %v", created, err)
+	}
+	object, err = artifactStorage.Open(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, readErr = io.ReadAll(object.Body)
+	closeErr = object.Body.Close()
+	if err := errors.Join(readErr, closeErr); err != nil || !bytes.Equal(body, original) {
+		t.Fatalf("retried upload body = %q, error = %v", body, err)
+	}
+	if err := artifactStorage.Delete(ctx, key); err != nil {
+		t.Fatal(err)
 	}
 }
