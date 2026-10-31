@@ -837,42 +837,61 @@ func (s *ModuleService) GetRelease(ctx context.Context, owner, name, version str
 		}
 	}
 
-	if release.Source == "upstream" {
-		// Empty descriptive fields are valid upstream values. The artifact URI is
-		// the durable marker that a release reference has been hydrated.
-		if s.upstream != nil && release.UpstreamFileURI == "" {
-			slug := release.UpstreamSlug
-			if slug == "" {
-				slug = owner + "-" + name + "-" + version
-			}
-
-			upstreamRelease, err := s.upstream.FetchRelease(ctx, slug)
-			if err != nil {
-				return domain.Release{}, fmt.Errorf("%w for %s: %w", ErrUpstreamHydration, slug, err)
-			}
-			release.Description = fallbackString(upstreamRelease.Description, release.Description)
-			release.Readme = fallbackString(upstreamRelease.Readme, release.Readme)
-			release.UpstreamSlug = fallbackString(upstreamRelease.Slug, release.UpstreamSlug)
-			release.UpstreamFileURI = fallbackString(upstreamRelease.FileURI, release.UpstreamFileURI)
-			release.FileName = fallbackString(upstreamRelease.FileName, release.FileName)
-			if upstreamRelease.FileSize > 0 {
-				release.SizeBytes = upstreamRelease.FileSize
-			}
-			release.MD5 = fallbackString(upstreamRelease.FileMD5, release.MD5)
-			release.SHA256 = fallbackString(upstreamRelease.FileSHA256, release.SHA256)
-			if saved, saveErr := s.modules.CreateRelease(ctx, release); saveErr == nil {
-				release = saved
-			} else {
-				slog.Warn("persist hydrated upstream release failed", "owner", owner, "name", name, "version", version, "err", saveErr)
-			}
+	if release.Source == "upstream" && s.upstream != nil && release.UpstreamFileURI == "" {
+		release, err = s.hydrateUpstreamRelease(ctx, release)
+		if err != nil {
+			return domain.Release{}, err
 		}
-
+	}
+	if release.Source == "upstream" {
 		release.DownloadURL = release.UpstreamFileURI
 		return release, nil
 	}
 
 	release.DownloadURL = s.artifacts.PublicURL(release.StoragePath)
 	return release, nil
+}
+
+func (s *ModuleService) hydrateUpstreamRelease(ctx context.Context, snapshot domain.Release) (domain.Release, error) {
+	slug := fallbackString(snapshot.UpstreamSlug, snapshot.Owner+"-"+snapshot.Name+"-"+snapshot.Version)
+	upstreamRelease, err := s.upstream.FetchRelease(ctx, slug)
+	if err != nil {
+		return domain.Release{}, fmt.Errorf("%w for %s: %w", ErrUpstreamHydration, slug, err)
+	}
+	unlock, err := s.modules.LockModule(ctx, snapshot.Owner, snapshot.Name)
+	if err != nil {
+		return domain.Release{}, err
+	}
+	defer releaseModuleLock(unlock, snapshot.Owner, snapshot.Name)
+	release, err := s.modules.GetRelease(ctx, snapshot.Owner, snapshot.Name, snapshot.Version)
+	if err != nil {
+		return domain.Release{}, err
+	}
+	if !sameReleaseArtifact(snapshot, release) || release.UpstreamFileURI != "" {
+		return release, nil
+	}
+	release.Description = fallbackString(upstreamRelease.Description, release.Description)
+	release.Readme = fallbackString(upstreamRelease.Readme, release.Readme)
+	release.UpstreamSlug = fallbackString(upstreamRelease.Slug, release.UpstreamSlug)
+	release.UpstreamFileURI = fallbackString(upstreamRelease.FileURI, release.UpstreamFileURI)
+	release.FileName = fallbackString(upstreamRelease.FileName, release.FileName)
+	if upstreamRelease.FileSize > 0 {
+		release.SizeBytes = upstreamRelease.FileSize
+	}
+	release.MD5 = fallbackString(upstreamRelease.FileMD5, release.MD5)
+	release.SHA256 = fallbackString(upstreamRelease.FileSHA256, release.SHA256)
+	if saved, err := s.modules.CreateRelease(ctx, release); err == nil {
+		return saved, nil
+	} else {
+		slog.Warn("persist hydrated upstream release failed", "owner", release.Owner, "name", release.Name, "version", release.Version, "err", err)
+	}
+	return release, nil
+}
+
+func sameReleaseArtifact(left, right domain.Release) bool {
+	return left.ID == right.ID && left.Source == right.Source &&
+		left.StoragePath == right.StoragePath && left.UpstreamFileURI == right.UpstreamFileURI &&
+		left.SHA256 == right.SHA256 && left.MD5 == right.MD5 && left.SizeBytes == right.SizeBytes
 }
 
 func (s *ModuleService) restoreUpstreamRelease(ctx context.Context, owner, name, version string) (domain.Release, error) {
@@ -907,6 +926,11 @@ func (s *ModuleService) restoreUpstreamRelease(ctx context.Context, owner, name,
 		upstreamRelease.Slug = slug
 	}
 
+	unlock, err := s.modules.LockModule(ctx, owner, name)
+	if err != nil {
+		return domain.Release{}, err
+	}
+	defer releaseModuleLock(unlock, owner, name)
 	module, err := s.modules.UpsertModule(ctx, owner, name)
 	if err != nil {
 		return domain.Release{}, err
@@ -1066,6 +1090,7 @@ func (s *ModuleService) EnsureReleaseChecksums(ctx context.Context, release doma
 }
 
 func (s *ModuleService) calculateReleaseChecksums(ctx context.Context, release domain.Release) (domain.Release, error) {
+	snapshot := release
 	expectedSHA256 := release.SHA256
 	expectedSize := release.SizeBytes
 	object, err := s.openReleaseArchive(ctx, release)
@@ -1088,6 +1113,18 @@ func (s *ModuleService) calculateReleaseChecksums(ctx context.Context, release d
 	}
 
 	if checksumStore, ok := s.modules.(store.ReleaseChecksumStore); ok {
+		unlock, err := s.modules.LockModule(ctx, release.Owner, release.Name)
+		if err != nil {
+			return domain.Release{}, err
+		}
+		defer releaseModuleLock(unlock, release.Owner, release.Name)
+		current, err := s.modules.GetRelease(ctx, release.Owner, release.Name, release.Version)
+		if err != nil {
+			return domain.Release{}, err
+		}
+		if !sameReleaseArtifact(snapshot, current) {
+			return current, nil
+		}
 		if err := checksumStore.UpdateReleaseChecksums(
 			ctx,
 			release.Owner,
