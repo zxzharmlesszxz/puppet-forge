@@ -939,7 +939,7 @@ func (s *ModuleService) ReadReleaseFile(ctx context.Context, owner, name, versio
 	if err != nil {
 		return storage.Object{}, err
 	}
-	body, contentType, extractErr := extractArchiveFile(archive.Body, filePath)
+	body, contentType, extractErr := extractArchiveFile(ctx, archive.Body, filePath)
 	closeErr := archive.Body.Close()
 	if err := errors.Join(extractErr, closeErr); err != nil {
 		return storage.Object{}, err
@@ -1588,13 +1588,17 @@ func validateArchiveEntry(header *tar.Header) (cleanName, root string, err error
 	return cleanName, parts[0], nil
 }
 
-func extractArchiveFile(archive io.Reader, filePath string) ([]byte, string, error) {
+func extractArchiveFile(ctx context.Context, archive io.Reader, filePath string) ([]byte, string, error) {
+	return extractArchiveFileWithLimit(ctx, archive, filePath, maxArchiveExpandedSize)
+}
+
+func extractArchiveFileWithLimit(ctx context.Context, archive io.Reader, filePath string, expandedLimit int64) ([]byte, string, error) {
 	cleanPath := path.Clean(strings.TrimPrefix(filePath, "/"))
 	if cleanPath == "." || cleanPath == "" || strings.HasPrefix(cleanPath, "../") {
 		return nil, "", errors.New("invalid file path")
 	}
 
-	gzipReader, err := gzip.NewReader(archive)
+	gzipReader, err := gzip.NewReader(contextReader{ctx: ctx, reader: archive})
 	if err != nil {
 		return nil, "", fmt.Errorf("open archive: %w", err)
 	}
@@ -1602,10 +1606,15 @@ func extractArchiveFile(archive io.Reader, filePath string) ([]byte, string, err
 		_ = gzipReader.Close()
 	}()
 
-	tarReader := tar.NewReader(gzipReader)
+	limited := &io.LimitedReader{R: contextReader{ctx: ctx, reader: gzipReader}, N: expandedLimit + 1}
+	tarReader := tar.NewReader(limited)
 	entryCount := 0
+	expandedSize := int64(0)
 	for {
 		header, err := tarReader.Next()
+		if limited.N == 0 {
+			return nil, "", fmt.Errorf("archive expanded size exceeds maximum of %d bytes", expandedLimit)
+		}
 		if err == io.EOF {
 			return nil, "", store.ErrNotFound
 		}
@@ -1616,6 +1625,10 @@ func extractArchiveFile(archive io.Reader, filePath string) ([]byte, string, err
 		if err := enforceArchiveEntryLimit(entryCount, maxArchiveEntries); err != nil {
 			return nil, "", err
 		}
+		if header.Size < 0 || header.Size > maxArchiveEntrySize || expandedSize > expandedLimit-header.Size {
+			return nil, "", fmt.Errorf("archive expanded size exceeds maximum of %d bytes", expandedLimit)
+		}
+		expandedSize += header.Size
 		if header.Typeflag != tar.TypeReg {
 			continue
 		}
@@ -1626,6 +1639,9 @@ func extractArchiveFile(archive io.Reader, filePath string) ([]byte, string, err
 		}
 
 		body, err := readLimitedArchiveEntry(tarReader, header, maxArchiveFileSize)
+		if limited.N == 0 {
+			return nil, "", fmt.Errorf("archive expanded size exceeds maximum of %d bytes", expandedLimit)
+		}
 		if err != nil {
 			return nil, "", fmt.Errorf("read archive file: %w", err)
 		}

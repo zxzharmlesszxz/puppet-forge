@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -16,9 +17,10 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/service"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/storage"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/testutil"
 )
 
-type fixtureStorage struct{}
+type fixtureStorage struct{ archive []byte }
 
 func (fixtureStorage) Upload(context.Context, string, string, []byte) error { return nil }
 func (fixtureStorage) UploadIfAbsent(context.Context, string, string, []byte) (bool, error) {
@@ -29,8 +31,8 @@ func (fixtureStorage) UploadReaderIfAbsent(context.Context, string, string, io.R
 }
 func (fixtureStorage) Delete(context.Context, string) error         { return nil }
 func (fixtureStorage) Exists(context.Context, string) (bool, error) { return false, nil }
-func (fixtureStorage) Open(context.Context, string) (storage.ObjectReader, error) {
-	return storage.ObjectReader{}, storage.ErrObjectNotFound
+func (s fixtureStorage) Open(context.Context, string) (storage.ObjectReader, error) {
+	return storage.ObjectReader{Body: io.NopCloser(bytes.NewReader(s.archive))}, nil
 }
 func (fixtureStorage) PublicURL(string) string { return "" }
 func (fixtureStorage) Stat(context.Context, string) (storage.ObjectAttrs, error) {
@@ -86,7 +88,14 @@ func main() {
 		}
 	}
 
-	moduleService := service.NewModuleService(metadataStore, fixtureStorage{}, "modules", nil)
+	archive, err := testutil.BuildTarGz(map[string]string{
+		"fixture/attack.html": `<h1>Untrusted archive</h1><script src="payload.js"></script><script>window.archiveScriptRan = true</script>`,
+		"fixture/payload.js":  `window.archiveScriptRan = true; fetch('/manage').then(() => fetch('/browser-fixture/executed'));`,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	moduleService := service.NewModuleService(metadataStore, fixtureStorage{archive: archive}, "modules", nil)
 	if err := moduleService.ReplaceTeamConfigs(ctx, []auth.TeamConfig{
 		{Team: "teamname", PublishTokens: []string{"browser-publish-token"}},
 		{Team: "platform"},

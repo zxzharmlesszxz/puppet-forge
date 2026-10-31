@@ -199,6 +199,8 @@ func (r *Router) serveModuleFile(w http.ResponseWriter, req *http.Request, owner
 	if object.ContentType != "" {
 		w.Header().Set("Content-Type", object.ContentType)
 	}
+	// Archive files are untrusted documents, not part of the management UI.
+	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(object.Body)
 }

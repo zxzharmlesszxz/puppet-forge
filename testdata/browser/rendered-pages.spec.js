@@ -9,6 +9,18 @@ async function signIn(page, token = "admin-token") {
   ]);
 }
 
+test("archive documents cannot run scripts with management cookies", async ({ page }) => {
+  await signIn(page);
+  const requests = [];
+  page.on("request", (request) => requests.push(new URL(request.url()).pathname));
+  const response = await page.goto("/modules/teamname/module-00/versions/1.0.0/files/attack.html");
+  expect(response.headers()["content-security-policy"]).toContain("sandbox;");
+  await expect(page.locator("h1")).toHaveText("Untrusted archive");
+  expect(await page.evaluate(() => window.archiveScriptRan)).toBeUndefined();
+  expect(requests).not.toContain("/manage");
+  expect(requests).not.toContain("/browser-fixture/executed");
+});
+
 test("layouts load embedded styles and deferred scripts", async ({ page }) => {
   const failedAssets = [];
   const errors = [];

@@ -2460,6 +2460,11 @@ func TestModuleFileRouteRequiresReadAccessWhenPrivate(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"version":"1.2.3"`) {
 		t.Fatalf("expected public module file without token to get 200 metadata, got %d body=%s", resp.StatusCode, string(body))
 	}
+	for _, directive := range []string{"sandbox;", "default-src 'none'", "form-action 'none'"} {
+		if !strings.Contains(resp.Header.Get("Content-Security-Policy"), directive) {
+			t.Errorf("archive file CSP misses %q", directive)
+		}
+	}
 }
 
 func TestArchiveGETTracksNamedTokenConsumer(t *testing.T) {
