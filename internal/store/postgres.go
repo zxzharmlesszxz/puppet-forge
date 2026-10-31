@@ -412,6 +412,7 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) (returnErr 
 		alter table releases add column if not exists md5 text not null default '';
 		alter table modules add column if not exists upstream_refreshed_at timestamptz;
 		alter table oidc_sessions add column if not exists email_verified boolean not null default false;
+		alter table releases add column if not exists version_order text collate "C" not null default '';
 	`
 
 	conn, err := s.pool.Acquire(ctx)
@@ -442,6 +443,25 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) (returnErr 
 	if err := rejectNewerPostgresSchema(ctx, conn); err != nil {
 		return err
 	}
+	for {
+		rows, err := conn.Query(ctx, `select id, version from releases where version_order = '' limit 200`)
+		if err != nil {
+			return fmt.Errorf("read release order migration: %w", err)
+		}
+		updates, readErr := scanReleaseOrderUpdates(rows)
+		rows.Close()
+		if readErr != nil {
+			return readErr
+		}
+		if len(updates) == 0 {
+			break
+		}
+		for _, update := range updates {
+			if _, err := conn.Exec(ctx, `update releases set version_order = $1 where id = $2`, update.key, update.id); err != nil {
+				return fmt.Errorf("backfill release order: %w", err)
+			}
+		}
+	}
 	if err := migratePostgresCanonicalSlugs(ctx, conn); err != nil {
 		return err
 	}
@@ -464,6 +484,8 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) (returnErr 
 		create index if not exists idx_modules_listing on modules (updated_at desc, owner, name, id);
 		create index if not exists idx_modules_upstream_refresh on modules (upstream_refreshed_at asc nulls first, owner, name, id);
 		create index if not exists idx_releases_module_created on releases (module_id, created_at desc, version);
+		create index if not exists idx_releases_version_order on releases (version_order desc, created_at desc, id);
+		create index if not exists idx_releases_module_order on releases (module_id, version_order desc, created_at desc, id);
 		create index if not exists idx_release_usage_last_used_at on release_usage (last_used_at);
 		create index if not exists idx_release_consumers_last_seen_at on release_consumers (last_seen_at desc);
 		create index if not exists idx_release_consumers_current on release_consumers (consumer_team, consumer_name, consumer_role, owner, name, last_seen_at desc, version);
@@ -1169,9 +1191,9 @@ func (s *PostgresStore) createRelease(ctx context.Context, release domain.Releas
 	insertRelease := `
 		insert into releases (
 			id, module_id, slug, source, version, description, readme, file_name, content_type, size_bytes,
-			md5, sha256, storage_path, upstream_slug, upstream_file_uri, metadata, created_at
+			md5, sha256, storage_path, upstream_slug, upstream_file_uri, metadata, version_order, created_at
 		)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now())
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, now())
 		on conflict (module_id, version) `
 	if createOnly {
 		insertRelease += `do nothing returning created_at`
@@ -1209,6 +1231,7 @@ func (s *PostgresStore) createRelease(ctx context.Context, release domain.Releas
 		release.UpstreamSlug,
 		release.UpstreamFileURI,
 		metadataJSON,
+		releaseVersionOrder(release.Version),
 	).Scan(&release.CreatedAt)
 	if err != nil {
 		if createOnly && errors.Is(err, pgx.ErrNoRows) {

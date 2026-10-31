@@ -1,5 +1,10 @@
 # Architecture
 
+The `/v3/releases` collection filters and paginates in SQL, including semantic
+version ordering through an indexed `version_order` key. Schema migration
+backfills existing keys in bounded batches; a page does not load the entire
+release catalog or issue one metadata query per result.
+
 [Українська версія](ARCHITECTURE.uk.md)
 
 > **Runtime diagrams and verification map:** [SCHEMA.md](SCHEMA.md) shows the

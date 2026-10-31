@@ -20,7 +20,7 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
 
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 
 type sqliteQueryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -341,6 +341,8 @@ func NewSQLiteStore(dsn string, tokenHashers ...*auth.TokenHasher) (*SQLiteStore
 		create index if not exists idx_modules_listing on modules (updated_at desc, owner, name, id);
 		create index if not exists idx_modules_upstream_refresh on modules (upstream_refreshed_at is not null, upstream_refreshed_at, owner, name, id);
 		create index if not exists idx_releases_module_created on releases (module_id, created_at desc, version);
+		create index if not exists idx_releases_version_order on releases (version_order desc, created_at desc, id);
+		create index if not exists idx_releases_module_order on releases (module_id, version_order desc, created_at desc, id);
 		create index if not exists idx_release_usage_last_used_at on release_usage (last_used_at);
 		create index if not exists idx_access_tokens_team_type on access_tokens (team, token_type);
 		create index if not exists idx_access_tokens_expires_at on access_tokens (expires_at) where expires_at is not null;
@@ -413,6 +415,34 @@ func migrateSQLiteSchema(db *sql.DB, tokenHasher *auth.TokenHasher) error {
 	if !verifiedColumn {
 		if _, err := tx.Exec(`alter table oidc_sessions add column email_verified integer not null default 0`); err != nil {
 			return fmt.Errorf("migrate OIDC email verification: %w", err)
+		}
+	}
+	orderColumn, err := sqliteTableHasColumn(tx, "releases", "version_order")
+	if err != nil {
+		return err
+	}
+	if !orderColumn {
+		if _, err := tx.Exec(`alter table releases add column version_order text not null default ''`); err != nil {
+			return fmt.Errorf("migrate release order: %w", err)
+		}
+	}
+	for {
+		rows, err := tx.Query(`select id, version from releases where version_order = '' limit 200`)
+		if err != nil {
+			return fmt.Errorf("read release order migration: %w", err)
+		}
+		updates, readErr := scanReleaseOrderUpdates(rows)
+		closeErr := rows.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			return err
+		}
+		if len(updates) == 0 {
+			break
+		}
+		for _, update := range updates {
+			if _, err := tx.Exec(`update releases set version_order = ? where id = ?`, update.key, update.id); err != nil {
+				return fmt.Errorf("backfill release order: %w", err)
+			}
 		}
 	}
 	if err := sqliteEnsureCanonicalSlugs(tx); err != nil {
@@ -1211,9 +1241,9 @@ func (s *SQLiteStore) createRelease(ctx context.Context, release domain.Release,
 	insertRelease := `
 		insert into releases (
 			id, module_id, slug, source, version, description, readme, file_name, content_type, size_bytes,
-			md5, sha256, storage_path, upstream_slug, upstream_file_uri, metadata, created_at
+			md5, sha256, storage_path, upstream_slug, upstream_file_uri, metadata, version_order, created_at
 		)
-		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
 		on conflict (module_id, version) `
 	if createOnly {
 		insertRelease += `do nothing`
@@ -1249,6 +1279,7 @@ func (s *SQLiteStore) createRelease(ctx context.Context, release domain.Release,
 		release.UpstreamSlug,
 		release.UpstreamFileURI,
 		string(metadataJSON),
+		releaseVersionOrder(release.Version),
 	)
 	if err != nil {
 		return domain.Release{}, fmt.Errorf("insert release: %w", err)

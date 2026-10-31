@@ -122,31 +122,13 @@ func (r *Router) serveLocalV3Releases(w http.ResponseWriter, req *http.Request) 
 	}
 	moduleFilter := strings.ReplaceAll(strings.TrimSpace(req.URL.Query().Get("module")), "/", "-")
 	versionFilter := strings.TrimSpace(req.URL.Query().Get("version"))
-	summaries, err := r.modules.ListAllReleases(req.Context())
+	releases, total, err := r.modules.ListReleasesPageFiltered(req.Context(), moduleFilter, versionFilter, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	filtered := summaries[:0]
-	for _, summary := range summaries {
-		if moduleFilter != "" && moduleSlug(summary.Owner, summary.Name) != moduleFilter {
-			continue
-		}
-		if versionFilter != "" && summary.Version != versionFilter {
-			continue
-		}
-		filtered = append(filtered, summary)
-	}
-	total := len(filtered)
-	start := min(offset, total)
-	end := min(start+limit, total)
-	results := make([]map[string]any, 0, end-start)
-	for _, summary := range filtered[start:end] {
-		release, getErr := r.modules.GetStoredRelease(req.Context(), summary.Owner, summary.Name, summary.Version)
-		if getErr != nil {
-			writeServiceError(w, getErr)
-			return
-		}
+	results := make([]map[string]any, 0, len(releases))
+	for _, release := range releases {
 		results = append(results, v3ReleaseResponse(req, release))
 	}
 	writeV3Collection(w, req, results, limit, offset, total)

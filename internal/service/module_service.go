@@ -616,6 +616,14 @@ func (s *ModuleService) ListAllReleases(ctx context.Context) ([]store.ReleaseSum
 	return s.modules.ListAllReleases(ctx)
 }
 
+func (s *ModuleService) ListReleasesPageFiltered(ctx context.Context, module, version string, limit, offset int) ([]domain.Release, int, error) {
+	pageStore, ok := s.modules.(store.ReleasePageStore)
+	if !ok {
+		return nil, 0, errors.New("release pagination store is not available")
+	}
+	return pageStore.ListReleasesPageFiltered(ctx, module, version, limit, offset)
+}
+
 func (s *ModuleService) GetStoredRelease(ctx context.Context, owner, name, version string) (domain.Release, error) {
 	return s.modules.GetRelease(ctx, owner, name, version)
 }

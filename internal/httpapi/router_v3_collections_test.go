@@ -1,16 +1,41 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/service"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
+
+type boundedReleaseCollectionStore struct{ *store.SQLiteStore }
+
+func (*boundedReleaseCollectionStore) ListAllReleases(context.Context) ([]store.ReleaseSummary, error) {
+	return nil, errors.New("unbounded release scan is forbidden")
+}
+
+func (*boundedReleaseCollectionStore) GetRelease(context.Context, string, string, string) (domain.Release, error) {
+	return domain.Release{}, errors.New("per-release lookup is forbidden")
+}
+
+func TestV3ReleaseCollectionUsesOnlyBoundedStorePage(t *testing.T) {
+	st := newHTTPAPITestStore(t)
+	createV3CollectionRelease(t, st, "teamname", "module", "1.0.0")
+	modules := service.NewModuleService(&boundedReleaseCollectionStore{st}, testArtifactStorage{}, "modules", nil)
+	handler := newTestRouter(modules, nil, "http://example.test", nil, nil, "admin-token", true, defaultActiveReleaseTTL)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v3/releases?module=teamname-module&limit=1", nil))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"version":"1.0.0"`) {
+		t.Fatalf("bounded release page: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
 
 func TestV3ModuleCollectionServesLocalCatalogWithoutUpstreamProxy(t *testing.T) {
 	t.Parallel()
