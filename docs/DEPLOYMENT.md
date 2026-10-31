@@ -504,7 +504,7 @@ https://forge.example.com/modules/teamname/apache
 The UI includes:
 
 - live filtering on `/`;
-- README Markdown rendering;
+- README Markdown rendering, including pipe tables; wide tables scroll horizontally within the README without widening the page;
 - module version selector;
 - ready-to-copy install snippets for Puppet and r10k.
 

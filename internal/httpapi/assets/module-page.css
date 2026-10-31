@@ -97,6 +97,27 @@ h2 {
   margin: 0 0 1em;
 }
 
+.readme table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0 0 1em;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.readme th, .readme td {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.readme th {
+  background: #f2f5f4;
+  font-weight: 700;
+}
+
 .readme img {
   max-width: 100%;
   height: auto;

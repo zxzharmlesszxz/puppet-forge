@@ -10,6 +10,7 @@ import (
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 )
@@ -18,6 +19,7 @@ var relativeLinkPattern = regexp.MustCompile(`(?i)(href|src)="([^"]+)"`)
 var readmeCodeBlockPattern = regexp.MustCompile(`(?s)<pre><code(?: class="language-([^"]+)")?>(.*?)</code></pre>`)
 var buttonTypePattern = regexp.MustCompile(`^button$`)
 var markdownRenderer = goldmark.New(
+	goldmark.WithExtensions(extension.Table),
 	goldmark.WithParserOptions(
 		parser.WithAutoHeadingID(),
 	),

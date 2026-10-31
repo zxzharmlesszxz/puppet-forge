@@ -56,6 +56,13 @@ func main() {
 		}
 		name := fmt.Sprintf("module-%02d", index)
 		readme := ""
+		if index == 0 {
+			readme = "## Parameters\n\n" +
+				"| APL key | Type | Default |\n" +
+				"| --- | --- | --- |\n" +
+				"| `docker::compose::manage_runtime` | Boolean | `true` |\n" +
+				"| `docker::install::extra_package_defaults` | Docker::Package | `{version: installed, hold: false}` |\n"
+		}
 		if index == 34 {
 			readme = "![Allowed badge](https://images.example.test/badge.svg)\n\n" +
 				"![Redirected badge](https://images.example.test/redirect.svg)\n\n" +

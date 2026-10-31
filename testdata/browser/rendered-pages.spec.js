@@ -152,6 +152,22 @@ test("module title stays inside its card on mobile", async ({ page }) => {
   expect(copyLink.x + copyLink.width).toBeLessThanOrEqual(390);
 });
 
+test("README tables render and scroll within mobile content", async ({ page }) => {
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/modules/teamname/module-00");
+    const table = page.locator("#readme table");
+    await expect(table).toBeVisible();
+    await expect(table.locator("th")).toHaveText(["APL key", "Type", "Default"]);
+    await expect(table.locator("tbody tr")).toHaveCount(2);
+    expect(await table.evaluate((element) => getComputedStyle(element).overflowX)).toBe("auto");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    if (width === 390) {
+      expect(await table.evaluate((element) => element.scrollWidth)).toBeGreaterThan(await table.evaluate((element) => element.clientWidth));
+    }
+  }
+});
+
 test("README allows trusted badges and captions unavailable images", async ({ page, baseURL }) => {
   const badge = { contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="20"><rect width="80" height="20" fill="green"/></svg>' };
   await page.route("https://images.example.test/**", (route) => {
