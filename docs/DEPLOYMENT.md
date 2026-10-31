@@ -349,7 +349,25 @@ Do not use `.*` or another unrestricted redirect expression. Authentik documents
 
 Logout from `/manage` revokes the SQL-backed token/OIDC session and clears local cookies. If OIDC discovery exposes `end_session_endpoint`, or if `OIDC_LOGOUT_URL` is set, the service also redirects the browser to provider logout so the provider does not silently log the user back in with an old session.
 
-Login and publishing rate limits are stored in bounded memory per replica. Expired client buckets are removed through a priority queue; when the bound is reached, the bucket nearest to reset is evicted so new clients remain serviceable. `TRUSTED_PROXY_CIDRS` lets a replica distinguish clients behind a trusted ingress; leave it empty unless the proxy CIDRs are known. For a strict cluster-wide or adversarial limit, enforce an additional shared limit at the ingress or API gateway.
+Login and publishing rate limits use SQL-backed counters shared by all replicas.
+Each scope has an independent counter per client IP: token login allows 20 attempts
+per minute, OIDC login and callback each allow 60, and API and Manage publishing
+each allow 60. If the shared limiter is unavailable, these operations fail closed
+and log `shared rate limit check failed`; they do not fall back to replica-local
+counters. API, async mutations, and login error responses use HTTP 503; ordinary
+Manage publishing forms redirect back with an error message.
+
+The `/v3/` read limiter remains in memory per replica and allows 1,200 requests per
+client IP per minute. Its bounded state uses a priority queue to remove expired
+buckets and evict the bucket nearest to reset when full. Adding replicas can
+increase the aggregate read allowance; use an ingress or API gateway limiter if
+a strict cluster-wide read limit is required.
+
+Both limiters derive client IPs using `TRUSTED_PROXY_CIDRS`. Set the actual CIDRs
+of the direct ingress or reverse proxy; otherwise requests are grouped by the
+direct peer address. Clients sharing an egress IP share the corresponding counters.
+An additional ingress or API gateway limit can protect against abuse through
+rotating client addresses.
 
 For groups, prefer OIDC groups over individual emails:
 
