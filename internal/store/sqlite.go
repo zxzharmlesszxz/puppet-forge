@@ -779,44 +779,42 @@ func (s *SQLiteStore) ReplaceTeamConfigs(ctx context.Context, configs []auth.Tea
 		_ = tx.Rollback()
 	}()
 
-	if _, err := tx.ExecContext(ctx, `delete from access_teams`); err != nil {
-		return fmt.Errorf("clear access teams: %w", err)
-	}
-	writer := sqliteAccessConfigWriter{ctx: ctx, tx: tx}
-	if err := persistTeamConfigs(configs, s.tokenHasher, writer); err != nil {
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit access tx: %w", err)
-	}
-	return nil
+	return replaceAccessConfig(configs, s.tokenHasher, sqliteMutationWriter{ctx: ctx, tx: tx})
 }
 
-type sqliteAccessConfigWriter struct {
+type sqliteMutationWriter struct {
 	ctx context.Context
 	tx  *sql.Tx
 }
 
-func (w sqliteAccessConfigWriter) insertTeam(team string) error {
+func (w sqliteMutationWriter) clearTeams() error {
+	_, err := w.tx.ExecContext(w.ctx, `delete from access_teams`)
+	return err
+}
+
+func (w sqliteMutationWriter) commit() error {
+	return commitSQLiteMutation(w.ctx, w.tx)
+}
+
+func (w sqliteMutationWriter) insertTeam(team string) error {
 	if _, err := w.tx.ExecContext(w.ctx, `insert into access_teams (team) values (?)`, team); err != nil {
 		return fmt.Errorf("insert access team: %w", err)
 	}
 	return nil
 }
 
-func (w sqliteAccessConfigWriter) insertToken(team, tokenType string, token auth.AccessTokenRecord) error {
+func (w sqliteMutationWriter) insertToken(team, tokenType string, token auth.AccessTokenRecord) error {
 	return insertSQLiteAccessTokenRecord(w.ctx, w.tx, team, tokenType, token)
 }
 
-func (w sqliteAccessConfigWriter) insertOwner(team, owner string) error {
+func (w sqliteMutationWriter) insertOwner(team, owner string) error {
 	if _, err := w.tx.ExecContext(w.ctx, `insert into access_publish_owners (team, owner) values (?, ?)`, team, owner); err != nil {
 		return fmt.Errorf("insert access owner: %w", err)
 	}
 	return nil
 }
 
-func (w sqliteAccessConfigWriter) insertOIDCMapping(team string, mapping accessOIDCMapping) error {
+func (w sqliteMutationWriter) insertOIDCMapping(team string, mapping accessOIDCMapping) error {
 	if _, err := w.tx.ExecContext(w.ctx, `insert into access_oidc_mappings (team, mapping_type, value) values (?, ?, ?)`, team, mapping.kind, mapping.value); err != nil {
 		return fmt.Errorf("insert oidc mapping: %w", err)
 	}
@@ -1308,22 +1306,8 @@ func (s *SQLiteStore) createRelease(ctx context.Context, release domain.Release,
 		}
 	}
 
-	const updateModule = `
-		update modules
-		set latest_version = ?, updated_at = current_timestamp
-		where id = ?
-	`
-	currentLatest, err := sqliteCurrentLatestVersion(ctx, tx, release.ModuleID)
-	if err != nil {
+	if err := finishReleaseMutation(release, sqliteMutationWriter{ctx: ctx, tx: tx}); err != nil {
 		return domain.Release{}, err
-	}
-	latest := latestVersionWithCandidate(currentLatest, release.Version)
-	if _, err := tx.ExecContext(ctx, updateModule, latest, release.ModuleID); err != nil {
-		return domain.Release{}, fmt.Errorf("update module latest version: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return domain.Release{}, fmt.Errorf("commit release tx: %w", err)
 	}
 
 	return s.GetRelease(ctx, release.Owner, release.Name, release.Version)
@@ -1383,7 +1367,7 @@ func (s *SQLiteStore) DeleteModule(ctx context.Context, owner, name string) erro
 	if _, err := tx.ExecContext(ctx, `delete from release_usage where owner = ? and name = ?`, owner, name); err != nil {
 		return fmt.Errorf("delete module release usage: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commitSQLiteMutation(ctx, tx); err != nil {
 		return fmt.Errorf("commit delete module tx: %w", err)
 	}
 	return nil
@@ -1488,7 +1472,7 @@ func (s *SQLiteStore) DeleteRelease(ctx context.Context, owner, name, version st
 		return fmt.Errorf("delete empty module: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := commitSQLiteMutation(ctx, tx); err != nil {
 		return fmt.Errorf("commit delete release tx: %w", err)
 	}
 	return nil
@@ -1665,13 +1649,18 @@ func sqliteLatestVersion(ctx context.Context, tx *sql.Tx, moduleID string) (stri
 	return latest, nil
 }
 
-func sqliteCurrentLatestVersion(ctx context.Context, tx *sql.Tx, moduleID string) (string, error) {
+func (w sqliteMutationWriter) currentLatestVersion(moduleID string) (string, error) {
 	var latest string
-	err := tx.QueryRowContext(ctx, `select coalesce(latest_version, '') from modules where id = ?`, moduleID).Scan(&latest)
+	err := w.tx.QueryRowContext(w.ctx, `select coalesce(latest_version, '') from modules where id = ?`, moduleID).Scan(&latest)
 	if err != nil {
 		return "", fmt.Errorf("get current latest version: %w", err)
 	}
 	return latest, nil
+}
+
+func (w sqliteMutationWriter) updateLatestVersion(moduleID, latest string) error {
+	_, err := w.tx.ExecContext(w.ctx, `update modules set latest_version = ?, updated_at = current_timestamp where id = ?`, latest, moduleID)
+	return err
 }
 
 func (s *SQLiteStore) ListModules(ctx context.Context, limit int) ([]domain.Module, error) {

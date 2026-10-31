@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -9,8 +10,43 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/observability"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/service"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/webauth"
 )
+
+type cancelAfterModuleDeleteStore struct {
+	*store.SQLiteStore
+	cancel context.CancelFunc
+}
+
+func (s *cancelAfterModuleDeleteStore) DeleteModule(ctx context.Context, owner, name string) error {
+	if err := s.SQLiteStore.DeleteModule(ctx, owner, name); err != nil {
+		return err
+	}
+	s.cancel()
+	return nil
+}
+
+func TestDeleteAuditSurvivesPostCommitCancellation(t *testing.T) {
+	st := newHTTPAPITestStore(t)
+	createV3CollectionRelease(t, st, "teamname", "module", "1.0.0")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	backend := &cancelAfterModuleDeleteStore{SQLiteStore: st, cancel: cancel}
+	modules := service.NewModuleService(backend, testArtifactStorage{}, "modules", nil)
+	handler := newTestRouter(modules, nil, "http://example.test", newAdminAuthorizer(t), nil, "admin-token", false, defaultActiveReleaseTTL)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/modules/teamname/module?force=true&reason=broken&confirmation=teamname%2Fmodule", nil).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("delete status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	events, total, err := st.ListAuditEvents(t.Context(), nil, "force_delete_module", 10, 0)
+	if err != nil || total != 1 || len(events) != 1 || events[0].Attributes["justification"] != "broken" || events[0].Actor == "anonymous" {
+		t.Fatalf("audit after canceled request = %#v total=%d err=%v", events, total, err)
+	}
+}
 
 func TestAuditOIDCLoginUsesVerifiedCallbackIdentityWithoutCookie(t *testing.T) {
 	t.Parallel()

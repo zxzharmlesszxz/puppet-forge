@@ -307,6 +307,7 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 	}
 	requestedSpace := input.Owner
 	var authorizationErr error
+	r.prepareMutationAudit(req, principal, action)
 	release, err := r.modules.PublishAuthorized(req.Context(), input, func(space string) error {
 		requestedSpace = space
 		switch {
@@ -426,9 +427,8 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 			respondManageMutationHTTPError(w, req, http.StatusForbidden, err)
 			return
 		}
-		action := "delete_module"
+		action := r.prepareDeleteMutationAudit(req, principal, owner, name, "", justification, force)
 		if force {
-			action = "force_delete_module"
 			err = r.modules.DeleteModule(req.Context(), owner, name)
 		} else {
 			err = r.modules.DeleteModuleIfAllowed(req.Context(), owner, name, time.Now().Add(-r.activeReleaseTTL))
@@ -455,9 +455,8 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 			respondManageMutationError(w, req, err)
 			return
 		}
-		action := "delete_release"
+		action := r.prepareDeleteMutationAudit(req, principal, owner, name, version, justification, force)
 		if force {
-			action = "force_delete_release"
 			err = r.modules.DeleteRelease(req.Context(), owner, name, version)
 		} else {
 			err = r.modules.DeleteReleaseIfAllowed(req.Context(), owner, name, version, time.Now().Add(-r.activeReleaseTTL))

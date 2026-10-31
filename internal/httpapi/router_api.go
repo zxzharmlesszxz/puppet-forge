@@ -318,16 +318,14 @@ func (r *Router) deleteModule(w http.ResponseWriter, req *http.Request, owner, n
 		writeError(w, http.StatusBadRequest, parameterErr)
 		return
 	}
-	action := "delete_module"
+	if force && !principal.CanAdmin {
+		r.audit(req, principal, "force_delete_module", "failure", "forbidden", "space", owner, "module", owner+"/"+name)
+		writeError(w, http.StatusForbidden, errors.New("global admin access required for force delete"))
+		return
+	}
+	action := r.prepareDeleteMutationAudit(req, principal, owner, name, "", justification, force)
 	var deleteErr error
 	if force {
-		if !principal.CanAdmin {
-			deleteErr = errors.New("global admin access required for force delete")
-			r.audit(req, principal, "force_delete_module", "failure", "forbidden", "space", owner, "module", owner+"/"+name)
-			writeError(w, http.StatusForbidden, deleteErr)
-			return
-		}
-		action = "force_delete_module"
 		deleteErr = r.modules.DeleteModule(req.Context(), owner, name)
 	} else {
 		deleteErr = r.modules.DeleteModuleIfAllowed(req.Context(), owner, name, time.Now().Add(-r.activeReleaseTTL))
@@ -373,10 +371,9 @@ func (r *Router) deleteRelease(w http.ResponseWriter, req *http.Request, owner, 
 		writeError(w, http.StatusBadRequest, parameterErr)
 		return
 	}
-	action := "delete_release"
+	action := r.prepareDeleteMutationAudit(req, principal, owner, name, version, justification, force)
 	var deleteErr error
 	if force {
-		action = "force_delete_release"
 		deleteErr = r.modules.DeleteRelease(req.Context(), owner, name, version)
 	} else {
 		deleteErr = r.modules.DeleteReleaseIfAllowed(req.Context(), owner, name, version, time.Now().Add(-r.activeReleaseTTL))
@@ -492,6 +489,7 @@ func (r *Router) publishModuleWithReader(w http.ResponseWriter, req *http.Reques
 	}
 	defer cleanup()
 	requestedSpace := input.Owner
+	r.prepareMutationAudit(req, principal, "publish_module")
 	release, err := r.modules.PublishAuthorized(req.Context(), input, func(space string) error {
 		requestedSpace = space
 		if authorizer.Enabled() && !principal.CanPublishOwner(space) {

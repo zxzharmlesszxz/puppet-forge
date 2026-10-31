@@ -38,6 +38,7 @@ func (r *Router) managePublishSpacesPage(w http.ResponseWriter, req *http.Reques
 		defer releaseAccessConfigLock(unlock)
 		configs, message, err := r.publishSpaceConfigsFromForm(req)
 		if err == nil {
+			r.prepareMutationAudit(req, principal, "change_publish_spaces", "assignment_action", req.FormValue("action"), "team", req.FormValue("team"), "space", req.FormValue("space"))
 			err = r.saveAccessConfigs(req.Context(), configs)
 		}
 		if err != nil {

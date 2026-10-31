@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -50,6 +51,52 @@ func (r *Router) audit(req *http.Request, principal auth.Principal, action, resu
 }
 
 func (r *Router) auditWithOIDCSession(req *http.Request, principal auth.Principal, session *webauth.Session, action, result, reason string, attrs ...any) {
+	recorded := result == "success" && store.MutationAuditRecorded(req.Context())
+	var event store.AuditEvent
+	if recorded {
+		event, _ = store.PendingMutationAudit(req.Context())
+	} else {
+		event = r.newAuditEvent(req, principal, session, action, result, reason, attrs...)
+	}
+	fields := []any{
+		"event", "security_audit", "request_id", event.RequestID, "actor", event.Actor,
+		"auth_method", event.AuthMethod, "action", action, "source_ip", event.SourceIP,
+		"result", result, "reason", reason,
+	}
+	for key, value := range event.Attributes {
+		fields = append(fields, key, value)
+	}
+	slog.Default().Info("security audit", fields...)
+	if recorded {
+		return
+	}
+	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 5*time.Second)
+	defer cancel()
+	if err := r.modules.RecordAuditEvent(auditCtx, event); err != nil {
+		slog.Default().Error("record security audit event", "request_id", event.RequestID, "action", action, "err", err)
+	}
+}
+
+func (r *Router) prepareMutationAudit(req *http.Request, principal auth.Principal, action string, attrs ...any) {
+	event := r.newAuditEvent(req, principal, nil, action, "success", "none", attrs...)
+	*req = *req.WithContext(store.ContextWithMutationAudit(req.Context(), event))
+}
+
+func (r *Router) prepareDeleteMutationAudit(req *http.Request, principal auth.Principal, owner, name, version, justification string, force bool) string {
+	action := "delete_module"
+	attrs := []any{"space", owner, "module", owner + "/" + name, "justification", justification}
+	if version != "" {
+		action = "delete_release"
+		attrs = append(attrs, "release", version)
+	}
+	if force {
+		action = "force_" + action
+	}
+	r.prepareMutationAudit(req, principal, action, attrs...)
+	return action
+}
+
+func (r *Router) newAuditEvent(req *http.Request, principal auth.Principal, session *webauth.Session, action, result, reason string, attrs ...any) store.AuditEvent {
 	authMethod := "anonymous"
 	actor := "anonymous"
 	identityAttrs := make([]any, 0, 4)
@@ -76,20 +123,7 @@ func (r *Router) auditWithOIDCSession(req *http.Request, principal auth.Principa
 		authMethod = "token"
 		actor = "team:" + principal.Team
 	}
-	fields := []any{
-		"event", "security_audit",
-		"request_id", observability.RequestID(req.Context()),
-		"actor", actor,
-		"auth_method", authMethod,
-		"action", action,
-		"source_ip", clientAddress(req, r.trustedProxyCIDRs),
-		"result", result,
-		"reason", reason,
-	}
-	fields = append(fields, identityAttrs...)
-	fields = append(fields, attrs...)
-	slog.Default().Info("security audit", fields...)
-	event := store.AuditEvent{
+	return store.AuditEvent{
 		OccurredAt: time.Now().UTC(),
 		RequestID:  observability.RequestID(req.Context()),
 		Actor:      actor,
@@ -99,9 +133,6 @@ func (r *Router) auditWithOIDCSession(req *http.Request, principal auth.Principa
 		Reason:     reason,
 		SourceIP:   clientAddress(req, r.trustedProxyCIDRs),
 		Attributes: auditAttributes(append(identityAttrs, attrs...)),
-	}
-	if err := r.modules.RecordAuditEvent(req.Context(), event); err != nil {
-		slog.Default().Error("record security audit event", "request_id", event.RequestID, "action", action, "err", err)
 	}
 }
 

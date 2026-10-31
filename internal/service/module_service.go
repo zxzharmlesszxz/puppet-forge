@@ -200,6 +200,10 @@ func (s *ModuleService) publish(ctx context.Context, input domain.PublishModuleI
 	input.SizeBytes = sizeBytes
 	md5Hex := hex.EncodeToString(md5Hash.Sum(nil))
 	shaHex := hex.EncodeToString(shaHash.Sum(nil))
+	store.EnrichMutationAudit(ctx, map[string]string{
+		"space": input.Owner, "module": input.Owner + "/" + input.Name,
+		"release": input.Version, "sha256": shaHex,
+	})
 	objectPath := path.Join(s.prefix, input.Owner, input.Name, input.Version, shaHex+".tar.gz")
 
 	unlock, err := s.modules.LockModule(ctx, input.Owner, input.Name)
@@ -218,6 +222,13 @@ func (s *ModuleService) publish(ctx context.Context, input domain.PublishModuleI
 				return domain.Release{}, err
 			}
 			existing.DownloadURL = s.artifacts.PublicURL(existing.StoragePath)
+			if event, pending := store.PendingMutationAudit(ctx); pending {
+				if err := s.RecordAuditEvent(ctx, event); err != nil {
+					metrics.ObservePublish(err)
+					return domain.Release{}, err
+				}
+				store.MarkMutationAuditRecorded(ctx)
+			}
 			metrics.ObservePublish(nil)
 			return existing, nil
 		}

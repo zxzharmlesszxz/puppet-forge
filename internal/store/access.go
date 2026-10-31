@@ -115,6 +115,25 @@ type accessConfigWriter interface {
 	insertOIDCMapping(team string, mapping accessOIDCMapping) error
 }
 
+type accessConfigMutationWriter interface {
+	accessConfigWriter
+	clearTeams() error
+	commit() error
+}
+
+func replaceAccessConfig(configs []auth.TeamConfig, hasher *auth.TokenHasher, writer accessConfigMutationWriter) error {
+	if err := writer.clearTeams(); err != nil {
+		return fmt.Errorf("clear access teams: %w", err)
+	}
+	if err := persistTeamConfigs(configs, hasher, writer); err != nil {
+		return err
+	}
+	if err := writer.commit(); err != nil {
+		return fmt.Errorf("commit access tx: %w", err)
+	}
+	return nil
+}
+
 func persistTeamConfigs(configs []auth.TeamConfig, hasher *auth.TokenHasher, writer accessConfigWriter) error {
 	for _, cfg := range configs {
 		if strings.TrimSpace(cfg.Team) == "" {

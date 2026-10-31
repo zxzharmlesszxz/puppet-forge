@@ -68,6 +68,7 @@ func (r *Router) manageAccessTokenPage(w http.ResponseWriter, req *http.Request)
 		}
 		revokedAt := time.Now().UTC()
 		record.RevokedAt = &revokedAt
+		r.prepareMutationAudit(req, principal, "revoke_access_token", "team", team, "token_role", kind, "token_name", record.Description, "token_prefix", record.Prefix, "token_id", record.ID)
 		if err := r.saveAccessConfigs(req.Context(), configs); err != nil {
 			r.audit(req, principal, "revoke_access_token", "failure", auditReason(err), "team", team, "token_role", kind, "token_name", record.Description, "token_prefix", record.Prefix, "token_id", record.ID)
 			writeError(w, http.StatusInternalServerError, err)
@@ -139,6 +140,7 @@ func (r *Router) createAccessToken(w http.ResponseWriter, req *http.Request, pri
 		action = "rotate_access_token"
 		auditAttrs = append(auditAttrs, "replaces_token_id", rotated.ID)
 	}
+	r.prepareMutationAudit(req, principal, action, auditAttrs...)
 	if err := r.saveAccessConfigs(req.Context(), configs); err != nil {
 		r.audit(req, principal, action, "failure", auditReason(err), auditAttrs...)
 		writeError(w, http.StatusInternalServerError, err)

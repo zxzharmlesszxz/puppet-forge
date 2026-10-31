@@ -694,11 +694,12 @@ func TestPublishRetryWithSameArchiveIsIdempotent(t *testing.T) {
 	moduleService, artifacts := newSQLiteModuleService(t)
 	archive := buildPublishArchive(t, "teamname-module", "1.0.0", "same")
 
-	first, err := moduleService.Publish(ctx, domain.PublishModuleInput{Owner: "teamname", FileName: "module.tar.gz", FileBytes: archive})
+	event := store.AuditEvent{Actor: "publisher", Action: "publish_module", Result: "success", Reason: "none"}
+	first, err := moduleService.Publish(store.ContextWithMutationAudit(ctx, event), domain.PublishModuleInput{Owner: "teamname", FileName: "module.tar.gz", FileBytes: archive})
 	if err != nil {
 		t.Fatalf("first Publish() error = %v", err)
 	}
-	second, err := moduleService.Publish(ctx, domain.PublishModuleInput{Owner: "teamname", FileName: "retry.tar.gz", FileBytes: archive})
+	second, err := moduleService.Publish(store.ContextWithMutationAudit(ctx, event), domain.PublishModuleInput{Owner: "teamname", FileName: "retry.tar.gz", FileBytes: archive})
 	if err != nil {
 		t.Fatalf("second Publish() error = %v", err)
 	}
@@ -707,6 +708,15 @@ func TestPublishRetryWithSameArchiveIsIdempotent(t *testing.T) {
 	}
 	if artifacts.uploads != 1 || artifacts.objectCount() != 1 {
 		t.Fatalf("idempotent retry changed storage: uploads=%d objects=%d", artifacts.uploads, artifacts.objectCount())
+	}
+	events, total, err := moduleService.modules.(store.AuditEventStore).ListAuditEvents(ctx, nil, "", 10, 0)
+	if err != nil || total != 2 || len(events) != 2 {
+		t.Fatalf("publication audit = %#v total=%d err=%v", events, total, err)
+	}
+	for _, event := range events {
+		if event.Attributes["module"] != "teamname/module" || event.Attributes["sha256"] != first.SHA256 {
+			t.Fatalf("publication audit misses archive identity: %#v", event)
+		}
 	}
 }
 

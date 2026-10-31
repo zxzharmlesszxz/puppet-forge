@@ -791,43 +791,42 @@ func (s *PostgresStore) ReplaceTeamConfigs(ctx context.Context, configs []auth.T
 		_ = tx.Rollback(ctx)
 	}()
 
-	if _, err := tx.Exec(ctx, `delete from access_teams`); err != nil {
-		return fmt.Errorf("clear access teams: %w", err)
-	}
-	writer := postgresAccessConfigWriter{ctx: ctx, tx: tx}
-	if err := persistTeamConfigs(configs, s.tokenHasher, writer); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit access tx: %w", err)
-	}
-	return nil
+	return replaceAccessConfig(configs, s.tokenHasher, postgresMutationWriter{ctx: ctx, tx: tx})
 }
 
-type postgresAccessConfigWriter struct {
+type postgresMutationWriter struct {
 	ctx context.Context
 	tx  pgx.Tx
 }
 
-func (w postgresAccessConfigWriter) insertTeam(team string) error {
+func (w postgresMutationWriter) clearTeams() error {
+	_, err := w.tx.Exec(w.ctx, `delete from access_teams`)
+	return err
+}
+
+func (w postgresMutationWriter) commit() error {
+	return commitPostgresMutation(w.ctx, w.tx)
+}
+
+func (w postgresMutationWriter) insertTeam(team string) error {
 	if _, err := w.tx.Exec(w.ctx, `insert into access_teams (team) values ($1)`, team); err != nil {
 		return fmt.Errorf("insert access team: %w", err)
 	}
 	return nil
 }
 
-func (w postgresAccessConfigWriter) insertToken(team, tokenType string, token auth.AccessTokenRecord) error {
+func (w postgresMutationWriter) insertToken(team, tokenType string, token auth.AccessTokenRecord) error {
 	return insertPostgresAccessTokenRecord(w.ctx, w.tx, team, tokenType, token)
 }
 
-func (w postgresAccessConfigWriter) insertOwner(team, owner string) error {
+func (w postgresMutationWriter) insertOwner(team, owner string) error {
 	if _, err := w.tx.Exec(w.ctx, `insert into access_publish_owners (team, owner) values ($1, $2)`, team, owner); err != nil {
 		return fmt.Errorf("insert access owner: %w", err)
 	}
 	return nil
 }
 
-func (w postgresAccessConfigWriter) insertOIDCMapping(team string, mapping accessOIDCMapping) error {
+func (w postgresMutationWriter) insertOIDCMapping(team string, mapping accessOIDCMapping) error {
 	if _, err := w.tx.Exec(w.ctx, `insert into access_oidc_mappings (team, mapping_type, value) values ($1, $2, $3)`, team, mapping.kind, mapping.value); err != nil {
 		return fmt.Errorf("insert oidc mapping: %w", err)
 	}
@@ -1254,22 +1253,8 @@ func (s *PostgresStore) createRelease(ctx context.Context, release domain.Releas
 		}
 	}
 
-	const updateModule = `
-		update modules
-		set latest_version = $1, updated_at = now()
-		where id = $2
-	`
-	currentLatest, err := postgresCurrentLatestVersion(ctx, tx, release.ModuleID)
-	if err != nil {
+	if err := finishReleaseMutation(release, postgresMutationWriter{ctx: ctx, tx: tx}); err != nil {
 		return domain.Release{}, err
-	}
-	latest := latestVersionWithCandidate(currentLatest, release.Version)
-	if _, err := tx.Exec(ctx, updateModule, latest, release.ModuleID); err != nil {
-		return domain.Release{}, fmt.Errorf("update module latest version: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return domain.Release{}, fmt.Errorf("commit release tx: %w", err)
 	}
 
 	return s.GetRelease(ctx, release.Owner, release.Name, release.Version)
@@ -1535,7 +1520,7 @@ func (s *PostgresStore) DeleteModule(ctx context.Context, owner, name string) er
 	if _, err := tx.Exec(ctx, `delete from release_usage where owner = $1 and name = $2`, owner, name); err != nil {
 		return fmt.Errorf("delete module release usage: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := commitPostgresMutation(ctx, tx); err != nil {
 		return fmt.Errorf("commit delete module tx: %w", err)
 	}
 
@@ -1645,7 +1630,7 @@ func (s *PostgresStore) DeleteRelease(ctx context.Context, owner, name, version 
 		return fmt.Errorf("delete empty module: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	if err := commitPostgresMutation(ctx, tx); err != nil {
 		return fmt.Errorf("commit delete release tx: %w", err)
 	}
 
@@ -1807,13 +1792,18 @@ func postgresLatestVersion(ctx context.Context, tx pgx.Tx, moduleID string) (str
 	return latest, nil
 }
 
-func postgresCurrentLatestVersion(ctx context.Context, tx pgx.Tx, moduleID string) (string, error) {
+func (w postgresMutationWriter) currentLatestVersion(moduleID string) (string, error) {
 	var latest string
-	err := tx.QueryRow(ctx, `select coalesce(latest_version, '') from modules where id = $1 for update`, moduleID).Scan(&latest)
+	err := w.tx.QueryRow(w.ctx, `select coalesce(latest_version, '') from modules where id = $1 for update`, moduleID).Scan(&latest)
 	if err != nil {
 		return "", fmt.Errorf("get current latest version: %w", err)
 	}
 	return latest, nil
+}
+
+func (w postgresMutationWriter) updateLatestVersion(moduleID, latest string) error {
+	_, err := w.tx.Exec(w.ctx, `update modules set latest_version = $1, updated_at = now() where id = $2`, latest, moduleID)
+	return err
 }
 
 func (s *PostgresStore) GetModule(ctx context.Context, owner, name string) (domain.Module, error) {

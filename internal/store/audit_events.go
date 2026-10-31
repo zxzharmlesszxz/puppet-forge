@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -10,6 +11,10 @@ import (
 )
 
 func (s *PostgresStore) RecordAuditEvent(ctx context.Context, event AuditEvent) error {
+	return recordPostgresAuditEvent(ctx, s.pool, event)
+}
+
+func recordPostgresAuditEvent(ctx context.Context, db postgresExecutor, event AuditEvent) error {
 	attributes, err := json.Marshal(event.Attributes)
 	if err != nil {
 		return fmt.Errorf("encode audit event attributes: %w", err)
@@ -20,7 +25,7 @@ func (s *PostgresStore) RecordAuditEvent(ctx context.Context, event AuditEvent) 
 	if event.OccurredAt.IsZero() {
 		event.OccurredAt = time.Now().UTC()
 	}
-	_, err = s.pool.Exec(ctx, `
+	_, err = db.Exec(ctx, `
 		insert into audit_events (
 			id, occurred_at, request_id, actor, auth_method, action, result, reason, source_ip, attributes_json
 		) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -74,6 +79,14 @@ func (s *PostgresStore) ListAuditEvents(ctx context.Context, scopes []string, qu
 }
 
 func (s *SQLiteStore) RecordAuditEvent(ctx context.Context, event AuditEvent) error {
+	return recordSQLiteAuditEvent(ctx, s.db, event)
+}
+
+type sqliteAuditExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func recordSQLiteAuditEvent(ctx context.Context, db sqliteAuditExecutor, event AuditEvent) error {
 	attributes, err := json.Marshal(event.Attributes)
 	if err != nil {
 		return fmt.Errorf("encode audit event attributes: %w", err)
@@ -84,7 +97,7 @@ func (s *SQLiteStore) RecordAuditEvent(ctx context.Context, event AuditEvent) er
 	if event.OccurredAt.IsZero() {
 		event.OccurredAt = time.Now().UTC()
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		insert into audit_events (
 			id, occurred_at, request_id, actor, auth_method, action, result, reason, source_ip, attributes_json
 		) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

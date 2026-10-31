@@ -5,6 +5,21 @@ version ordering through an indexed `version_order` key. Schema migration
 backfills existing keys in bounded batches; a page does not load the entire
 release catalog or issue one metadata query per result.
 
+Administrative release publication/replacement, module/release deletion, and
+team/access-token/access-configuration changes commit their success audit event
+in the same SQL transaction as the mutation. Audit insertion failure rolls back
+the mutation. Events preserve actor, request ID, targets, justification and the
+access diff; disconnecting after commit cannot remove the event. Idempotent
+publication records an event without rewriting the release. Failed attempts and
+authentication events use separate, bounded audit writes.
+
+Files extracted from module archives receive a sandboxed CSP with no script or
+form permissions, independently of the management UI policy. Extraction bounds
+the full decompressed stream, including skipped files, and observes cancellation.
+GCS streaming uploads cancel their writer before closing on a source error so
+partial objects cannot become cache hits. Release hydration and checksum writes
+recheck the stored artifact identity under the module lock before persisting.
+
 [Українська версія](ARCHITECTURE.uk.md)
 
 > **Runtime diagrams and verification map:** [SCHEMA.md](SCHEMA.md) shows the

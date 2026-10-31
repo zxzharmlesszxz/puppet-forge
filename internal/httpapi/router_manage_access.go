@@ -73,6 +73,8 @@ func (r *Router) manageAccessPage(w http.ResponseWriter, req *http.Request) {
 			r.renderManageAccess(w, req, principal, message)
 			return
 		}
+		auditAttrs = append(auditAttrs, "changes", accessConfigChangeSummary(beforeConfigs, configs, actionTeam(req)))
+		r.prepareMutationAudit(req, principal, auditAction, auditAttrs...)
 		if err := r.saveAccessConfigs(req.Context(), configs); err != nil {
 			r.audit(req, principal, auditAction, "failure", auditReason(err), auditAttrs...)
 			message := manageErrorMessage(w, manageFormErrorStatus(err), err)
@@ -83,7 +85,6 @@ func (r *Router) manageAccessPage(w http.ResponseWriter, req *http.Request) {
 			r.renderManageAccess(w, req, principal, message)
 			return
 		}
-		auditAttrs = append(auditAttrs, "changes", accessConfigChangeSummary(beforeConfigs, configs, actionTeam(req)))
 		r.audit(req, principal, auditAction, "success", "none", auditAttrs...)
 		redirectManageResult(w, req, "/manage/admin/access", "message", message)
 	default:
@@ -148,13 +149,14 @@ func (r *Router) manageAccessAddPage(w http.ResponseWriter, req *http.Request) {
 			r.renderManageAccessAddPage(w, req, principal, manageErrorMessage(w, status, err), status)
 			return
 		}
+		team := strings.TrimSpace(req.FormValue("team"))
+		r.prepareMutationAudit(req, principal, "create_team", "team", team, "changes", accessConfigChangeSummary(beforeConfigs, configs, team))
 		if err := r.saveAccessConfigs(req.Context(), configs); err != nil {
 			r.audit(req, principal, "create_team", "failure", auditReason(err))
 			status := manageFormErrorStatus(err)
 			r.renderManageAccessAddPage(w, req, principal, manageErrorMessage(w, status, err), status)
 			return
 		}
-		team := strings.TrimSpace(req.FormValue("team"))
 		r.audit(req, principal, "create_team", "success", "none", "team", team, "changes", accessConfigChangeSummary(beforeConfigs, configs, team))
 		redirectManageResult(w, req, "/manage/teams/"+url.PathEscape(team)+"/access", "message", message)
 		return
