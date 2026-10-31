@@ -1456,7 +1456,7 @@ func TestStoreParityOIDCSessionLifecycle(t *testing.T) {
 			suffix := tc.name + "-" + uuid.NewString()
 			session := OIDCSession{
 				SessionHash: "oidc-session-" + suffix, Subject: "subject-" + suffix,
-				Email: "user@example.com", Name: "Test User", Groups: []string{"teamname-admins"}, CSRFSecret: "csrf-" + suffix,
+				Email: "user@example.com", EmailVerified: true, Name: "Test User", Groups: []string{"teamname-admins"}, CSRFSecret: "csrf-" + suffix,
 				CreatedAt: now, ExpiresAt: now.Add(8 * time.Hour), LastSeenAt: now,
 			}
 			if err := st.CreateOIDCSession(ctx, session); err != nil {
@@ -1466,7 +1466,7 @@ func TestStoreParityOIDCSessionLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetOIDCSession() error = %v", err)
 			}
-			if got.Subject != session.Subject || got.Email != session.Email || len(got.Groups) != 1 || got.Groups[0] != session.Groups[0] || got.CSRFSecret != session.CSRFSecret {
+			if got.Subject != session.Subject || got.Email != session.Email || !got.EmailVerified || len(got.Groups) != 1 || got.Groups[0] != session.Groups[0] || got.CSRFSecret != session.CSRFSecret {
 				t.Fatalf("GetOIDCSession() = %#v", got)
 			}
 			if !got.CreatedAt.Equal(session.CreatedAt) || !got.ExpiresAt.Equal(session.ExpiresAt) || !got.LastSeenAt.Equal(session.LastSeenAt) {

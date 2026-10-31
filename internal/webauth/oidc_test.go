@@ -35,6 +35,7 @@ type oidcProviderFixture struct {
 	nonceOverride  string
 	tokenCalls     int
 	codeVerifier   string
+	emailVerified  *bool
 }
 
 func newOIDCProviderFixture(t *testing.T) *oidcProviderFixture {
@@ -86,6 +87,7 @@ func (f *oidcProviderFixture) handleToken(w http.ResponseWriter, r *http.Request
 		nonce = f.nonceOverride
 	}
 	audience := f.audience
+	emailVerified := f.emailVerified
 	f.mu.Unlock()
 
 	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: f.privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "test-key"))
@@ -94,11 +96,15 @@ func (f *oidcProviderFixture) handleToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 	now := time.Now().UTC()
-	claims, err := json.Marshal(map[string]any{
+	claimValues := map[string]any{
 		"iss": issuer, "aud": audience, "sub": "user-subject", "email": "user@example.com",
 		"name": "Test User", "groups": []string{"teamname-admins"}, "nonce": nonce,
 		"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
-	})
+	}
+	if emailVerified != nil {
+		claimValues["email_verified"] = *emailVerified
+	}
+	claims, err := json.Marshal(claimValues)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -299,6 +305,51 @@ func TestOIDCFlowUsesNoncePKCEAndRejectsStateReplay(t *testing.T) {
 	fixture.mu.Unlock()
 	if tokenCalls != 1 {
 		t.Fatalf("replayed callback reached token endpoint: calls=%d", tokenCalls)
+	}
+}
+
+func TestOIDCEmailAuthorizationRequiresVerification(t *testing.T) {
+	for _, state := range []string{"missing", "false", "true"} {
+		t.Run(state, func(t *testing.T) {
+			fixture := newOIDCProviderFixture(t)
+			if state != "missing" {
+				verified := state == "true"
+				fixture.emailVerified = &verified
+			}
+			oidcAuth, _ := newOIDCTestAuth(t, fixture)
+			login := httptest.NewRecorder()
+			oidcAuth.Login(login, httptest.NewRequest(http.MethodGet, "/auth/login?next=/manage", nil))
+			authorizeURL, err := url.Parse(login.Header().Get("Location"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture.mu.Lock()
+			fixture.expectedNonce = authorizeURL.Query().Get("nonce")
+			fixture.mu.Unlock()
+			callback := httptest.NewRequest(http.MethodGet, "/auth/callback?code=code&state="+url.QueryEscape(authorizeURL.Query().Get("state")), nil)
+			callback.AddCookie(findResponseCookie(t, login.Result(), oidcAuth.stateName))
+			recorder := httptest.NewRecorder()
+			if _, ok := oidcAuth.Callback(recorder, callback); !ok {
+				t.Fatalf("callback rejected: %s", recorder.Body.String())
+			}
+			request := httptest.NewRequest(http.MethodGet, "/manage", nil)
+			request.AddCookie(findResponseCookie(t, recorder.Result(), oidcAuth.sessionName))
+			session, ok := oidcAuth.Session(request)
+			if !ok || session.Email != "user@example.com" || session.EmailVerified != (state == "true") {
+				t.Fatalf("persisted session = %#v, ok=%v", session, ok)
+			}
+			authorizer, err := internalAuth.NewAuthorizer([]internalAuth.TeamConfig{
+				{Team: internalAuth.GlobalAdminTeam, OIDCAdminEmails: []string{"user@example.com"}},
+				{Team: "teamname", OIDCTeamAdminGroups: []string{"teamname-admins"}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			principal, ok := authorizer.AuthenticateOIDC(session.AuthorizationEmail(), session.Sub, session.Groups)
+			if !ok || !principal.CanManageTeam || principal.CanAdmin != (state == "true") {
+				t.Fatalf("verification state %s grants wrong rights: %#v", state, principal)
+			}
+		})
 	}
 }
 

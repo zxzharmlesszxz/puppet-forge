@@ -297,6 +297,13 @@ Important rules:
 
 ## Web Auth and OIDC
 
+Email and email-domain authorization requires the ID token claim
+`email_verified: true`. Unverified email remains available for display and audit,
+but grants no permissions. Subject and group mappings do not depend on this claim.
+Existing sessions migrate as unverified: users relying on email mappings must
+sign in again after upgrading. Configure the provider to verify email ownership
+and include the boolean claim in ID tokens.
+
 - `WEB_AUTH_MODE=oidc` enables session login for the web UI through OIDC/Authentik.
 - API access remains token-based.
 - Required settings are `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `OIDC_COOKIE_SECRET`.

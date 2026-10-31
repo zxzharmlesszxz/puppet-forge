@@ -411,6 +411,7 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) (returnErr 
 		create index if not exists idx_artifact_deletions_due on artifact_deletions (next_attempt_at, created_at, storage_path);
 		alter table releases add column if not exists md5 text not null default '';
 		alter table modules add column if not exists upstream_refreshed_at timestamptz;
+		alter table oidc_sessions add column if not exists email_verified boolean not null default false;
 	`
 
 	conn, err := s.pool.Acquire(ctx)
@@ -936,10 +937,10 @@ func (s *PostgresStore) CreateOIDCSession(ctx context.Context, session OIDCSessi
 		return fmt.Errorf("encode oidc session groups: %w", err)
 	}
 	if _, err := s.pool.Exec(ctx, `
-		insert into oidc_sessions (session_hash, subject, email, name, groups_json, csrf_secret, created_at, expires_at, last_seen_at, revoked_at)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		insert into oidc_sessions (session_hash, subject, email, name, groups_json, csrf_secret, created_at, expires_at, last_seen_at, revoked_at, email_verified)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, session.SessionHash, session.Subject, session.Email, session.Name, groupsJSON, session.CSRFSecret,
-		session.CreatedAt.UTC(), session.ExpiresAt.UTC(), session.LastSeenAt.UTC(), session.RevokedAt); err != nil {
+		session.CreatedAt.UTC(), session.ExpiresAt.UTC(), session.LastSeenAt.UTC(), session.RevokedAt, session.EmailVerified); err != nil {
 		return fmt.Errorf("create oidc session: %w", err)
 	}
 	return nil
@@ -950,12 +951,12 @@ func (s *PostgresStore) GetOIDCSession(ctx context.Context, sessionHash string, 
 	var groupsJSON []byte
 	var revokedAt sql.NullTime
 	err := s.pool.QueryRow(ctx, `
-		select session_hash, subject, email, name, groups_json, csrf_secret, created_at, expires_at, last_seen_at, revoked_at
+		select session_hash, subject, email, name, groups_json, csrf_secret, created_at, expires_at, last_seen_at, revoked_at, email_verified
 		from oidc_sessions
 		where session_hash = $1 and revoked_at is null and expires_at > $2
 	`, sessionHash, now.UTC()).Scan(
 		&session.SessionHash, &session.Subject, &session.Email, &session.Name, &groupsJSON, &session.CSRFSecret,
-		&session.CreatedAt, &session.ExpiresAt, &session.LastSeenAt, &revokedAt,
+		&session.CreatedAt, &session.ExpiresAt, &session.LastSeenAt, &revokedAt, &session.EmailVerified,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return OIDCSession{}, ErrNotFound

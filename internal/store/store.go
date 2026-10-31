@@ -91,16 +91,17 @@ type OIDCState struct {
 }
 
 type OIDCSession struct {
-	SessionHash string
-	Subject     string
-	Email       string
-	Name        string
-	Groups      []string
-	CSRFSecret  string
-	CreatedAt   time.Time
-	ExpiresAt   time.Time
-	LastSeenAt  time.Time
-	RevokedAt   *time.Time
+	SessionHash   string
+	Subject       string
+	Email         string
+	EmailVerified bool
+	Name          string
+	Groups        []string
+	CSRFSecret    string
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
+	LastSeenAt    time.Time
+	RevokedAt     *time.Time
 }
 
 type SessionCleanupResult struct {

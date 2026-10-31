@@ -216,7 +216,7 @@ func (r *Router) managePrincipal(req *http.Request) (auth.Principal, bool, error
 
 	if r.webAuth != nil {
 		if session, ok := r.webAuth.Session(req); ok {
-			if principal, ok := authorizer.AuthenticateOIDC(session.Email, session.Sub, session.Groups); ok {
+			if principal, ok := authorizer.AuthenticateOIDC(session.AuthorizationEmail(), session.Sub, session.Groups); ok {
 				slog.Debug("manage principal authenticated",
 					"request_id", observability.RequestID(req.Context()),
 					"auth_method", "oidc",

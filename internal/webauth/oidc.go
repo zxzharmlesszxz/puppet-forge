@@ -68,11 +68,19 @@ type OIDCAuth struct {
 }
 
 type Session struct {
-	Email      string
-	Name       string
-	Sub        string
-	Groups     []string
-	CSRFSecret string
+	Email         string
+	EmailVerified bool
+	Name          string
+	Sub           string
+	Groups        []string
+	CSRFSecret    string
+}
+
+func (s Session) AuthorizationEmail() string {
+	if s.EmailVerified {
+		return s.Email
+	}
+	return ""
 }
 
 const oidcSessionTTL = 8 * time.Hour
@@ -186,7 +194,7 @@ func (a *OIDCAuth) Session(r *http.Request) (Session, bool) {
 		return Session{}, false
 	}
 	return Session{
-		Email: persisted.Email, Name: persisted.Name, Sub: persisted.Subject,
+		Email: persisted.Email, EmailVerified: persisted.EmailVerified, Name: persisted.Name, Sub: persisted.Subject,
 		Groups: append([]string(nil), persisted.Groups...), CSRFSecret: persisted.CSRFSecret,
 	}, true
 }
@@ -306,10 +314,11 @@ func (a *OIDCAuth) Callback(w http.ResponseWriter, r *http.Request) (Session, bo
 	}
 
 	var claims struct {
-		Sub    string   `json:"sub"`
-		Email  string   `json:"email"`
-		Name   string   `json:"name"`
-		Groups []string `json:"groups"`
+		Sub           string   `json:"sub"`
+		Email         string   `json:"email"`
+		EmailVerified bool     `json:"email_verified"`
+		Name          string   `json:"name"`
+		Groups        []string `json:"groups"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		logOIDCProtocolFailure(r, "decode_claims", err)
@@ -319,7 +328,7 @@ func (a *OIDCAuth) Callback(w http.ResponseWriter, r *http.Request) (Session, bo
 	slog.Debug("oidc id token verified", "request_id", observability.RequestID(r.Context()), "groups", len(claims.Groups), "has_email", claims.Email != "", "has_name", claims.Name != "")
 
 	session := Session{
-		Sub: claims.Sub, Email: claims.Email, Name: claims.Name, Groups: claims.Groups,
+		Sub: claims.Sub, Email: claims.Email, EmailVerified: claims.EmailVerified, Name: claims.Name, Groups: claims.Groups,
 	}
 	sessionID, err := a.createSession(r.Context(), session)
 	if err != nil {
@@ -354,7 +363,7 @@ func (a *OIDCAuth) createSession(ctx context.Context, session Session) (string, 
 	}
 	now := time.Now().UTC()
 	if err := a.sessionStore.CreateOIDCSession(ctx, store.OIDCSession{
-		SessionHash: a.hashSessionID(sessionID), Subject: session.Sub, Email: session.Email, Name: session.Name,
+		SessionHash: a.hashSessionID(sessionID), Subject: session.Sub, Email: session.Email, EmailVerified: session.EmailVerified, Name: session.Name,
 		Groups: append([]string(nil), session.Groups...), CSRFSecret: csrfSecret,
 		CreatedAt: now, ExpiresAt: now.Add(oidcSessionTTL), LastSeenAt: now,
 	}); err != nil {

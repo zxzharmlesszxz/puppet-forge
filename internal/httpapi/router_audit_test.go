@@ -48,7 +48,8 @@ func TestOIDCAuditTeamsUsesActualMemberships(t *testing.T) {
 		session webauth.Session
 		want    []string
 	}{
-		{webauth.Session{Email: "member@example.com", Groups: []string{"global-admins", "team-admins"}}, []string{"teamone", "teamtwo"}},
+		{webauth.Session{Email: "member@example.com", EmailVerified: true, Groups: []string{"global-admins", "team-admins"}}, []string{"teamone", "teamtwo"}},
+		{webauth.Session{Email: "member@example.com", Groups: []string{"team-admins"}}, []string{"teamtwo"}},
 		{webauth.Session{Groups: []string{"global-admins"}}, nil},
 		{webauth.Session{Groups: []string{"unknown"}}, nil},
 	} {

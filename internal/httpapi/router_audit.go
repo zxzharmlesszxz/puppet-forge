@@ -36,7 +36,7 @@ func oidcAuditTeams(configs []auth.TeamConfig, session webauth.Session) ([]strin
 		if err != nil {
 			return nil, err
 		}
-		principal, ok := authorizer.AuthenticateOIDC(session.Email, session.Sub, session.Groups)
+		principal, ok := authorizer.AuthenticateOIDC(session.AuthorizationEmail(), session.Sub, session.Groups)
 		if ok && (principal.CanPublish || principal.CanManageTeam) {
 			teams = append(teams, cfg.Team)
 		}

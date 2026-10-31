@@ -20,7 +20,7 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
 
-const currentSchemaVersion = 5
+const currentSchemaVersion = 6
 
 type sqliteQueryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -405,6 +405,15 @@ func migrateSQLiteSchema(db *sql.DB, tokenHasher *auth.TokenHasher) error {
 	}
 	if err := sqliteEnsureUpstreamRefreshColumn(tx); err != nil {
 		return err
+	}
+	verifiedColumn, err := sqliteTableHasColumn(tx, "oidc_sessions", "email_verified")
+	if err != nil {
+		return err
+	}
+	if !verifiedColumn {
+		if _, err := tx.Exec(`alter table oidc_sessions add column email_verified integer not null default 0`); err != nil {
+			return fmt.Errorf("migrate OIDC email verification: %w", err)
+		}
 	}
 	if err := sqliteEnsureCanonicalSlugs(tx); err != nil {
 		return err
@@ -916,10 +925,10 @@ func (s *SQLiteStore) CreateOIDCSession(ctx context.Context, session OIDCSession
 		return fmt.Errorf("encode oidc session groups: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx, `
-		insert into oidc_sessions (session_hash, subject, email, name, groups_json, csrf_secret, created_at, expires_at, last_seen_at, revoked_at)
-		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		insert into oidc_sessions (session_hash, subject, email, name, groups_json, csrf_secret, created_at, expires_at, last_seen_at, revoked_at, email_verified)
+		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, session.SessionHash, session.Subject, session.Email, session.Name, string(groupsJSON), session.CSRFSecret,
-		sqliteTime(session.CreatedAt), sqliteTime(session.ExpiresAt), sqliteTime(session.LastSeenAt), nullableSQLiteTime(session.RevokedAt)); err != nil {
+		sqliteTime(session.CreatedAt), sqliteTime(session.ExpiresAt), sqliteTime(session.LastSeenAt), nullableSQLiteTime(session.RevokedAt), session.EmailVerified); err != nil {
 		return fmt.Errorf("create oidc session: %w", err)
 	}
 	return nil
@@ -931,12 +940,12 @@ func (s *SQLiteStore) GetOIDCSession(ctx context.Context, sessionHash string, no
 	var createdAt, expiresAt, lastSeenAt, revokedAt sqliteTimestamp
 	err := s.db.QueryRowContext(ctx, `
 		select session_hash, subject, email, name, groups_json, csrf_secret,
-		       created_at, expires_at, last_seen_at, revoked_at
+		       created_at, expires_at, last_seen_at, revoked_at, email_verified
 		from oidc_sessions
 		where session_hash = ? and revoked_at is null and expires_at > ?
 	`, sessionHash, sqliteTime(now.UTC())).Scan(
 		&session.SessionHash, &session.Subject, &session.Email, &session.Name, &groupsJSON, &session.CSRFSecret,
-		&createdAt, &expiresAt, &lastSeenAt, &revokedAt,
+		&createdAt, &expiresAt, &lastSeenAt, &revokedAt, &session.EmailVerified,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return OIDCSession{}, ErrNotFound
