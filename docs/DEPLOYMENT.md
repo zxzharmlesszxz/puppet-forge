@@ -93,6 +93,7 @@ puppet-forge \
 | `TRUSTED_PROXY_CIDRS`            | empty                            | no                             | Comma- or space-separated direct ingress/reverse-proxy CIDRs. Use `*` for "trust all direct peers" (diagnostic only), or `0.0.0.0/0,::/0` as equivalent explicit form. These CIDRs may supply forwarded client identity and, only with `TRUST_FORWARDED_HEADERS=true`, forwarded host/proto.         |
 | `TRUST_FORWARDED_HEADERS`        | `false`                          | no                             | Accept validated `Forwarded`/`X-Forwarded-*` values only when the direct peer belongs to `TRUSTED_PROXY_CIDRS`. Otherwise every forwarded variant is removed before routing.                                                                                                                         |
 | `PUBLIC_MODULE_ACCESS`           | `false`                          | no                             | If `true`, read APIs, downloads, and `/v3/*` are open without a token. If `false`, install/API routes require a token with read, publish, or admin privileges. HTML catalog pages stay informationally public. Publishing, deletion, and management routes are always protected.                     |
+| `PUBLISH_ALLOWED_CIDRS`          | empty                            | no                             | Client CIDRs allowed to publish through API and Manage; empty disables the additional IP restriction.                                                                                                                                                                                                |
 | `ACTIVE_RELEASE_TTL`             | `720h`                           | no                             | How long a release is considered active/in use after an r10k or `puppet module install` request. Normal deletion protects active/latest versions; an owning team administrator or global administrator can explicitly override that protection with a reason and exact confirmation.                 |
 | `RELEASE_CONSUMER_TTL`           | `4320h`                          | no                             | Retention for named access-token observations of concrete module archive downloads. Set to `0s` to retain observations without automatic cleanup.                                                                                                                                                    |
 | `SECURITY_HSTS_ENABLED`          | `false`                          | no                             | Enables the `Strict-Transport-Security` response header. Keep disabled for local HTTP and enable only when the public endpoint is always HTTPS.                                                                                                                                                      |
@@ -294,6 +295,44 @@ Important rules:
 - `PUBLIC_MODULE_ACCESS=false` requires a token with read, publish, or admin privileges for install/API routes: read API, release downloads, extracted module files, and `/v3/*`.
 - `PUBLIC_MODULE_ACCESS=true` opens those install/API routes without a token so r10k and `puppet module install` can fetch modules without an Authorization header.
 - `PUBLIC_MODULE_ACCESS=true` does not open publish, delete, `/manage`, or `/manage/admin/*`.
+
+## Publish Source Allowlist
+
+`PUBLISH_ALLOWED_CIDRS` (CLI: `--publish-allowed-cidrs`) restricts archive
+publication by client IP, in addition to credential and namespace checks.
+It applies to `POST /api/v1/modules`, `POST /v3/releases` (PDK), and uploads or
+replacements through Manage, including team forms. Global administrators do not
+bypass it. Reads/downloads and upstream imports are unaffected.
+
+The default is empty: no additional IP restriction. Use comma- or
+whitespace-separated native IPv4/IPv6 CIDRs, with `/32` or `/128` for individual
+addresses. Invalid entries, bare IPs, wildcard aliases (`*`, `all`), and
+IPv4-mapped IPv6 CIDRs prevent startup. Use native IPv4 CIDRs for IPv4 clients.
+
+Helm values example (replace documentation addresses with actual CI/VPN egress
+networks and direct proxy networks):
+
+```yaml
+config:
+  PUBLISH_ALLOWED_CIDRS: "192.0.2.10/32,2001:db8:1234::/48"
+  TRUSTED_PROXY_CIDRS: "10.20.0.0/16"
+  TRUST_FORWARDED_HEADERS: "true"
+```
+
+Client IP resolution is shared with rate limiting. Behind a proxy, enable
+forwarded headers and trust only the actual direct proxy CIDRs. The resolver
+walks `X-Forwarded-For` from the trusted end; without trusted forwarding it uses
+the direct peer address. `Forwarded` alone does not provide the client IP for
+this check. Do not use `TRUSTED_PROXY_CIDRS=*`; proxies must sanitize/append
+client-IP headers, and direct public pod access must be blocked. Allow client
+egress addresses, not just proxy addresses. Clients behind shared NAT share the
+same allowlist decision.
+
+Disallowed or unresolvable addresses return HTTP 403 before archive processing.
+The audit records `publish_module`, reason `publish_source_forbidden`, and the
+source IP, without the token value. Allowed clients still need valid credentials
+and permission for the archive namespace. This is not a replacement for network
+access controls.
 
 ## Web Auth and OIDC
 

@@ -276,6 +276,9 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
+	if !r.requirePublishSource(w, req, principal) {
+		return
+	}
 	if !r.requireManageCSRF(w, req) {
 		return
 	}

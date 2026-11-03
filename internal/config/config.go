@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type Config struct {
@@ -37,6 +38,7 @@ type Config struct {
 	DeletedReleaseTTL         time.Duration
 	ManageSessionSecret       string
 	PublicModuleAccess        bool
+	PublishAllowedCIDRs       string
 	ActiveReleaseTTL          time.Duration
 	ReleaseConsumerTTL        time.Duration
 	ArtifactBackend           string
@@ -129,6 +131,7 @@ func loadArgs(args []string, output io.Writer) (Config, error) {
 		AllowedPublicHosts:        os.Getenv("ALLOWED_PUBLIC_HOSTS"),
 		ReadmeImageAllowedHosts:   "img.shields.io,github.com,coveralls.io,s3.amazonaws.com,www.puppetmodule.info",
 		TrustedProxyCIDRs:         os.Getenv("TRUSTED_PROXY_CIDRS"),
+		PublishAllowedCIDRs:       os.Getenv("PUBLISH_ALLOWED_CIDRS"),
 		TrustForwardedHeaders:     false,
 		SecurityHSTSEnabled:       false,
 		WebAuthMode:               getEnv("WEB_AUTH_MODE", "none"),
@@ -238,6 +241,7 @@ func applyFlags(cfg *Config, args []string, output io.Writer) error {
 	flags.StringVar(&cfg.AllowedPublicHosts, "allowed-public-hosts", cfg.AllowedPublicHosts, "comma- or space-separated public request hosts")
 	flags.StringVar(&cfg.ReadmeImageAllowedHosts, "readme-image-allowed-hosts", cfg.ReadmeImageAllowedHosts, "comma- or space-separated exact HTTPS hosts for README images; empty disables external images")
 	flags.StringVar(&cfg.TrustedProxyCIDRs, "trusted-proxy-cidrs", cfg.TrustedProxyCIDRs, "comma- or space-separated CIDRs allowed to supply X-Forwarded-For")
+	flags.StringVar(&cfg.PublishAllowedCIDRs, "publish-allowed-cidrs", cfg.PublishAllowedCIDRs, "comma- or space-separated client CIDRs allowed to publish; empty disables the restriction")
 	flags.BoolVar(&cfg.TrustForwardedHeaders, "trust-forwarded-headers", cfg.TrustForwardedHeaders, "trust validated Forwarded and X-Forwarded-* headers from trusted proxy CIDRs")
 	flags.BoolVar(&cfg.SecurityHSTSEnabled, "security-hsts-enabled", cfg.SecurityHSTSEnabled, "enable Strict-Transport-Security response header")
 	flags.StringVar(&cfg.WebAuthMode, "web-auth-mode", cfg.WebAuthMode, "web auth mode: none or oidc")
@@ -420,6 +424,9 @@ func validate(cfg Config) error {
 	if _, err := ParseTrustedProxyCIDRs(cfg.TrustedProxyCIDRs); err != nil {
 		return err
 	}
+	if _, err := ParsePublishAllowedCIDRs(cfg.PublishAllowedCIDRs); err != nil {
+		return err
+	}
 	if cfg.TrustForwardedHeaders && strings.TrimSpace(cfg.TrustedProxyCIDRs) == "" {
 		return errors.New("TRUSTED_PROXY_CIDRS is required when TRUST_FORWARDED_HEADERS=true")
 	}
@@ -468,6 +475,27 @@ func ParseTrustedProxyCIDRs(raw string) ([]netip.Prefix, error) {
 			netip.MustParsePrefix("0.0.0.0/0"),
 			netip.MustParsePrefix("::/0"),
 		}
+	}
+	return prefixes, nil
+}
+
+func ParsePublishAllowedCIDRs(raw string) ([]netip.Prefix, error) {
+	values := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	})
+	if len(values) == 0 && strings.TrimSpace(raw) != "" {
+		return nil, errors.New("PUBLISH_ALLOWED_CIDRS must contain CIDRs")
+	}
+	prefixes := make([]netip.Prefix, 0, len(values))
+	for _, value := range values {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid PUBLISH_ALLOWED_CIDRS entry %q: %w", value, err)
+		}
+		if prefix.Addr().Is4In6() {
+			return nil, fmt.Errorf("PUBLISH_ALLOWED_CIDRS entry %q must use native IPv4 or IPv6 notation", value)
+		}
+		prefixes = append(prefixes, prefix.Masked())
 	}
 	return prefixes, nil
 }

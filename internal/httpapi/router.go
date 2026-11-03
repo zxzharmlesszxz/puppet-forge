@@ -43,6 +43,7 @@ type RouterConfig struct {
 	AllowedPublicHosts      []string
 	ReadmeImageAllowedHosts []string
 	TrustedProxyCIDRs       []netip.Prefix
+	PublishAllowedCIDRs     []netip.Prefix
 	TrustForwardedHeaders   bool
 	Authorizer              *auth.Authorizer
 	TokenHasher             *auth.TokenHasher
@@ -79,6 +80,7 @@ type Router struct {
 	manageSessions        *manageSessionStore
 	rateLimiter           *rateLimiter
 	trustedProxyCIDRs     []netip.Prefix
+	publishAllowedCIDRs   []netip.Prefix
 	allowedPublicHosts    []string
 	trustForwardedHeaders bool
 	publicModuleAccess    bool
@@ -125,6 +127,7 @@ func NewRouter(config RouterConfig, opts ...RouterOption) (http.Handler, error) 
 		manageSessions:        newManageSessionStore(config.Modules, config.ManageSessionSecret),
 		rateLimiter:           newRateLimiter(time.Now),
 		trustedProxyCIDRs:     append([]netip.Prefix(nil), config.TrustedProxyCIDRs...),
+		publishAllowedCIDRs:   append([]netip.Prefix(nil), config.PublishAllowedCIDRs...),
 		allowedPublicHosts:    append([]string(nil), config.AllowedPublicHosts...),
 		trustForwardedHeaders: config.TrustForwardedHeaders,
 		publicModuleAccess:    config.PublicModuleAccess,

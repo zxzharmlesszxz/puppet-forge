@@ -87,6 +87,10 @@ func NewContext(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	publishAllowedCIDRs, err := config.ParsePublishAllowedCIDRs(cfg.PublishAllowedCIDRs)
+	if err != nil {
+		return nil, err
+	}
 
 	tokenHasher, err := auth.NewTokenHasher(cfg.AccessTokenPepper)
 	if err != nil {
@@ -180,6 +184,7 @@ func NewContext(ctx context.Context, cfg config.Config) (*App, error) {
 		AllowedPublicHosts:      splitConfigList(cfg.AllowedPublicHosts),
 		ReadmeImageAllowedHosts: splitConfigList(cfg.ReadmeImageAllowedHosts),
 		TrustedProxyCIDRs:       trustedProxyCIDRs,
+		PublishAllowedCIDRs:     publishAllowedCIDRs,
 		TrustForwardedHeaders:   cfg.TrustForwardedHeaders,
 		Authorizer:              authorizer,
 		TokenHasher:             tokenHasher,

@@ -477,6 +477,10 @@ func (r *Router) publishModuleWithReader(w http.ResponseWriter, req *http.Reques
 	}
 	r.recordAccessTokenUsed(req.Context(), principal)
 
+	if !r.requirePublishSource(w, req, principal) {
+		return
+	}
+
 	input, cleanup, err := readInput(w, req, r.moduleUploadMax)
 	if err != nil {
 		r.audit(req, principal, "publish_module", "failure", auditReason(err))
