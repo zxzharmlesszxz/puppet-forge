@@ -1,0 +1,6 @@
+# Add after values-gateway-api.yaml; requires Envoy Gateway and its CRDs.
+envoyGateway:
+  enabled: true
+  publishAllowedCIDRs:
+    - 192.0.2.10/32
+    - 2001:db8:1234::/48

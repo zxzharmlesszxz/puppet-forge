@@ -1,0 +1,42 @@
+{{- if .Values.gatewayAPI.enabled }}
+{{- $root := . }}
+{{- range $route := list "publish" "other" }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "chart.gatewayRouteName" (dict "root" $root "route" $route) }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    {{- include "chart.labels" $root | nindent 4 }}
+spec:
+  parentRefs:
+    {{- if $root.Values.gatewayAPI.gateway.create }}
+    {{- range $root.Values.gatewayAPI.gateway.listeners }}
+    - name: {{ include "chart.gatewayName" $root }}
+      sectionName: {{ .name | quote }}
+    {{- end }}
+    {{- else }}
+    {{- toYaml $root.Values.gatewayAPI.parentRefs | nindent 4 }}
+    {{- end }}
+  hostnames:
+    {{- toYaml $root.Values.gatewayAPI.hostnames | nindent 4 }}
+  rules:
+    - matches:
+        {{- if eq $route "publish" }}
+        {{- range $path := list "/api/v1/modules" "/v3/releases" "/manage/modules" }}
+        - method: POST
+          path:
+            type: Exact
+            value: {{ $path | quote }}
+        {{- end }}
+        {{- else }}
+        - path:
+            type: PathPrefix
+            value: /
+        {{- end }}
+      backendRefs:
+        - name: {{ include "chart.fullname" $root }}
+          port: {{ $root.Values.service.port }}
+{{- end }}
+{{- end }}

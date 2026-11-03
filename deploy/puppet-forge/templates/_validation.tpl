@@ -1,4 +1,85 @@
 {{- define "chart.validate" -}}
+{{- if and .Values.gatewayAPI.enabled .Values.ingress.enabled -}}
+{{- fail "gatewayAPI.enabled and ingress.enabled are mutually exclusive" -}}
+{{- end -}}
+{{- if and .Values.gatewayAPI.gateway.create (not .Values.gatewayAPI.enabled) -}}
+{{- fail "gatewayAPI.gateway.create requires gatewayAPI.enabled=true" -}}
+{{- end -}}
+{{- if .Values.gatewayAPI.enabled -}}
+{{- if .Values.gatewayAPI.gateway.create -}}
+{{- if not (empty .Values.gatewayAPI.parentRefs) -}}
+{{- fail "gatewayAPI.parentRefs must be empty when gatewayAPI.gateway.create=true" -}}
+{{- end -}}
+{{- if empty (trim .Values.gatewayAPI.gateway.gatewayClassName) -}}
+{{- fail "gatewayAPI.gateway.gatewayClassName is required when creating a Gateway" -}}
+{{- end -}}
+{{- if empty .Values.gatewayAPI.gateway.listeners -}}
+{{- fail "gatewayAPI.gateway.listeners is required when creating a Gateway" -}}
+{{- end -}}
+{{- $listenerNames := dict -}}
+{{- range .Values.gatewayAPI.gateway.listeners -}}
+{{- if empty .name -}}
+{{- fail "each Gateway listener requires a name" -}}
+{{- end -}}
+{{- if hasKey $listenerNames .name -}}
+{{- fail "Gateway listener names must be unique" -}}
+{{- end -}}
+{{- $_ := set $listenerNames .name true -}}
+{{- if not (has .protocol (list "HTTP" "HTTPS")) -}}
+{{- fail "Gateway listeners must use HTTP or HTTPS for HTTPRoute" -}}
+{{- end -}}
+{{- if or (lt (int .port) 1) (gt (int .port) 65535) -}}
+{{- fail "Gateway listener port must be between 1 and 65535" -}}
+{{- end -}}
+{{- if eq .protocol "HTTPS" -}}
+{{- $tls := default dict .tls -}}
+{{- if ne (default "Terminate" $tls.mode) "Terminate" -}}
+{{- fail "HTTPS Gateway listeners require TLS Terminate mode" -}}
+{{- end -}}
+{{- if empty $tls.certificateRefs -}}
+{{- fail "HTTPS Gateway listeners require tls.certificateRefs" -}}
+{{- end -}}
+{{- range $tls.certificateRefs -}}
+{{- if empty .name -}}
+{{- fail "each Gateway TLS certificate reference requires a name" -}}
+{{- end -}}
+{{- end -}}
+{{- else if not (empty .tls) -}}
+{{- fail "HTTP Gateway listeners must not configure TLS" -}}
+{{- end -}}
+{{- end -}}
+{{- else -}}
+{{- if empty .Values.gatewayAPI.parentRefs -}}
+{{- fail "gatewayAPI.parentRefs is required when gatewayAPI.enabled=true" -}}
+{{- end -}}
+{{- range .Values.gatewayAPI.parentRefs -}}
+{{- if empty .name -}}
+{{- fail "each gatewayAPI.parentRefs entry requires a name" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if empty .Values.gatewayAPI.hostnames -}}
+{{- fail "gatewayAPI.hostnames is required when gatewayAPI.enabled=true" -}}
+{{- end -}}
+{{- range .Values.gatewayAPI.hostnames -}}
+{{- if empty (trim .) -}}
+{{- fail "gatewayAPI.hostnames entries must not be empty" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.envoyGateway.enabled -}}
+{{- if not .Values.gatewayAPI.enabled -}}
+{{- fail "envoyGateway.enabled requires gatewayAPI.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.envoyGateway.publishAllowedCIDRs -}}
+{{- fail "envoyGateway.publishAllowedCIDRs is required when envoyGateway.enabled=true" -}}
+{{- end -}}
+{{- range .Values.envoyGateway.publishAllowedCIDRs -}}
+{{- if empty (trim .) -}}
+{{- fail "envoyGateway.publishAllowedCIDRs entries must not be empty" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- $dsn := default "" .Values.secret.stringData.DATABASE_DSN -}}
 {{- $backend := default "" .Values.database.backend -}}
 {{- $artifactBackend := default "" (index .Values.config "ARTIFACT_BACKEND") -}}

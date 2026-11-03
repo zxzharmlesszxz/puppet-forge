@@ -15,6 +15,14 @@
 {{- end -}}
 {{- end -}}
 
+{{- define "chart.gatewayRouteName" -}}
+{{- printf "%s-%s" (include "chart.fullname" .root | trunc 55 | trimSuffix "-") .route -}}
+{{- end -}}
+
+{{- define "chart.gatewayName" -}}
+{{- default (include "chart.gatewayRouteName" (dict "root" . "route" "gateway")) .Values.gatewayAPI.gateway.name -}}
+{{- end -}}
+
 {{- define "chart.labels" -}}
 app.kubernetes.io/name: {{ include "chart.name" . }}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}

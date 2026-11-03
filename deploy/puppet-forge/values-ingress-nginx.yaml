@@ -1,0 +1,17 @@
+# Helm values for the ingress-nginx controller chart, not the Puppet Forge chart.
+controller:
+  config:
+    http-snippet: |
+      geo $forge_publish_ip_allowed {
+        default 0;
+        192.0.2.10/32 1;
+        2001:db8:1234::/48 1;
+      }
+      map "$server_name:$request_method:$uri:$forge_publish_ip_allowed" $forge_publish_denied {
+        default 0;
+        "~^forge[.]example[.]com:POST:/(api/v1/modules|v3/releases|manage/modules)/?:0$" 1;
+      }
+    server-snippet: |
+      if ($forge_publish_denied) {
+        return 403;
+      }

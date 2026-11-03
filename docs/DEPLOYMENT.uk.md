@@ -472,6 +472,148 @@ config:
 IP джерела, без значення токена. Дозволені клієнти все одно потребують валідних
 облікових даних і прав на namespace архіву. Це не заміна мережевим обмеженням.
 
+### Альтернатива: Обмеження Через Ingress-NGINX
+
+[Приклад Helm values для ingress-nginx](../deploy/puppet-forge/values-ingress-nginx.yaml)
+обмежує публікацію на рівні ingress без налаштування `PUBLISH_ALLOWED_CIDRS`.
+Залиш цей параметр Forge порожнім за замовчуванням, зокрема в перевизначеннях
+через env або CLI. Файл призначений для **чарти контролера ingress-nginx**, а не
+Puppet Forge: чарта Forge не може налаштувати глобальні директиви `geo` та `map`
+контролера через анотації свого Ingress.
+
+Заміни документаційні CIDR справжніми вихідними мережами CI/VPN, а
+`forge[.]example[.]com` — екранованим ім'ям віртуального сервера Forge,
+згенерованого ingress-nginx. За кількох імен покрий усі віртуальні сервери Forge.
+Об'єднай обидва snippets із наявними налаштуваннями контролера, не затирай їх.
+Застосуй overlay через наявний Helm release контролера, зберігаючи інші values
+та встановлену версію чарти. Вмикати snippet-анотації не потрібно: це
+адміністративні параметри ConfigMap контролера.
+
+Приклад забороняє лише POST до `/api/v1/modules`, `/v3/releases` та
+`/manage/modules` з-поза дозволених мереж. Це охоплює публікацію й заміну релізів
+із глобальних та командних форм Manage. GET та інші маршрути зберігають чинні
+політики; перевірки облікових даних і прав на namespace залишаються.
+Звичайна анотація `whitelist-source-range` обмежувала б також читання на цих
+шляхах, тому вона не еквівалентна обмеженню конкретних HTTP-методів.
+
+`geo` використовує ефективний `$remote_addr` у NGINX. Якщо перед ingress-nginx
+стоїть Gateway або балансувальник, спочатку налаштуй real-IP та
+`proxy-real-ip-cidr` для справжніх довірених вузлів; не довіряй довільним
+заголовкам від клієнта. Закрий прямий доступ до Forge в обхід ingress. Такі
+відмови HTTP 403 потрапляють у access logs ingress, а не в аудит Forge.
+Перед використанням перевір дозволені й недозволені адреси та підроблення XFF.
+
+Довідка: [snippets контролера](https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/configmap/#http-snippet),
+[NGINX geo](https://nginx.org/en/docs/http/ngx_http_geo_module.html),
+[NGINX map](https://nginx.org/en/docs/http/ngx_http_map_module.html).
+
+### Gateway API та Envoy Gateway у Чарті
+
+Ресурси тепер створює Helm; окремо застосовувати маніфести не потрібно.
+
+- `gatewayAPI.enabled: true` створює два HTTPRoute через наявний Gateway або Gateway чарти.
+- `gatewayAPI.gateway.create: true` додатково створює Gateway у namespace релізу; типово `false`, тобто використовуються наявні `parentRefs`.
+- `envoyGateway.enabled: true` додатково створює SecurityPolicy з IP-whitelist публікації; потрібні режим Gateway API та непорожній `envoyGateway.publishAllowedCIDRs`.
+- Усі три перемикачі типово `false`. Ingress і Gateway API взаємовиключні.
+
+До профілю сховища та власних deployment values додай
+[values-gateway-api.yaml](../deploy/puppet-forge/values-gateway-api.yaml).
+Для Envoy Gateway також додай
+[values-envoy-gateway.yaml](../deploy/puppet-forge/values-envoy-gateway.yaml).
+Це overlays **чарти Puppet Forge**. Окремий `values-ingress-nginx.yaml`
+і далі належить чарті контролера ingress-nginx.
+
+Еквівалентні deployment values:
+
+```yaml
+ingress:
+  enabled: false
+gatewayAPI:
+  enabled: true
+  parentRefs:
+    - name: public-gateway
+      namespace: gateway-system
+      sectionName: https
+  hostnames:
+    - forge.example.com
+envoyGateway:
+  enabled: true
+  publishAllowedCIDRs:
+    - 192.0.2.10/32
+    - 2001:db8:1234::/48
+```
+
+Заміни CIDR, домен і Gateway/listener. Namespace релізу, назва Service та
+`service.port` підставляються автоматично. Назви маршрутів:
+`<chart-fullname>-publish` і `<chart-fullname>-other` (основа скорочується до
+55 символів); політика стосується лише маршруту публікації.
+Потрібні встановлені Gateway API CRD та сумісний контролер; для політики також
+потрібні саме **Envoy Gateway** та його SecurityPolicy CRD. Звичайний режим
+Gateway API забезпечує маршрутизацію, але не стандартний IP-whitelist.
+
+Зовнішній Gateway повинен дозволяти маршрути з namespace релізу через
+`allowedRoutes`; його TLS і сертифікати налаштовуються окремо. Перед відкриттям
+трафіку перевір `Accepted=True` і `ResolvedRefs=True` обох маршрутів та прийняття
+політики. Відсутня або відхилена політика може залишити публікацію без
+IP-обмеження gateway. Вимкнення `envoyGateway.enabled` прибирає лише політику,
+не маршрути; для вимкнення Gateway API треба також вимкнути перемикач Envoy.
+
+Для обмеження лише на gateway залиш `PUBLISH_ALLOWED_CIDRS` порожнім.
+Закрий прямий доступ до Service/pod та прибери альтернативні ingress-маршрути.
+Налаштуй визначення IP для довірених проксі перед Envoy. Відмови потрапляють
+у логи gateway, не в аудит Forge. Довідка:
+[IP-авторизація Envoy Gateway](https://gateway.envoyproxy.io/docs/tasks/security/restrict-ip-access/).
+
+### Створення Gateway Через Helm
+
+Використовуй [values-gateway-api-create.yaml](../deploy/puppet-forge/values-gateway-api-create.yaml)
+замість профілю наявного Gateway разом із values сховища та власного deployment.
+За потреби IP-політики Envoy додай `values-envoy-gateway.yaml`. Контролер,
+Gateway API CRD та вибраний GatewayClass мають уже існувати. Чарта не встановлює
+їх і не генерує TLS-сертифікати.
+
+```yaml
+ingress:
+  enabled: false
+gatewayAPI:
+  enabled: true
+  parentRefs: []
+  hostnames: [forge.example.com]
+  gateway:
+    create: true
+    gatewayClassName: envoy
+    listeners:
+      - name: https
+        protocol: HTTPS
+        port: 443
+        hostname: forge.example.com
+        tls:
+          mode: Terminate
+          certificateRefs:
+            - name: forge-tls
+```
+
+Заміни `envoy` установленим GatewayClass і забезпеч TLS Secret із `tls.crt`
+та `tls.key`, зазвичай у namespace релізу. Посилання між namespace потребують
+підтримки контролера й окремо керованого ReferenceGrant. Домени listener та
+HTTPRoute повинні перетинатися. `gatewayAPI.gateway.name` перевизначає
+згенеровану назву `<chart-fullname>-gateway`; `annotations` задає анотації Gateway.
+
+HTTPRoute автоматично посилаються на кожен listener через `sectionName`.
+У режимі створення явні `parentRefs` мають бути порожніми. Підтримуються лише
+HTTP та HTTPS; HTTPS потребує TLS termination і посилань на сертифікати.
+Типово кожен listener має `allowedRoutes.namespaces.from: Same`; його
+`allowedRoutes` можна перевизначити за потреби. HTTP-listener обслуговує HTTP
+напряму: його додавання не створює автоматичного редиректу на HTTPS.
+
+За `create: false` Gateway не створюється й не змінюється: задай наявний через
+`parentRefs`. Режим вибирається явно, без автоматичного пошуку в кластері.
+Helm не привласнює сторонній Gateway із конфліктною назвою. Видалення релізу
+або вимкнення створення видаляє Gateway чарти й може видалити його балансувальник;
+заздалегідь сплануй перехід між режимами. Перед відкриттям трафіку перевір
+`Accepted`/`Programmed` Gateway, статус listeners, прив'язку маршрутів, TLS і DNS.
+Довідка: [TLS у Gateway API](https://gateway-api.sigs.k8s.io/guides/user-guides/tls/).
+
 ## Вебавтентифікація та OIDC
 
 Авторизація за email або його доменом вимагає claim `email_verified: true` в ID

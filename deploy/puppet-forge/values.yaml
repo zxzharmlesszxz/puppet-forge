@@ -62,6 +62,21 @@ ingress:
           pathType: Prefix
   tls: []
 
+gatewayAPI:
+  enabled: false
+  parentRefs: []
+  hostnames: []
+  gateway:
+    create: false
+    name: ""
+    gatewayClassName: ""
+    annotations: {}
+    listeners: []
+
+envoyGateway:
+  enabled: false
+  publishAllowedCIDRs: []
+
 resources:
   requests:
     cpu: 100m

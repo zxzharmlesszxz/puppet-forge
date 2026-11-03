@@ -1,0 +1,11 @@
+# Puppet Forge Helm values; requires an existing Gateway and Gateway API CRDs.
+ingress:
+  enabled: false
+gatewayAPI:
+  enabled: true
+  parentRefs:
+    - name: public-gateway
+      namespace: gateway-system
+      sectionName: https
+  hostnames:
+    - forge.example.com

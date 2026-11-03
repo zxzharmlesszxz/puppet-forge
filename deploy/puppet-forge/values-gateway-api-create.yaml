@@ -1,0 +1,22 @@
+# Puppet Forge Helm values; creates a Gateway, but not its controller or TLS Secret.
+ingress:
+  enabled: false
+gatewayAPI:
+  enabled: true
+  parentRefs: []
+  hostnames:
+    - forge.example.com
+  gateway:
+    create: true
+    gatewayClassName: envoy
+    listeners:
+      - name: https
+        protocol: HTTPS
+        port: 443
+        hostname: forge.example.com
+        tls:
+          mode: Terminate
+          certificateRefs:
+            - group: ""
+              kind: Secret
+              name: forge-tls
