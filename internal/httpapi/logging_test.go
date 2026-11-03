@@ -19,11 +19,15 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
-func captureHTTPLogs(t *testing.T) *bytes.Buffer {
+func captureHTTPLogs(t *testing.T, levels ...slog.Level) *bytes.Buffer {
 	t.Helper()
 	var output bytes.Buffer
 	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	level := slog.LevelInfo
+	if len(levels) > 0 {
+		level = levels[0]
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: level})))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	return &output
 }

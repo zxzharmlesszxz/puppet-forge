@@ -2,12 +2,16 @@ package httpapi
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/httputil"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/observability"
 )
+
+const forwardedForLogLimit = 512
 
 var forwardedHeaderNames = []string{
 	"Forwarded",
@@ -21,10 +25,34 @@ var forwardedHeaderNames = []string{
 
 func (r *Router) externalRequestBoundary(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if !r.forwardedHeadersTrusted(req) {
+		forwardedFor := req.Header.Get("X-Forwarded-For")
+		if len(forwardedFor) > forwardedForLogLimit {
+			forwardedFor = forwardedFor[:forwardedForLogLimit]
+		}
+		forwardedTrusted := r.forwardedHeadersTrusted(req)
+		var forwardedErr error
+		if !forwardedTrusted {
 			stripForwardedHeaders(req)
-		} else if err := validateForwardedHeaders(req); err != nil {
-			writeError(w, http.StatusBadRequest, err)
+		} else {
+			forwardedErr = validateForwardedHeaders(req)
+		}
+		if slog.Default().Enabled(req.Context(), slog.LevelDebug) {
+			// Rejected headers must never supply the diagnostic client identity.
+			clientIP := clientAddress(req, nil)
+			if forwardedErr == nil {
+				clientIP = clientAddress(req, r.trustedProxyCIDRs)
+			}
+			slog.DebugContext(req.Context(), "request client address",
+				"request_id", observability.RequestID(req.Context()),
+				"remote_addr", req.RemoteAddr,
+				"forwarded_for", forwardedFor,
+				"forwarded_trusted", forwardedTrusted,
+				"forwarded_rejected", forwardedErr != nil,
+				"client_ip", clientIP,
+			)
+		}
+		if forwardedErr != nil {
+			writeError(w, http.StatusBadRequest, forwardedErr)
 			return
 		}
 		if !validAuthority(effectiveRequestHost(req)) {
