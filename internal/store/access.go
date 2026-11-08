@@ -77,7 +77,7 @@ func accessOIDCMappings(cfg auth.TeamConfig) []accessOIDCMapping {
 	appendValues("email", cfg.OIDCEmails)
 	appendValues("subject", cfg.OIDCSubjects)
 	appendValues("domain", cfg.OIDCDomains)
-	appendValues("group", cfg.OIDCGroups)
+	appendValues("group", cfg.OIDCReaderGroups)
 	appendValues("team_admin_email", cfg.OIDCTeamAdminEmails)
 	appendValues("team_admin_group", cfg.OIDCTeamAdminGroups)
 	appendValues("admin_email", cfg.OIDCAdminEmails)
@@ -229,7 +229,7 @@ func applyAccessOIDCMapping(cfg *auth.TeamConfig, mappingType, value string) {
 	case "domain":
 		cfg.OIDCDomains = append(cfg.OIDCDomains, value)
 	case "group":
-		cfg.OIDCGroups = append(cfg.OIDCGroups, value)
+		cfg.OIDCReaderGroups = append(cfg.OIDCReaderGroups, value)
 	case "team_admin_email":
 		cfg.OIDCTeamAdminEmails = append(cfg.OIDCTeamAdminEmails, value)
 	case "team_admin_group":

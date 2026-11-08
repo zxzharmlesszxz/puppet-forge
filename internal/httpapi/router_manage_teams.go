@@ -39,7 +39,7 @@ func (r *Router) manageTeamsPage(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	if !principal.CanAdmin && !principal.CanManageTeam {
+	if !principal.CanAdmin && !principal.CanManageTeam && len(principal.MemberTeams) == 0 {
 		writeError(w, http.StatusForbidden, errors.New("team admin access required"))
 		return
 	}
@@ -94,7 +94,7 @@ func (r *Router) manageTeamsPage(w http.ResponseWriter, req *http.Request) {
 func manageTeamSummaries(configs []auth.TeamConfig, moduleCounts map[string]int, principal auth.Principal) []manageTeamSummary {
 	rows := make([]manageTeamSummary, 0, len(configs))
 	for _, cfg := range configs {
-		if isGlobalAdminConfig(cfg) || (!principal.CanAdmin && !canManageAccessTeam(principal, cfg.Team)) {
+		if isGlobalAdminConfig(cfg) || !canViewAccessTeam(principal, cfg.Team) {
 			continue
 		}
 		spaces := teamPublishSpaces(cfg)
@@ -109,7 +109,7 @@ func manageTeamSummaries(configs []auth.TeamConfig, moduleCounts map[string]int,
 			ModuleCount:     moduleCount,
 			ReadTokens:      len(cfg.ReadTokens) + activeTokenCount(cfg.ReadTokenRecords, time.Now()),
 			PublishTokens:   len(cfg.PublishTokens) + activeTokenCount(cfg.PublishTokenRecords, time.Now()),
-			PublishGroups:   len(cfg.OIDCGroups),
+			ReaderGroups:    len(cfg.OIDCReaderGroups),
 			TeamAdminUsers:  len(cfg.OIDCTeamAdminEmails),
 			TeamAdminGroups: len(cfg.OIDCTeamAdminGroups),
 		})
@@ -132,7 +132,7 @@ func (r *Router) manageTeamPage(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	if !principal.CanAdmin && !canManageAccessTeam(principal, team) {
+	if !canViewAccessTeam(principal, team) || ((section == manageTeamAccessSection || section == manageTeamTokensSection || section == manageTeamAuditSection) && !canManageAccessTeam(principal, team)) {
 		writeError(w, http.StatusForbidden, errors.New("team admin access required"))
 		return
 	}
@@ -150,6 +150,9 @@ func (r *Router) manageTeamPage(w http.ResponseWriter, req *http.Request) {
 	teamBasePath := "/manage/teams/" + url.PathEscape(team)
 	if !canonical {
 		target := teamBasePath + "/" + string(manageTeamAccessSection)
+		if !canManageAccessTeam(principal, team) {
+			target = teamBasePath + "/modules"
+		}
 		if req.URL.RawQuery != "" {
 			target += "?" + req.URL.RawQuery
 		}
@@ -167,6 +170,9 @@ func (r *Router) manageTeamPage(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	formRows := accessTeamFormRows([]auth.TeamConfig{*cfg}, principal)
+	if !canManageAccessTeam(principal, team) {
+		formRows = []accessTeamFormRow{{Team: team}}
+	}
 	if len(formRows) != 1 {
 		writeError(w, http.StatusForbidden, errors.New("team admin access required"))
 		return
@@ -425,9 +431,15 @@ func tokenPagesURL(basePath string, query url.Values, tokenPage, historyPage int
 }
 
 func teamPublishSpaces(cfg auth.TeamConfig) []string {
-	spaces := publishOwnersFromExtra(cfg.Team, cfg.PublishOwners)
-	sort.Strings(spaces)
-	return spaces
+	return []string{cfg.Team}
+}
+
+func canViewAccessTeam(principal auth.Principal, team string) bool {
+	if canManageAccessTeam(principal, team) {
+		return true
+	}
+	_, ok := principal.MemberTeams[team]
+	return ok
 }
 
 func stringSet(values []string) map[string]struct{} {

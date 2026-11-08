@@ -216,7 +216,7 @@ func (r *Router) managePrincipal(req *http.Request) (auth.Principal, bool, error
 
 	if r.webAuth != nil {
 		if session, ok := r.webAuth.Session(req); ok {
-			if principal, ok := authorizer.AuthenticateOIDC(session.AuthorizationEmail(), session.Sub, session.Groups); ok {
+			if principal, ok := authorizer.AuthenticateOIDC(session.AuthorizationEmail(), session.Sub, session.Groups); ok && principal.CanRead {
 				slog.Debug("manage principal authenticated",
 					"request_id", observability.RequestID(req.Context()),
 					"auth_method", "oidc",
@@ -226,14 +226,14 @@ func (r *Router) managePrincipal(req *http.Request) (auth.Principal, bool, error
 					"can_admin", principal.CanAdmin,
 					"publish_spaces", len(principal.PublishOwners),
 					"managed_teams", len(principal.ManagedTeams),
-					"oidc_groups", len(session.Groups),
+					"oidc_reader_groups", len(session.Groups),
 				)
 				return principal, true, nil
 			}
 			slog.Default().Warn("oidc session is not mapped to team",
 				"request_id", observability.RequestID(req.Context()),
 				"reason", "identity_not_mapped",
-				"oidc_groups", len(session.Groups),
+				"oidc_reader_groups", len(session.Groups),
 			)
 		}
 	}

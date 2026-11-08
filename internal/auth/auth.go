@@ -13,15 +13,15 @@ import (
 )
 
 type TeamConfig struct {
-	Team          string   `json:"team"`
-	ReadTokens    []string `json:"-"`
-	PublishTokens []string `json:"-"`
-	AdminTokens   []string `json:"-"`
-	PublishOwners []string `json:"extra_publish_spaces,omitempty"`
-	OIDCEmails    []string `json:"oidc_emails"`
-	OIDCSubjects  []string `json:"oidc_subjects"`
-	OIDCDomains   []string `json:"oidc_domains"`
-	OIDCGroups    []string `json:"oidc_groups"`
+	Team             string   `json:"team"`
+	ReadTokens       []string `json:"-"`
+	PublishTokens    []string `json:"-"`
+	AdminTokens      []string `json:"-"`
+	PublishOwners    []string `json:"extra_publish_spaces,omitempty"`
+	OIDCEmails       []string `json:"oidc_emails"`
+	OIDCSubjects     []string `json:"oidc_subjects"`
+	OIDCDomains      []string `json:"oidc_domains"`
+	OIDCReaderGroups []string `json:"oidc_reader_groups"`
 
 	OIDCTeamAdminEmails []string `json:"oidc_team_admin_emails"`
 	OIDCTeamAdminGroups []string `json:"oidc_team_admin_groups"`
@@ -43,11 +43,15 @@ func (cfg *TeamConfig) UnmarshalJSON(data []byte) error {
 	var aux struct {
 		teamConfigAlias
 		LegacyPublishOwners []string `json:"publish_owners"`
+		LegacyOIDCGroups    []string `json:"oidc_groups"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
 	*cfg = TeamConfig(aux.teamConfigAlias)
+	if cfg.OIDCReaderGroups == nil {
+		cfg.OIDCReaderGroups = aux.LegacyOIDCGroups
+	}
 	if len(cfg.PublishOwners) == 0 && len(aux.LegacyPublishOwners) > 0 {
 		cfg.PublishOwners = aux.LegacyPublishOwners
 	}
@@ -65,6 +69,7 @@ type Principal struct {
 	CanAdmin      bool
 	PublishOwners map[string]struct{}
 	ManagedTeams  map[string]struct{}
+	MemberTeams   map[string]struct{}
 }
 
 func (p Principal) CanDeleteOwner(owner string) bool {
@@ -82,8 +87,14 @@ func (p Principal) CanDeleteOwner(owner string) bool {
 }
 
 func (p Principal) CanPublishOwner(owner string) bool {
+	if p.CanAdmin {
+		return true
+	}
 	if !p.CanPublish {
 		return false
+	}
+	if p.CanManageTeam {
+		return p.CanDeleteOwner(owner)
 	}
 	_, ok := p.PublishOwners[owner]
 	return ok
@@ -191,15 +202,10 @@ func newAuthorizer(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer,
 
 		ownerSet := make(map[string]struct{}, len(cfg.PublishOwners)+1)
 		ownerSet[cfg.Team] = struct{}{}
-		owners := cfg.PublishOwners
-		for _, owner := range owners {
-			if owner == "" {
-				continue
+		for _, owner := range cfg.PublishOwners {
+			if owner != "" && !domain.ValidModuleOwner(owner) {
+				return nil, fmt.Errorf("invalid legacy publish space %q", owner)
 			}
-			if !domain.ValidModuleOwner(owner) {
-				return nil, fmt.Errorf("publish space %q must contain only ASCII letters and digits", owner)
-			}
-			ownerSet[owner] = struct{}{}
 		}
 
 		for _, token := range cfg.ReadTokens {
@@ -246,7 +252,7 @@ func newAuthorizer(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer,
 			err := registerToken(token, cfg.Team+" admin access", Principal{
 				Team:          cfg.Team,
 				CanRead:       true,
-				CanPublish:    false,
+				CanPublish:    true,
 				CanAdmin:      true,
 				PublishOwners: ownerSet,
 			})
@@ -258,14 +264,15 @@ func newAuthorizer(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer,
 		webPrincipal := Principal{
 			Team:          cfg.Team,
 			CanRead:       true,
-			CanPublish:    true,
+			CanPublish:    false,
 			CanAdmin:      false,
 			PublishOwners: ownerSet,
+			MemberTeams:   map[string]struct{}{cfg.Team: {}},
 		}
 		registerOIDCValues(oidcEmails, cfg.OIDCEmails, normalizeEmail, webPrincipal)
 		registerOIDCValues(oidcSubjects, cfg.OIDCSubjects, strings.TrimSpace, webPrincipal)
 		registerOIDCValues(oidcDomains, cfg.OIDCDomains, normalizeDomain, webPrincipal)
-		registerOIDCValues(oidcGroups, cfg.OIDCGroups, normalizeGroup, webPrincipal)
+		registerOIDCValues(oidcGroups, cfg.OIDCReaderGroups, normalizeGroup, webPrincipal)
 
 		teamAdminPrincipal := Principal{
 			Team:          cfg.Team,
@@ -275,6 +282,7 @@ func newAuthorizer(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer,
 			CanAdmin:      false,
 			PublishOwners: ownerSet,
 			ManagedTeams:  map[string]struct{}{cfg.Team: {}},
+			MemberTeams:   map[string]struct{}{cfg.Team: {}},
 		}
 		registerOIDCValues(oidcEmails, cfg.OIDCTeamAdminEmails, normalizeEmail, teamAdminPrincipal)
 		registerOIDCValues(oidcGroups, cfg.OIDCTeamAdminGroups, normalizeGroup, teamAdminPrincipal)
@@ -282,7 +290,7 @@ func newAuthorizer(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer,
 		adminPrincipal := Principal{
 			Team:       cfg.Team,
 			CanRead:    true,
-			CanPublish: false,
+			CanPublish: true,
 			CanAdmin:   true,
 		}
 		registerOIDCValues(oidcEmails, cfg.OIDCAdminEmails, normalizeEmail, adminPrincipal)
@@ -319,7 +327,7 @@ func validateTeamConfigRole(cfg TeamConfig) error {
 			len(cfg.OIDCEmails) > 0 ||
 			len(cfg.OIDCSubjects) > 0 ||
 			len(cfg.OIDCDomains) > 0 ||
-			len(cfg.OIDCGroups) > 0 ||
+			len(cfg.OIDCReaderGroups) > 0 ||
 			len(cfg.OIDCTeamAdminEmails) > 0 ||
 			len(cfg.OIDCTeamAdminGroups) > 0 {
 			return fmt.Errorf("%q is reserved for global admin access", GlobalAdminTeam)
@@ -409,6 +417,9 @@ func effectivePrincipalTeam(principal Principal) string {
 	if principal.CanManageTeam {
 		return firstSortedSetValue(principal.ManagedTeams)
 	}
+	if len(principal.MemberTeams) > 0 {
+		return firstSortedSetValue(principal.MemberTeams)
+	}
 	return principal.Team
 }
 
@@ -430,6 +441,7 @@ func mergePrincipals(left, right Principal) Principal {
 	merged.CanAdmin = left.CanAdmin || right.CanAdmin
 	merged.PublishOwners = mergeStringSets(left.PublishOwners, right.PublishOwners)
 	merged.ManagedTeams = mergeStringSets(left.ManagedTeams, right.ManagedTeams)
+	merged.MemberTeams = mergeStringSets(left.MemberTeams, right.MemberTeams)
 	if right.CanAdmin && !left.CanAdmin {
 		merged.Team = right.Team
 	}

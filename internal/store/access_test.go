@@ -39,7 +39,7 @@ func TestAccessOIDCMappings(t *testing.T) {
 		OIDCEmails:          []string{"dev@example.com", ""},
 		OIDCSubjects:        []string{"subject-1"},
 		OIDCDomains:         []string{"example.com"},
-		OIDCGroups:          []string{"teamname-devops"},
+		OIDCReaderGroups:    []string{"teamname-devops"},
 		OIDCTeamAdminEmails: []string{"admin@example.com"},
 		OIDCTeamAdminGroups: []string{"teamname-admins"},
 		OIDCAdminEmails:     []string{"super@example.com"},
@@ -140,8 +140,8 @@ func TestApplyAccessOIDCMapping(t *testing.T) {
 	}
 
 	applyAccessOIDCMapping(cfg, "group", "teamname-devops")
-	if len(cfg.OIDCGroups) != 1 || cfg.OIDCGroups[0] != "teamname-devops" {
-		t.Fatalf("unexpected groups: %v", cfg.OIDCGroups)
+	if len(cfg.OIDCReaderGroups) != 1 || cfg.OIDCReaderGroups[0] != "teamname-devops" {
+		t.Fatalf("unexpected groups: %v", cfg.OIDCReaderGroups)
 	}
 
 	applyAccessOIDCMapping(cfg, "admin_email", "admin@example.com")

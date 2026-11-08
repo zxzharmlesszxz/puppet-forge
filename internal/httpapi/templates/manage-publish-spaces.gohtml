@@ -4,22 +4,12 @@
 
 {{define "page-styles"}}<link rel="stylesheet" href="/assets/manage-publish-spaces.css">{{end}}
 
-{{define "page-subtitle"}}<div class="subtitle">Assign additional publishing namespaces to teams and inspect read-only namespaces synchronized from the official Forge.</div>{{end}}
+{{define "page-subtitle"}}<div class="subtitle">Team namespaces and read-only namespaces synchronized from the official Forge.</div>{{end}}
 
 {{define "page-content"}}
 {{template "page-header" .}}
 
 {{template "notices" (notices .Message .Error)}}
-
-<section class="panel list-panel compact-fields" aria-label="Assign publish space">
-  {{if .Teams}}<form class="assignment-form" method="post" action="/manage/admin/spaces">
-    {{csrfInput .CSRFToken}}
-    <input type="hidden" name="action" value="assign">
-    <div><label for="publish-space-team">Team</label><select id="publish-space-team" name="team" required>{{range .Teams}}<option value="{{.}}">{{.}}</option>{{end}}</select></div>
-    <div><label for="publish-space-name">Extra publish space</label><input id="publish-space-name" name="space" placeholder="SharedModules" pattern="[A-Za-z0-9]+" maxlength="128" required></div>
-    <button type="submit">Assign space</button>
-  </form>{{else}}<div class="empty">Create a team before assigning extra publish spaces.</div>{{end}}
-</section>
 
 <section class="panel list-panel" id="publish-space-list" data-async-list aria-label="Publish space assignments">
   {{template "list-filter" .Filter}}
@@ -30,7 +20,7 @@
       <td>{{.Space}}</td>
       <td><span class="badge{{if .Upstream}} upstream{{else if .Primary}} primary{{end}}">{{if .Upstream}}Upstream{{else if .Primary}}Primary{{else}}Extra{{end}}</span></td>
       <td><a class="count-link" href="{{.ModulesURL}}">{{.ModuleCount}} module{{if ne .ModuleCount 1}}s{{end}}</a></td>
-      <td>{{if .Upstream}}<span class="badge read-only">Read only</span>{{else if .Primary}}<span class="badge primary">Automatic</span>{{else}}<form method="post" action="/manage/admin/spaces">{{csrfInput $.CSRFToken}}<input type="hidden" name="action" value="unassign"><input type="hidden" name="team" value="{{.Team}}"><input type="hidden" name="space" value="{{.Space}}"><button class="remove-button" type="submit">Unassign</button></form>{{end}}</td>
+      <td>{{if .Upstream}}<span class="badge read-only">Read only</span>{{else}}<span class="badge primary">Automatic</span>{{end}}</td>
     </tr>{{end}}</tbody>
   </table></div>{{else}}<div class="empty">{{if .Query}}No publish spaces match this filter.{{else}}No publish spaces configured.{{end}}</div>{{end}}
   {{template "pagination" (paginationView .Pagination "spaces" "list-pagination" "Publish space pages")}}

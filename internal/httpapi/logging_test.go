@@ -148,7 +148,6 @@ func TestManageFormsDistinguishBackendAndValidationErrors(t *testing.T) {
 	for _, build := range []func(*http.Request) ([]auth.TeamConfig, string, error){
 		router.accessConfigsWithGlobalAdmins,
 		router.accessConfigsWithoutTeam,
-		router.publishSpaceConfigsFromForm,
 		func(req *http.Request) ([]auth.TeamConfig, string, error) {
 			return router.accessConfigsWithUpsertedTeam(req, auth.Principal{CanAdmin: true})
 		},

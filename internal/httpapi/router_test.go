@@ -791,9 +791,9 @@ func TestManageAccessTokenCreateRotateAndRevoke(t *testing.T) {
 	ctx := context.Background()
 	st := newHTTPAPITestStore(t)
 	client, baseURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{
-		Team:          "teamname",
-		PublishOwners: []string{"teamname"},
-		OIDCGroups:    []string{"teamname-publishers"},
+		Team:             "teamname",
+		PublishOwners:    []string{"teamname"},
+		OIDCReaderGroups: []string{"teamname-publishers"},
 	}})
 	unnamed := manageFormValues(t, client, baseURL, url.Values{
 		"action": {"create"}, "team": {"teamname"}, "role": {"read"},
@@ -1061,89 +1061,54 @@ func TestManageAdminCanDeleteVersion(t *testing.T) {
 	}
 }
 
-func TestDeleteReleaseRejectsLatestAndActiveVersions(t *testing.T) {
+func TestDeleteReleaseProtectsUsageButAllowsInactiveLatest(t *testing.T) {
 	t.Parallel()
-
 	st := newHTTPAPITestStore(t)
-
-	ctx := context.Background()
 	module := createTeamnameApacheModuleAndRelease(t, st)
 	createTeamnameApacheRelease(t, st, module, "1.5.0")
 	createTeamnameApacheRelease(t, st, module, "2.0.0")
-	if err := st.MarkReleaseUsed(ctx, "teamname", "apache", "1.5.0"); err != nil {
-		t.Fatalf("MarkReleaseUsed() error = %v", err)
+	if err := st.MarkReleaseUsed(t.Context(), "teamname", "apache", "1.5.0"); err != nil {
+		t.Fatal(err)
 	}
-
 	server, client := setupManageTest(t, st, defaultActiveReleaseTTL)
-
-	for _, tt := range []struct {
-		version string
-		want    string
-	}{
-		{version: "1.5.0", want: "active release teamname/apache 1.5.0 cannot be deleted"},
-		{version: "2.0.0", want: "latest release teamname/apache 2.0.0 cannot be deleted"},
-	} {
-		resp, err := client.PostForm(server.URL+"/manage/modules/teamname/apache/versions/"+tt.version+"/delete", manageFormValues(t, client, server.URL, nil))
-		if err != nil {
-			t.Fatalf("POST delete %s error = %v", tt.version, err)
-		}
-		body, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			t.Fatalf("ReadAll(delete %s response) error = %v", tt.version, err)
-		}
-		if !strings.Contains(string(body), tt.want) {
-			t.Fatalf("expected protected delete message %q, got body:\n%s", tt.want, string(body))
-		}
-		if _, err := st.GetRelease(ctx, "teamname", "apache", tt.version); err != nil {
-			t.Fatalf("protected release %s was removed or lookup failed: %v", tt.version, err)
-		}
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, server.URL+"/api/v1/modules/teamname/apache/versions/2.0.0", nil)
+	response, err := client.PostForm(server.URL+"/manage/modules/teamname/apache/versions/1.5.0/delete", manageFormValues(t, client, server.URL, nil))
 	if err != nil {
-		t.Fatalf("NewRequest(api delete latest) error = %v", err)
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if _, err := st.GetRelease(t.Context(), "teamname", "apache", "1.5.0"); err != nil {
+		t.Fatalf("active release disappeared: %v", err)
+	}
+	response, err = client.PostForm(server.URL+"/manage/modules/teamname/apache/versions/2.0.0/delete", manageFormValues(t, client, server.URL, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if _, err := st.GetRelease(t.Context(), "teamname", "apache", "2.0.0"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("inactive latest not deleted: %v", err)
+	}
+	updated, err := st.GetModule(t.Context(), "teamname", "apache")
+	if err != nil || updated.LatestVersion != "1.5.0" {
+		t.Fatalf("latest = %#v %v", updated, err)
+	}
+	req, err := http.NewRequest(http.MethodDelete, server.URL+"/api/v1/modules/teamname/apache/versions/1.5.0", nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer admin-token")
-	resp, err := server.Client().Do(req)
+	req.Header.Set("X-Puppet-Forge-Force-Delete", "true")
+	req.Header.Set("X-Puppet-Forge-Delete-Reason", "broken archive")
+	req.Header.Set("X-Puppet-Forge-Delete-Confirmation", "teamname/apache@1.5.0")
+	response, err = server.Client().Do(req)
 	if err != nil {
-		t.Fatalf("DELETE latest release error = %v", err)
+		t.Fatal(err)
 	}
-	body, err := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if err != nil {
-		t.Fatalf("ReadAll(api delete latest response) error = %v", err)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("force status = %d", response.StatusCode)
 	}
-	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(body), "latest release teamname/apache 2.0.0 cannot be deleted") {
-		t.Fatalf("expected API latest delete to get 409 protected error, got %d body=%s", resp.StatusCode, string(body))
-	}
-
-	forceReq, err := http.NewRequest(http.MethodDelete, server.URL+"/api/v1/modules/teamname/apache/versions/2.0.0", nil)
-	if err != nil {
-		t.Fatalf("NewRequest(force delete latest) error = %v", err)
-	}
-	forceReq.Header.Set("Authorization", "Bearer admin-token")
-	forceReq.Header.Set("X-Puppet-Forge-Force-Delete", "true")
-	forceReq.Header.Set("X-Puppet-Forge-Delete-Reason", "broken release archive")
-	forceReq.Header.Set("X-Puppet-Forge-Delete-Confirmation", "teamname/apache@2.0.0")
-	forceResp, err := server.Client().Do(forceReq)
-	if err != nil {
-		t.Fatalf("force delete latest error = %v", err)
-	}
-	defer func() { _ = forceResp.Body.Close() }()
-	if forceResp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(forceResp.Body)
-		t.Fatalf("force delete latest status = %d, want %d: %s", forceResp.StatusCode, http.StatusOK, body)
-	}
-	if _, err := st.GetRelease(ctx, "teamname", "apache", "2.0.0"); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("force-deleted release lookup error = %v, want ErrNotFound", err)
-	}
-	updatedModule, err := st.GetModule(ctx, "teamname", "apache")
-	if err != nil {
-		t.Fatalf("GetModule() after force delete error = %v", err)
-	}
-	if updatedModule.LatestVersion != "1.5.0" {
-		t.Fatalf("latest version after force delete = %q, want 1.5.0", updatedModule.LatestVersion)
+	if _, err := st.GetRelease(t.Context(), "teamname", "apache", "1.5.0"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("forced deletion failed: %v", err)
 	}
 }
 
@@ -1474,8 +1439,8 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 	if hasStandardReleaseDelete(body, "/manage/modules/teamname/apache/versions/1.2.3/delete") {
 		t.Fatalf("manage page exposes standard delete for active release:\n%s", body)
 	}
-	if hasStandardReleaseDelete(body, "/manage/modules/teamname/apache/versions/2.0.0/delete") {
-		t.Fatalf("manage page exposes standard delete for latest release:\n%s", body)
+	if !hasStandardReleaseDelete(body, "/manage/modules/teamname/apache/versions/2.0.0/delete") {
+		t.Fatalf("manage page hides standard delete for inactive latest release:\n%s", body)
 	}
 	if !strings.Contains(body, "/manage/modules/teamname/apache/delete") {
 		t.Fatalf("manage page hides module delete action for admin:\n%s", body)
@@ -2182,8 +2147,8 @@ func TestV3ModuleRequestDoesNotMarkLatestReleaseActive(t *testing.T) {
 	if strings.Contains(body, "in use") {
 		t.Fatalf("module metadata request incorrectly marks latest release active:\n%s", body)
 	}
-	if hasStandardReleaseDelete(body, "/manage/modules/stm/debconf/versions/9.1.0/delete") {
-		t.Fatalf("manage page exposes standard delete for latest release:\n%s", body)
+	if !hasStandardReleaseDelete(body, "/manage/modules/stm/debconf/versions/9.1.0/delete") {
+		t.Fatalf("manage page hides standard delete for inactive latest release:\n%s", body)
 	}
 }
 
@@ -2231,12 +2196,12 @@ func TestUpstreamV3ModuleRequestIndexesWithoutMarkingCurrentReleaseActive(t *tes
 	if strings.Contains(body, "in use") {
 		t.Fatalf("upstream module metadata request incorrectly marks current release active:\n%s", body)
 	}
-	if hasStandardReleaseDelete(body, "/manage/modules/stm/debconf/versions/9.1.0/delete") {
-		t.Fatalf("manage page exposes standard delete for latest upstream current release:\n%s", body)
+	if !hasStandardReleaseDelete(body, "/manage/modules/stm/debconf/versions/9.1.0/delete") {
+		t.Fatalf("manage page hides standard delete for inactive latest upstream release:\n%s", body)
 	}
 }
 
-func TestV3ReleaseRequestRestoresDeletedUpstreamReleaseOnDemand(t *testing.T) {
+func TestV3ReleaseRequestCannotRestoreDeletedUpstreamRelease(t *testing.T) {
 	t.Parallel()
 	archive := []byte("restored upstream archive")
 
@@ -2298,11 +2263,11 @@ func TestV3ReleaseRequestRestoresDeletedUpstreamReleaseOnDemand(t *testing.T) {
 	defer func() {
 		_ = resp.Body.Close()
 	}()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusConflict {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("GET /v3/releases deleted upstream release status = %d body = %s", resp.StatusCode, string(body))
 	}
-	if _, err := st.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); err != nil {
+	if _, err := st.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("GetRelease(restored local) error = %v", err)
 	}
 }
@@ -2336,7 +2301,7 @@ func TestModulePageDoesNotExposeVersionDeleteAction(t *testing.T) {
 		t.Fatalf("CreateRelease() error = %v", err)
 	}
 
-	server := httptest.NewServer(newTestRouter(service.NewModuleService(st, testArtifactStorage{}, "modules", nil), nil, "http://example.test", nil, nil, "", false, defaultActiveReleaseTTL))
+	server := httptest.NewServer(newTestRouter(service.NewModuleService(st, testArtifactStorage{}, "modules", nil), nil, "http://example.test", nil, nil, "", true, defaultActiveReleaseTTL))
 	t.Cleanup(server.Close)
 
 	body := getBody(t, server.Client(), server.URL+"/modules/teamname/apache")
@@ -2611,6 +2576,43 @@ func TestPublicModuleAccessControlsReadEndpoints(t *testing.T) {
 	}
 }
 
+func TestPublicCatalogDoesNotGrantDownloadAccess(t *testing.T) {
+	t.Parallel()
+	_, server, client := setupManageTestWithModule(t)
+	for _, endpoint := range []struct {
+		path string
+		want int
+	}{
+		{path: "/", want: http.StatusOK},
+		{path: "/modules/teamname/apache", want: http.StatusOK},
+		{path: "/api/v1/modules", want: http.StatusUnauthorized},
+		{path: "/api/v1/modules/teamname/apache/versions/1.2.3/download", want: http.StatusUnauthorized},
+		{path: "/v3/releases/teamname-apache-1.2.3", want: http.StatusUnauthorized},
+		{path: "/modules/teamname/apache/versions/1.2.3/files/metadata.json", want: http.StatusUnauthorized},
+	} {
+		t.Run(endpoint.path, func(t *testing.T) {
+			for _, tc := range []struct {
+				name   string
+				client *http.Client
+			}{
+				{name: "anonymous", client: server.Client()},
+				{name: "admin session", client: client},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					resp, err := tc.client.Get(server.URL + endpoint.path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer func() { _ = resp.Body.Close() }()
+					if resp.StatusCode != endpoint.want {
+						t.Fatalf("status = %d, want %d", resp.StatusCode, endpoint.want)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestHTTPAPIAccessMatrix(t *testing.T) {
 	t.Parallel()
 
@@ -2721,7 +2723,8 @@ func TestPublishWithoutSpaceUsesMetadataNamespaceForAuthorization(t *testing.T) 
 		metadataOwner string
 		wantStatus    int
 	}{
-		{name: "allowed extra space", metadataOwner: "shared", wantStatus: http.StatusCreated},
+		{name: "own namespace", metadataOwner: "teamname", wantStatus: http.StatusCreated},
+		{name: "legacy extra space denied", metadataOwner: "shared", wantStatus: http.StatusForbidden},
 		{name: "forbidden space", metadataOwner: "alpha", wantStatus: http.StatusForbidden},
 	}
 	for _, testCase := range tests {
@@ -2881,11 +2884,34 @@ func TestManageActionsEnforceRoleBoundary(t *testing.T) {
 		t.Fatalf("publisher POST manage publish error = %v", err)
 	}
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected publisher manage publish final response 200, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("publisher manage publish status = %d, want 403", resp.StatusCode)
 	}
-	if _, err := st.GetModule(ctx, "teamname", "nginx"); err != nil {
-		t.Fatalf("publisher manage publish did not create module: %v", err)
+	if _, err := st.GetModule(ctx, "teamname", "nginx"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("forbidden web upload changed module store: %v", err)
+	}
+
+	publishBodyBuffer, contentType = buildPublishMultipart(t, "teamname", "nginx", "1.0.0", archive, "")
+	req, err = http.NewRequest(http.MethodPost, server.URL+"/api/v1/modules", publishBodyBuffer)
+	if err != nil {
+		t.Fatalf("NewRequest(API publish) error = %v", err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Authorization", "Bearer publish-token")
+	resp, err = publishClient.Do(req)
+	if err != nil {
+		t.Fatalf("publisher POST API publish error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("publisher API publish status = %d, want 201", resp.StatusCode)
+	}
+	status, err := st.GetResourceStatus(ctx, "teamname", "nginx", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetResourceStatus(API publish) error = %v", err)
+	}
+	if status.State != domain.StatePending {
+		t.Fatalf("API publish state = %q, want pending", status.State)
 	}
 
 	replacementArchive, err := testutil.BuildTarGz(map[string]string{
@@ -3516,6 +3542,67 @@ func TestPublishRejectsUploadOverConfiguredLimit(t *testing.T) {
 	}
 }
 
+func TestManageEmergencyUploadRequiresReason(t *testing.T) {
+	t.Parallel()
+	st, server := newHTTPAPIAccessMatrixServer(t, newAdminAuthorizer(t))
+	client := server.Client()
+	client.Jar = newCookieJar(t)
+	postManageToken(t, client, server.URL, "admin-token")
+	archive, err := testutil.BuildTarGz(map[string]string{
+		"teamname-emergency-1.0.0/metadata.json": `{"name":"teamname-emergency","version":"1.0.0"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	noRedirectClient := *client
+	noRedirectClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	for _, async := range []bool{false, true} {
+		for _, reason := range []string{"", "   ", strings.Repeat("x", 501)} {
+			body, contentType := buildPublishMultipart(t, "teamname", "emergency", "1.0.0", archive,
+				manageCSRFToken(t, client, server.URL), url.Values{"reason": {reason}})
+			req, err := http.NewRequest(http.MethodPost, server.URL+"/manage/modules", body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", contentType)
+			wantStatus := http.StatusFound
+			if async {
+				req.Header.Set("X-Puppet-Forge-Async-Mutation", "true")
+				wantStatus = http.StatusBadRequest
+			}
+			resp, err := noRedirectClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			responseBody, err := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != wantStatus {
+				t.Fatalf("invalid emergency reason async=%v status=%d, want %d", async, resp.StatusCode, wantStatus)
+			}
+			message := string(responseBody)
+			if !async {
+				target, err := resp.Location()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if target.Path != "/manage/modules" {
+					t.Fatalf("unexpected validation redirect: %s", target)
+				}
+				message = target.Query().Get("error")
+			}
+			if !strings.Contains(message, "emergency upload requires a reason") {
+				t.Fatalf("missing emergency reason validation error: %s", message)
+			}
+		}
+	}
+	if _, err := st.GetModule(t.Context(), "teamname", "emergency"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("rejected emergency upload changed module store: %v", err)
+	}
+}
+
 func TestOIDCDoesNotProtectPublicPages(t *testing.T) {
 	t.Parallel()
 
@@ -3523,7 +3610,7 @@ func TestOIDCDoesNotProtectPublicPages(t *testing.T) {
 
 	authorizer := newAdminAuthorizer(t)
 	moduleSvc := service.NewModuleService(st, testArtifactStorage{}, "modules", nil)
-	server := httptest.NewServer(newTestRouter(moduleSvc, nil, "http://example.test", authorizer, &webauth.OIDCAuth{}, "admin-token", false, defaultActiveReleaseTTL))
+	server := httptest.NewServer(newTestRouter(moduleSvc, nil, "http://example.test", authorizer, &webauth.OIDCAuth{}, "admin-token", true, defaultActiveReleaseTTL))
 	t.Cleanup(server.Close)
 
 	noRedirectClient := server.Client()
@@ -3609,7 +3696,7 @@ func TestPublicModuleAccessControlsV3Proxy(t *testing.T) {
 	}
 }
 
-func TestPrivateModuleAccessKeepsHTMLCatalogPublicButProtectsInstallRoutes(t *testing.T) {
+func TestPrivateModuleAccessKeepsHTMLPublicAndProtectsInstallRoutes(t *testing.T) {
 	t.Parallel()
 
 	st := newHTTPAPITestStore(t)
@@ -3725,7 +3812,7 @@ func TestManageAdminCanManageStructuredAccessConfig(t *testing.T) {
 		"team":                 {"alpha"},
 		"publish_tokens":       {"ignored-manual-token\n"},
 		"extra_publish_spaces": {"ignored-space"},
-		"oidc_groups":          {"alpha-devops"},
+		"oidc_reader_groups":   {"alpha-devops"},
 	}))
 	if err != nil {
 		t.Fatalf("POST structured save /manage/access error = %v", err)
@@ -3745,14 +3832,14 @@ func TestManageAdminCanManageStructuredAccessConfig(t *testing.T) {
 	for _, cfg := range configs {
 		if cfg.Team == "alpha" {
 			foundAlpha = true
-			if len(cfg.PublishOwners) != 1 || cfg.PublishOwners[0] != "alpha" {
+			if len(cfg.PublishOwners) != 0 || !slices.Equal(teamPublishSpaces(cfg), []string{"alpha"}) {
 				t.Fatalf("unexpected alpha owners: %#v", cfg.PublishOwners)
 			}
 			if len(cfg.PublishTokenRecords) != 0 {
 				t.Fatalf("structured team form created a token record: %#v", cfg.PublishTokenRecords)
 			}
-			if len(cfg.OIDCGroups) != 1 || cfg.OIDCGroups[0] != "alpha-devops" {
-				t.Fatalf("unexpected alpha oidc groups: %#v", cfg.OIDCGroups)
+			if len(cfg.OIDCReaderGroups) != 1 || cfg.OIDCReaderGroups[0] != "alpha-devops" {
+				t.Fatalf("unexpected alpha oidc groups: %#v", cfg.OIDCReaderGroups)
 			}
 		}
 	}
@@ -3835,16 +3922,16 @@ func TestTeamAdminCanManageOnlyOwnTeamAccess(t *testing.T) {
 			ReadTokens:          []string{"old-read"},
 			PublishTokens:       []string{"old-publish"},
 			PublishOwners:       []string{"teamname", "shared"},
-			OIDCGroups:          []string{"teamname-devops"},
+			OIDCReaderGroups:    []string{"teamname-devops"},
 			OIDCTeamAdminEmails: []string{"old-owner@example.com"},
 			OIDCTeamAdminGroups: []string{"teamname-admins"},
 		},
 		{
-			Team:          "alpha",
-			ReadTokens:    []string{"alpha-read"},
-			PublishTokens: []string{"alpha-publish"},
-			PublishOwners: []string{"alpha"},
-			OIDCGroups:    []string{"alpha-devops"},
+			Team:             "alpha",
+			ReadTokens:       []string{"alpha-read"},
+			PublishTokens:    []string{"alpha-publish"},
+			PublishOwners:    []string{"alpha"},
+			OIDCReaderGroups: []string{"alpha-devops"},
 		},
 	}
 	if err := st.ReplaceTeamConfigs(ctx, configs); err != nil {
@@ -3861,7 +3948,7 @@ func TestTeamAdminCanManageOnlyOwnTeamAccess(t *testing.T) {
 		"read_tokens":            {"new-read"},
 		"publish_tokens":         {"new-publish"},
 		"extra_publish_spaces":   {"evil"},
-		"oidc_groups":            {"teamname-publishers"},
+		"oidc_reader_groups":     {"teamname-publishers"},
 		"oidc_team_admin_emails": {"owner@example.com\nbackup@example.com"},
 		"oidc_team_admin_groups": {"teamname-admins\nteamname-owners"},
 	})
@@ -3890,11 +3977,11 @@ func TestTeamAdminCanManageOnlyOwnTeamAccess(t *testing.T) {
 	if len(teamname.PublishTokenRecords) != 1 || !strings.HasPrefix(teamname.PublishTokenRecords[0].Prefix, "legacy_publish_") {
 		t.Fatalf("teamname publish token records were not preserved: %#v", teamname.PublishTokenRecords)
 	}
-	if len(teamname.PublishOwners) != 2 || !slices.Contains(teamname.PublishOwners, "teamname") || !slices.Contains(teamname.PublishOwners, "shared") {
+	if len(teamname.PublishOwners) != 0 || !slices.Equal(teamPublishSpaces(*teamname), []string{"teamname"}) {
 		t.Fatalf("team admin changed publish owners: %#v", teamname.PublishOwners)
 	}
-	if len(teamname.OIDCGroups) != 1 || teamname.OIDCGroups[0] != "teamname-publishers" {
-		t.Fatalf("unexpected teamname oidc groups: %#v", teamname.OIDCGroups)
+	if len(teamname.OIDCReaderGroups) != 1 || teamname.OIDCReaderGroups[0] != "teamname-publishers" {
+		t.Fatalf("unexpected teamname oidc groups: %#v", teamname.OIDCReaderGroups)
 	}
 	if len(teamname.OIDCTeamAdminEmails) != 2 || !slices.Contains(teamname.OIDCTeamAdminEmails, "owner@example.com") || !slices.Contains(teamname.OIDCTeamAdminEmails, "backup@example.com") {
 		t.Fatalf("unexpected teamname team admin emails: %#v", teamname.OIDCTeamAdminEmails)
@@ -3972,7 +4059,7 @@ func TestTeamAdminCanManageMultipleOwnTeams(t *testing.T) {
 		"read_tokens":            {"alpha-read-new"},
 		"publish_tokens":         {"alpha-publish-new"},
 		"extra_publish_spaces":   {"evil"},
-		"oidc_groups":            {"alpha-devops"},
+		"oidc_reader_groups":     {"alpha-devops"},
 		"oidc_team_admin_groups": {"platform-owners"},
 	}), principal)
 	if err != nil {
@@ -3988,7 +4075,7 @@ func TestTeamAdminCanManageMultipleOwnTeams(t *testing.T) {
 	if len(alpha.ReadTokenRecords) != 1 || !strings.HasPrefix(alpha.ReadTokenRecords[0].Prefix, "legacy_read_") {
 		t.Fatalf("alpha read token record was not preserved: %#v", alpha.ReadTokenRecords)
 	}
-	if len(alpha.PublishOwners) != 2 || alpha.PublishOwners[0] != "alpha" || alpha.PublishOwners[1] != "shared" {
+	if len(alpha.PublishOwners) != 0 || !slices.Equal(teamPublishSpaces(*alpha), []string{"alpha"}) {
 		t.Fatalf("team admin changed alpha publish owners: %#v", alpha.PublishOwners)
 	}
 
@@ -4009,10 +4096,10 @@ func TestManageAccessStructuredRenameTeam(t *testing.T) {
 	ctx := context.Background()
 	configs := []auth.TeamConfig{
 		{
-			Team:          "teamname",
-			PublishTokens: []string{"teamname-token"},
-			PublishOwners: []string{"teamname", "platform"},
-			OIDCGroups:    []string{"teamname-devops"},
+			Team:             "teamname",
+			PublishTokens:    []string{"teamname-token"},
+			PublishOwners:    []string{"teamname", "platform"},
+			OIDCReaderGroups: []string{"teamname-devops"},
 		},
 	}
 	client, serverURL := newAccessManageClient(t, st, ctx, configs)
@@ -4022,7 +4109,7 @@ func TestManageAccessStructuredRenameTeam(t *testing.T) {
 		"team":                 {"teamnameplatform"},
 		"publish_tokens":       {"renamed-token"},
 		"extra_publish_spaces": {"ignored-space"},
-		"oidc_groups":          {"teamname-platform-devops"},
+		"oidc_reader_groups":   {"teamname-platform-devops"},
 	}))
 	if err != nil {
 		t.Fatalf("POST rename /manage/access error = %v", err)
@@ -4047,11 +4134,11 @@ func TestManageAccessStructuredRenameTeam(t *testing.T) {
 	if renamed == nil {
 		t.Fatalf("renamed team was not saved: %#v", saved)
 	}
-	if len(renamed.PublishOwners) != 2 || !slices.Contains(renamed.PublishOwners, "teamnameplatform") || !slices.Contains(renamed.PublishOwners, "platform") {
+	if len(renamed.PublishOwners) != 0 || !slices.Equal(teamPublishSpaces(*renamed), []string{"teamnameplatform"}) {
 		t.Fatalf("unexpected renamed owners: %#v", renamed.PublishOwners)
 	}
-	if len(renamed.OIDCGroups) != 1 || renamed.OIDCGroups[0] != "teamname-platform-devops" {
-		t.Fatalf("unexpected renamed oidc groups: %#v", renamed.OIDCGroups)
+	if len(renamed.OIDCReaderGroups) != 1 || renamed.OIDCReaderGroups[0] != "teamname-platform-devops" {
+		t.Fatalf("unexpected renamed oidc groups: %#v", renamed.OIDCReaderGroups)
 	}
 }
 
@@ -4147,7 +4234,7 @@ func TestManageTeamSummariesRespectPrincipalScope(t *testing.T) {
 			ReadTokens:          []string{"read-token"},
 			PublishTokens:       []string{"publish-token"},
 			PublishOwners:       []string{"teamname", "shared"},
-			OIDCGroups:          []string{"teamname-publishers"},
+			OIDCReaderGroups:    []string{"teamname-publishers"},
 			OIDCTeamAdminEmails: []string{"owner@example.com"},
 			OIDCTeamAdminGroups: []string{"teamname-admins"},
 		},
@@ -4165,13 +4252,13 @@ func TestManageTeamSummariesRespectPrincipalScope(t *testing.T) {
 		t.Fatalf("team admin sees unexpected teams: %#v", rows)
 	}
 	row := rows[0]
-	if row.ModuleCount != 2 || row.ReadTokens != 1 || row.PublishTokens != 1 {
+	if row.ModuleCount != 1 || row.ReadTokens != 1 || row.PublishTokens != 1 {
 		t.Fatalf("unexpected team summary counts: %#v", row)
 	}
-	if row.PublishGroups != 1 || row.TeamAdminUsers != 1 || row.TeamAdminGroups != 1 {
+	if row.ReaderGroups != 1 || row.TeamAdminUsers != 1 || row.TeamAdminGroups != 1 {
 		t.Fatalf("unexpected team OIDC summary counts: %#v", row)
 	}
-	if len(row.Spaces) != 2 || row.Spaces[0] != "shared" || row.Spaces[1] != "teamname" {
+	if !slices.Equal(row.Spaces, []string{"teamname"}) {
 		t.Fatalf("unexpected sorted team spaces: %#v", row.Spaces)
 	}
 }
@@ -4195,7 +4282,7 @@ func TestManageTeamsPagesGroupAccessAndModules(t *testing.T) {
 	client, serverURL := newAccessManageClient(t, st, ctx, configs)
 
 	listBody := getBody(t, client, serverURL+"/manage/teams")
-	if !strings.Contains(listBody, `href="/manage/teams/teamname/access"`) || !strings.Contains(listBody, "2</strong><span>modules") {
+	if !strings.Contains(listBody, `href="/manage/teams/teamname/access"`) || !strings.Contains(listBody, "1</strong><span>modules") {
 		t.Fatalf("teams page misses team summary or module count:\n%s", listBody)
 	}
 	if strings.Contains(listBody, `href="/manage/teams/platform-admin"`) {
@@ -4253,7 +4340,6 @@ func TestManageTeamsPagesGroupAccessAndModules(t *testing.T) {
 	modulesBody := getBody(t, client, serverURL+"/manage/teams/teamname/modules")
 	for _, want := range []string{
 		`teamname/apache`,
-		`shared/stdlib`,
 		`<span aria-current="page">Modules</span>`,
 		`aria-label="Management context navigation"`,
 	} {
@@ -4261,8 +4347,13 @@ func TestManageTeamsPagesGroupAccessAndModules(t *testing.T) {
 			t.Fatalf("team modules page misses %q:\n%s", want, modulesBody)
 		}
 	}
-	if strings.Contains(modulesBody, "Upload or Update") {
-		t.Fatalf("global admin token without publish permission sees upload form:\n%s", modulesBody)
+	if strings.Contains(modulesBody, "shared/stdlib") {
+		t.Fatal("team modules page exposes a legacy extra namespace")
+	}
+	for _, control := range []string{"Upload or Update", `name="reason" maxlength="500" required`, "Upload and allow"} {
+		if !strings.Contains(modulesBody, control) {
+			t.Fatalf("global admin team page misses emergency upload control %q:\n%s", control, modulesBody)
+		}
 	}
 	if strings.Contains(modulesBody, `id="team-access"`) || strings.Contains(modulesBody, `id="team-tokens"`) {
 		t.Fatalf("team modules page exposes another section:\n%s", modulesBody)
@@ -4329,15 +4420,15 @@ func TestManageAccessAllowsSharedOIDCGroupMapping(t *testing.T) {
 	ctx := context.Background()
 	configs := []auth.TeamConfig{
 		{
-			Team:       "teamname",
-			OIDCGroups: []string{"teamname-devops"},
+			Team:             "teamname",
+			OIDCReaderGroups: []string{"teamname-devops"},
 		},
 	}
 	client, serverURL := newAccessManageClient(t, st, ctx, configs)
 	resp, err := client.PostForm(serverURL+"/manage/access", manageFormValues(t, client, serverURL, url.Values{
-		"action":      {"save_team"},
-		"team":        {"alpha"},
-		"oidc_groups": {"TEAMNAME-DEVOPS"},
+		"action":             {"save_team"},
+		"team":               {"alpha"},
+		"oidc_reader_groups": {"TEAMNAME-DEVOPS"},
 	}))
 	if err != nil {
 		t.Fatalf("POST duplicate oidc /manage/access error = %v", err)
@@ -4365,8 +4456,10 @@ func TestManageAccessAllowsSharedOIDCGroupMapping(t *testing.T) {
 		t.Fatalf("NewAuthorizer() error = %v", err)
 	}
 	principal, ok := authorizer.AuthenticateOIDC("", "", []string{"teamname-devops"})
-	if !ok || !principal.CanPublishOwner("teamname") || !principal.CanPublishOwner("alpha") {
-		t.Fatalf("shared OIDC mapping did not grant both spaces: %#v ok=%v", principal, ok)
+	_, memberTeamname := principal.MemberTeams["teamname"]
+	_, memberAlpha := principal.MemberTeams["alpha"]
+	if !ok || !principal.CanRead || principal.CanPublish || principal.CanManageTeam || !memberTeamname || !memberAlpha {
+		t.Fatalf("shared OIDC mapping did not grant reader membership only: %#v ok=%v", principal, ok)
 	}
 }
 
@@ -4398,7 +4491,7 @@ func TestPublishSpacesEndpointReturnsOnlyPrincipalSpaces(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		t.Fatalf("Decode() error = %v", err)
 	}
-	if len(payload.Spaces) != 2 || payload.Spaces[0] != "shared" || payload.Spaces[1] != "teamname" {
+	if len(payload.Spaces) != 1 || payload.Spaces[0] != "teamname" {
 		t.Fatalf("unexpected publish spaces: %#v", payload.Spaces)
 	}
 }
@@ -4599,10 +4692,7 @@ func TestManageOverviewLinksCountersTeamsAndSpaces(t *testing.T) {
 	ctx := context.Background()
 	st := newHTTPAPITestStore(t)
 	createTeamnameApacheModuleAndRelease(t, st)
-	client, serverURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{
-		Team:          "teamname",
-		PublishOwners: []string{"shared"},
-	}})
+	client, serverURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{Team: "teamname"}, {Team: "shared"}})
 
 	body := getBody(t, client, serverURL+"/manage")
 	styles := getBody(t, client, serverURL+"/assets/manage-overview.css")
@@ -4757,6 +4847,8 @@ func TestManagePublishFormAcceptsOnlySpaceAndArchive(t *testing.T) {
 		`<option value="teamname">teamname</option>`,
 		`id="module-archive-input" name="file" type="file" accept=".gz,.tgz,.tar.gz" required`,
 		`Module identity and metadata are read from metadata.json.`,
+		`name="reason" maxlength="500" required`,
+		`Upload and allow`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("manage publish form missing expected helper %q:\n%s", want, body)
@@ -4787,7 +4879,7 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 		forceModuleLink bool
 	}{
 		{principal: auth.Principal{CanAdmin: true}, forceModuleLink: true},
-		{principal: auth.Principal{Team: "teamname", CanPublish: true, CanManageTeam: true, ManagedTeams: map[string]struct{}{"teamname": {}}}},
+		{principal: auth.Principal{Team: "teamname", CanPublish: true, CanManageTeam: true, ManagedTeams: map[string]struct{}{"teamname": {}}}, forceModuleLink: true},
 	} {
 		rows := []manageModuleRow{{
 			Module: module,
@@ -4795,17 +4887,13 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 				{Version: "1.2.3", Active: true},
 				{Version: "2.0.0", Latest: true},
 			},
-			CanDelete:             true,
-			CanForceDeleteModule:  tc.forceModuleLink,
-			CanForceDeleteRelease: true,
+			CanDelete:             canDeleteInSpace(tc.principal, module.Owner),
+			CanForceDeleteModule:  canDeleteInSpace(tc.principal, module.Owner),
+			CanForceDeleteRelease: canDeleteInSpace(tc.principal, module.Owner),
 		}}
 		configureManageModuleRows(rows, "csrf", "/manage/modules")
 		var rec bytes.Buffer
-		err := managePageTemplate.Execute(&rec, managePageData{
-			Principal: tc.principal,
-			Modules:   rows,
-			CSRFToken: "csrf",
-		})
+		err := managePageTemplate.ExecuteTemplate(&rec, "manage-module-card", rows[0])
 		if err != nil {
 			t.Fatalf("managePageTemplate.Execute() error = %v", err)
 		}
@@ -4836,12 +4924,20 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 		}
 		for _, want := range []string{
 			`href="/manage/modules/teamname/apache/versions/1.2.3/force-delete?next=%2Fmanage%2Fmodules"`,
-			`href="/manage/modules/teamname/apache/versions/2.0.0/force-delete?next=%2Fmanage%2Fmodules"`,
 			`class="release-danger-button force-delete-link"`,
 		} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("manage page misses protected release override %q for %#v:\n%s", want, tc.principal, body)
 			}
+		}
+		if hasStandardReleaseDelete(body, "/manage/modules/teamname/apache/versions/1.2.3/delete") {
+			t.Fatalf("manage card exposes standard delete for active release: %s", body)
+		}
+		if !hasStandardReleaseDelete(body, "/manage/modules/teamname/apache/versions/2.0.0/delete") {
+			t.Fatalf("manage card hides standard delete for inactive latest release: %s", body)
+		}
+		if strings.Contains(body, `href="/manage/modules/teamname/apache/versions/2.0.0/force-delete?next=%2Fmanage%2Fmodules"`) {
+			t.Fatalf("manage card requires force delete for inactive latest release: %s", body)
 		}
 		moduleForceDeleteLink := `href="/manage/modules/teamname/apache/force-delete?next=%2Fmanage%2Fmodules"`
 		if strings.Contains(body, moduleForceDeleteLink) != tc.forceModuleLink {
@@ -5058,6 +5154,7 @@ func TestTeamAuditLogIncludesGlobalAdminActionsOnTeamResources(t *testing.T) {
 	st := newHTTPAPITestStore(t)
 	for _, event := range []store.AuditEvent{
 		{RequestID: "team-settings", Actor: "subject:global-admin", AuthMethod: "oidc", Action: "change_team_access", Result: "success", Reason: "none", Attributes: map[string]string{"team": "teamname"}},
+		{RequestID: "team-release", Actor: "subject:global-admin", AuthMethod: "oidc", Action: "force_delete_release", Result: "success", Reason: "none", Attributes: map[string]string{"module": "teamname/apache", "release": "1.0.0"}},
 		{RequestID: "extra-space-release", Actor: "subject:global-admin", AuthMethod: "oidc", Action: "force_delete_release", Result: "success", Reason: "none", Attributes: map[string]string{"module": "shared/apache", "release": "1.0.0"}},
 		{RequestID: "other-team-release", Actor: "subject:global-admin", AuthMethod: "oidc", Action: "delete_release", Result: "success", Reason: "none", Attributes: map[string]string{"module": "anotherteam/stdlib", "release": "2.0.0"}},
 		{RequestID: "global-settings", Actor: "subject:global-admin", AuthMethod: "oidc", Action: "change_global_access", Result: "success", Reason: "none"},
@@ -5072,13 +5169,13 @@ func TestTeamAuditLogIncludesGlobalAdminActionsOnTeamResources(t *testing.T) {
 		`<h1>Audit log: teamname</h1>`,
 		`href="/manage/teams/teamname/audit" aria-current="page">Audit log</a>`,
 		`team-settings`,
-		`extra-space-release`,
+		`team-release`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("team audit page misses %q:\n%s", want, body)
 		}
 	}
-	for _, forbidden := range []string{"other-team-release", "global-settings"} {
+	for _, forbidden := range []string{"extra-space-release", "other-team-release", "global-settings"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("team audit page exposes unrelated event %q:\n%s", forbidden, body)
 		}
@@ -5090,11 +5187,11 @@ func TestAccessConfigChangeSummaryExcludesCredentials(t *testing.T) {
 
 	before := []auth.TeamConfig{
 		{Team: auth.GlobalAdminTeam, OIDCAdminGroups: []string{"old-admins"}, OIDCAdminEmails: []string{"old@example.com"}},
-		{Team: "teamname", ReadTokens: []string{"secret-read-token"}, OIDCGroups: []string{"old-publishers"}, OIDCTeamAdminGroups: []string{"old-team-admins"}},
+		{Team: "teamname", ReadTokens: []string{"secret-read-token"}, OIDCReaderGroups: []string{"old-publishers"}, OIDCTeamAdminGroups: []string{"old-team-admins"}},
 	}
 	after := []auth.TeamConfig{
 		{Team: auth.GlobalAdminTeam, OIDCAdminGroups: []string{"new-admins"}, OIDCAdminSubjects: []string{"admin-subject"}},
-		{Team: "teamname", ReadTokens: []string{"different-secret"}, OIDCGroups: []string{"new-publishers"}, OIDCTeamAdminEmails: []string{"owner@example.com"}},
+		{Team: "teamname", ReadTokens: []string{"different-secret"}, OIDCReaderGroups: []string{"new-publishers"}, OIDCTeamAdminEmails: []string{"owner@example.com"}},
 	}
 
 	globalChanges := globalAccessChangeSummary(before, after)
@@ -5104,7 +5201,7 @@ func TestAccessConfigChangeSummaryExcludesCredentials(t *testing.T) {
 		}
 	}
 	teamChanges := accessConfigChangeSummary(before, after, "teamname")
-	for _, want := range []string{"publish groups added [new-publishers]", "publish groups removed [old-publishers]", "team admin emails added [owner@example.com]", "team admin groups removed [old-team-admins]"} {
+	for _, want := range []string{"reader groups added [new-publishers]", "reader groups removed [old-publishers]", "team admin emails added [owner@example.com]", "team admin groups removed [old-team-admins]"} {
 		if !strings.Contains(teamChanges, want) {
 			t.Fatalf("team access changes miss %q: %s", want, teamChanges)
 		}
@@ -5149,128 +5246,28 @@ func TestAuditOIDCActorUsesReadableIdentity(t *testing.T) {
 	}
 }
 
-func TestGlobalAdminManagesPublishSpaceAssignments(t *testing.T) {
+func TestPublishNamespacesCannotBeAssignedAsExtraSpaces(t *testing.T) {
 	t.Parallel()
-
-	ctx := context.Background()
 	st := newHTTPAPITestStore(t)
-	configs := []auth.TeamConfig{
-		{
-			Team:          "teamname",
-			PublishTokens: []string{"team-publish-token"},
-			PublishOwners: []string{"teamname"},
-		},
-		{
-			Team:       "alpha",
-			ReadTokens: []string{"alpha-read-token"},
-		},
+	client, base := newAccessManageClient(t, st, t.Context(), []auth.TeamConfig{{Team: "teamname"}, {Team: "shared"}})
+	body := getBody(t, client, base+"/manage/admin/spaces")
+	if strings.Contains(body, `name="space"`) || strings.Contains(body, "Assign space") {
+		t.Fatal("obsolete namespace assignment form remains")
 	}
-	adminClient, serverURL := newAccessManageClient(t, st, ctx, configs)
-
-	body := getBody(t, adminClient, serverURL+"/manage/admin/spaces")
-	for _, want := range []string{
-		`<a href="/manage/admin/spaces" aria-current="page">Publish spaces</a>`,
-		`<option value="teamname">teamname</option>`,
-		`<td><a href="/manage/teams/teamname/access">teamname</a></td>`,
-		`<span class="badge primary">Primary</span>`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("publish spaces page misses %q:\n%s", want, body)
-		}
-	}
-
-	resp, err := adminClient.PostForm(serverURL+"/manage/admin/spaces", manageFormValues(t, adminClient, serverURL, url.Values{
-		"action": {"assign"},
-		"team":   {"teamname"},
-		"space":  {"shared"},
-	}))
+	resp, err := client.PostForm(base+"/manage/admin/spaces", manageFormValues(t, client, base, url.Values{"action": {"assign"}, "team": {"teamname"}, "space": {"shared"}}))
 	if err != nil {
-		t.Fatalf("assign publish space error = %v", err)
+		t.Fatal(err)
 	}
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("assign publish space final status = %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("assignment status = %d", resp.StatusCode)
 	}
-
-	saved, err := st.LoadTeamConfigs(ctx)
+	configs, err := st.LoadTeamConfigs(t.Context())
 	if err != nil {
-		t.Fatalf("LoadTeamConfigs(assign) error = %v", err)
+		t.Fatal(err)
 	}
-	team := findTeamConfig(saved, "teamname")
-	if team == nil || !slices.Contains(team.PublishOwners, "shared") {
-		t.Fatalf("shared publish space was not assigned: %#v", saved)
-	}
-	body = getBody(t, adminClient, serverURL+"/manage/admin/spaces")
-	if !strings.Contains(body, `<input type="hidden" name="space" value="shared"><button class="remove-button" type="submit">Unassign</button>`) {
-		t.Fatalf("assigned publish space has no unassign action:\n%s", body)
-	}
-
-	resp, err = adminClient.PostForm(serverURL+"/manage/admin/spaces", manageFormValues(t, adminClient, serverURL, url.Values{
-		"action": {"unassign"},
-		"team":   {"teamname"},
-		"space":  {"shared"},
-	}))
-	if err != nil {
-		t.Fatalf("unassign publish space error = %v", err)
-	}
-	_ = resp.Body.Close()
-	saved, err = st.LoadTeamConfigs(ctx)
-	if err != nil {
-		t.Fatalf("LoadTeamConfigs(unassign) error = %v", err)
-	}
-	team = findTeamConfig(saved, "teamname")
-	if team == nil || slices.Contains(team.PublishOwners, "shared") {
-		t.Fatalf("shared publish space was not unassigned: %#v", saved)
-	}
-
-	publishClient := &http.Client{Transport: adminClient.Transport, Jar: newCookieJar(t)}
-	postManageToken(t, publishClient, serverURL, "team-publish-token")
-	resp, err = publishClient.Get(serverURL + "/manage/admin/spaces")
-	if err != nil {
-		t.Fatalf("publisher GET publish spaces error = %v", err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("publisher GET publish spaces status = %d, want 403", resp.StatusCode)
-	}
-
-	router := &Router{modules: service.NewModuleService(st, testArtifactStorage{}, "modules", nil)}
-	_, _, err = router.publishSpaceConfigsFromForm(formRequest(url.Values{
-		"action": {"assign"},
-		"team":   {"teamname"},
-		"space":  {"shared-space"},
-	}))
-	if err == nil || !strings.Contains(err.Error(), "only ASCII letters and digits") {
-		t.Fatalf("assigning invalid publish space error = %v", err)
-	}
-
-	_, _, err = router.publishSpaceConfigsFromForm(formRequest(url.Values{
-		"action": {"assign"},
-		"team":   {"teamname"},
-		"space":  {"alpha"},
-	}))
-	if err == nil || !strings.Contains(err.Error(), "primary space of another team") {
-		t.Fatalf("assigning another team's primary space error = %v", err)
-	}
-
-	if err := router.modules.IndexUpstreamModule(ctx, proxy.UpstreamModule{
-		Slug:  "puppetlabs-stdlib",
-		Owner: "puppetlabs",
-		Name:  "stdlib",
-		CurrentRelease: proxy.UpstreamReleaseRef{
-			Slug:    "puppetlabs-stdlib-9.0.0",
-			Version: "9.0.0",
-		},
-	}); err != nil {
-		t.Fatalf("IndexUpstreamModule() error = %v", err)
-	}
-	_, _, err = router.publishSpaceConfigsFromForm(formRequest(url.Values{
-		"action": {"assign"},
-		"team":   {"teamname"},
-		"space":  {"puppetlabs"},
-	}))
-	if err == nil || !strings.Contains(err.Error(), "belongs to Official Forge and is read only") {
-		t.Fatalf("assigning Official Forge space error = %v", err)
+	if len(configs) != 2 {
+		t.Fatalf("namespace assignment changed teams: %#v", configs)
 	}
 }
 
@@ -5302,7 +5299,7 @@ func TestSaveTeamCannotChangePublishSpaces(t *testing.T) {
 		t.Fatalf("LoadTeamConfigs() error = %v", err)
 	}
 	team := findTeamConfig(saved, "teamname")
-	if team == nil || !slices.Contains(team.PublishOwners, "shared") || slices.Contains(team.PublishOwners, "injected") {
+	if team == nil || len(team.PublishOwners) != 0 || !slices.Equal(teamPublishSpaces(*team), []string{"teamname"}) {
 		t.Fatalf("save_team changed publish spaces: %#v", saved)
 	}
 
@@ -5310,8 +5307,11 @@ func TestSaveTeamCannotChangePublishSpaces(t *testing.T) {
 	if strings.Contains(body, `name="extra_publish_spaces"`) {
 		t.Fatalf("team access page exposes editable extra publish spaces:\n%s", body)
 	}
-	if !strings.Contains(body, `href="/manage/admin/spaces">Manage publish spaces</a>`) {
+	if !strings.Contains(body, `href="/manage/admin/spaces">Publish spaces</a>`) {
 		t.Fatalf("global admin team page misses publish-space management link:\n%s", body)
+	}
+	if !strings.Contains(body, "One team owns one namespace.") {
+		t.Fatalf("team access page misses namespace ownership policy:\n%s", body)
 	}
 }
 
@@ -5768,6 +5768,7 @@ func buildPublishMultipart(t *testing.T, owner, name, version string, archive []
 	}
 	if csrfToken != "" {
 		fields["csrf_token"] = csrfToken
+		fields["reason"] = "test emergency upload"
 	}
 	for _, values := range extraFields {
 		for key, entries := range values {

@@ -1,0 +1,65 @@
+{{template "layout" .}}
+{{define "page-title"}}Release review{{end}}
+{{define "page-styles"}}<link rel="stylesheet" href="/assets/manage-review.css">{{end}}
+{{define "page-content"}}
+{{template "page-header" .}}
+<section id="release-review" aria-label="Release review">
+  <header class="review-heading">
+    <div><h2>{{.Resource}} <span class="badge">{{.Version}}</span> <span class="badge">{{.Current.Release.Status.State}}</span></h2><div class="review-digest">SHA256 <code>{{.SHA256}}</code></div>{{if .Previous}}<div class="review-digest">Base {{.Base}} <code>{{.BaseSHA256}}</code></div>{{end}}</div>
+    <div class="review-actions"><a class="button" href="{{.DownloadURL}}" download>Download archive</a><a class="button" href="{{.ModerationURL}}">Moderation</a></div>
+  </header>
+  <form class="review-options compact-fields" method="get">
+    <label>Release<select name="version">{{range .Versions}}<option value="{{.Version}}"{{if eq .Version $.Version}} selected{{end}}>{{.Version}} · {{.Status.State}}</option>{{end}}</select></label>
+    <label>Compare with<select name="base"><option value="">No comparison</option>{{range .Versions}}<option value="{{.Version}}"{{if eq .Version $.Base}} selected{{end}}>{{.Version}} · {{.Status.State}}</option>{{end}}</select></label>
+    <label>View<select name="mode"><option value="unified"{{if eq .Mode "unified"}} selected{{end}}>Unified</option><option value="split"{{if eq .Mode "split"}} selected{{end}}>Side by side</option></select></label>
+    <input type="hidden" name="file" value="{{.Selected}}">
+    <button type="submit">Open</button>
+    <label class="review-wrap"><input type="checkbox" data-review-wrap>Wrap lines</label>
+  </form>
+  {{if .Comparing}}<p class="review-counts"><span class="status-added">{{.Added}} added</span><span class="status-removed">{{.Removed}} removed</span><span class="status-modified">{{.Modified}} modified</span><span>{{.Unchanged}} unchanged</span></p>{{end}}
+  <p id="review-load-error" role="alert" hidden></p>
+  {{if .Hunks}}<nav class="review-changes" aria-label="Diff navigation"><button type="button" data-review-step="-1" aria-label="Previous change" title="Previous change">&uarr;</button><button type="button" data-review-step="1" aria-label="Next change" title="Next change">&darr;</button></nav>{{end}}
+  <div class="review-workspace">
+    <aside class="review-sidebar" aria-label="Archive files">
+      <label class="review-file-filter">Files<input type="search" data-review-filter placeholder="Filter file paths" aria-label="Filter file paths"></label>
+      <ul class="review-tree">{{template "review-tree" .Tree}}</ul>
+    </aside>
+    <div class="review-file" tabindex="-1">
+      <header class="review-file-heading"><h3>{{.Selected}}</h3><span class="file-status status-{{.File.Status}}">{{.File.Status}}</span>{{if .File.Old}}<span>Before: {{.File.Old.Size}} bytes · {{printf "%04o" .File.Old.Mode}}</span>{{end}}{{if .File.New}}<span>After: {{.File.New.Size}} bytes · {{printf "%04o" .File.New.Mode}}</span>{{end}}</header>
+      {{if .Notice}}<p class="review-warning" role="status">{{.Notice}}</p>
+      {{else if .Comparing}}
+        {{range $index, $hunk := .Hunks}}
+        <details class="review-hunk" id="change-{{$index}}" open>
+          <summary>{{.Label}}</summary>
+          <div class="review-code-scroll">
+          {{if eq $.Mode "split"}}
+          <table class="review-code split-code" aria-label="Side by side diff"><thead><tr><th colspan="2">Before</th><th colspan="2">After</th></tr></thead><tbody>
+            {{range .Split}}<tr><td class="line-number {{.Old.Kind}}">{{if .Old.OldNumber}}<a id="old-L{{.Old.OldNumber}}" href="#old-L{{.Old.OldNumber}}">{{.Old.OldNumber}}</a>{{end}}</td><td class="code-cell {{.Old.Kind}}"><code>{{.Old.HTML}}</code></td><td class="line-number {{.New.Kind}}">{{if .New.NewNumber}}<a id="new-L{{.New.NewNumber}}" href="#new-L{{.New.NewNumber}}">{{.New.NewNumber}}</a>{{end}}</td><td class="code-cell {{.New.Kind}}"><code>{{.New.HTML}}</code></td></tr>{{end}}
+          </tbody></table>
+          {{else}}
+          <table class="review-code" aria-label="Unified diff"><tbody>
+            {{range .Unified}}<tr class="{{.Kind}}"><td class="line-number">{{if .OldNumber}}<a id="old-L{{.OldNumber}}" href="#old-L{{.OldNumber}}">{{.OldNumber}}</a>{{end}}</td><td class="line-number">{{if .NewNumber}}<a id="new-L{{.NewNumber}}" href="#new-L{{.NewNumber}}">{{.NewNumber}}</a>{{end}}</td><td class="diff-sign">{{if eq .Kind "added"}}+{{else if eq .Kind "removed"}}−{{end}}</td><td class="code-cell"><code>{{.HTML}}</code></td></tr>{{end}}
+          </tbody></table>
+          {{end}}
+          </div>
+        </details>
+        {{else}}<p class="review-empty">No textual changes. File size and permissions are shown above.</p>{{end}}
+      {{else}}
+        <div class="review-code-scroll"><table class="review-code" aria-label="File contents"><tbody>{{range .Lines}}<tr><td class="line-number"><a id="L{{.Number}}" href="#L{{.Number}}">{{.Number}}</a></td><td class="code-cell"><code>{{.HTML}}</code></td></tr>{{else}}<tr><td>Empty file.</td></tr>{{end}}</tbody></table></div>
+      {{end}}
+      {{if .OldNoNewline}}<p class="review-eof">Before: no newline at end of file.</p>{{end}}{{if .NewNoNewline}}<p class="review-eof">After: no newline at end of file.</p>{{end}}
+    </div>
+  </div>
+  {{if .Pending}}
+  <form class="review-decision compact-fields" method="post" action="{{.ModerationURL}}">
+    {{csrfInput .CSRFToken}}<input type="hidden" name="sha256" value="{{.SHA256}}">
+    <label>Decision<select name="action" required><option value="approve">Approve release</option><option value="block">Block release</option></select></label>
+    <label>Reason<input name="reason" maxlength="500" required></label><button type="submit">Save decision</button>
+  </form>
+  {{end}}
+</section>
+{{end}}
+{{define "review-tree"}}
+{{range .}}<li{{if .File}} data-review-file="{{.File.Path}}"{{end}}>{{if .File}}<a href="{{.File.URL}}" data-review-link class="status-{{.File.Status}}"{{if .File.Selected}} aria-current="true"{{end}}><span>{{.Name}}</span><small>{{.File.Status}}</small></a>{{else}}<details open data-directory="{{.Name}}"><summary>{{.Name}}</summary><ul>{{template "review-tree" .Children}}</ul></details>{{end}}</li>{{end}}
+{{end}}
+{{define "page-scripts"}}<script nonce="{{.Navigation.CSPNonce}}" src="/assets/manage-review.js" defer></script>{{end}}

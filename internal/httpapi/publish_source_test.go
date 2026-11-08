@@ -57,7 +57,7 @@ func TestPublishAllowedSources(t *testing.T) {
 					t.Cleanup(server.Close)
 					client := server.Client()
 					client.Jar = newCookieJar(t)
-					postManageToken(t, client, server.URL, "publish-token")
+					postManageToken(t, client, server.URL, "admin-token")
 					csrf = manageCSRFToken(t, client, server.URL)
 					target, err := url.Parse(server.URL + "/manage")
 					if err != nil {
@@ -69,6 +69,9 @@ func TestPublishAllowedSources(t *testing.T) {
 				req := publishSourceRequest(t, path, archive, csrf)
 				req.RemoteAddr = tc.remote
 				req.Header.Set("Authorization", "Bearer publish-token")
+				if path == "/manage/modules" {
+					req.Header.Set("Authorization", "Bearer admin-token")
+				}
 				req.Header.Set("X-Forwarded-For", tc.forwarded)
 				if tc.async {
 					req.Header.Set("X-Puppet-Forge-Async-Mutation", "true")
@@ -134,15 +137,18 @@ func TestPublishSourceRejectsBeforeReadingBody(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := server.Client()
 	client.Jar = newCookieJar(t)
-	postManageToken(t, client, server.URL, "publish-token")
+	postManageToken(t, client, server.URL, "admin-token")
 	target, err := url.Parse(server.URL + "/manage")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/v1/modules", "/v3/releases", "/manage/modules"} {
+	for index, path := range []string{"/api/v1/modules", "/v3/releases", "/manage/modules"} {
 		req := httptest.NewRequest(http.MethodPost, path, unreadPublishBody{t})
 		req.RemoteAddr = "198.51.100.1:1234"
 		req.Header.Set("Authorization", "Bearer publish-token")
+		if path == "/manage/modules" {
+			req.Header.Set("Authorization", "Bearer admin-token")
+		}
 		for _, cookie := range client.Jar.Cookies(target) {
 			req.AddCookie(cookie)
 		}
@@ -150,6 +156,10 @@ func TestPublishSourceRejectsBeforeReadingBody(t *testing.T) {
 		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("%s status=%d: %s", path, rec.Code, rec.Body.String())
+		}
+		events, total, err := st.ListAuditEvents(t.Context(), nil, "publish_source_forbidden", 10, 0)
+		if err != nil || total != index+1 || len(events) != index+1 {
+			t.Fatalf("%s source denial audit: total=%d events=%v err=%v", path, total, events, err)
 		}
 	}
 }

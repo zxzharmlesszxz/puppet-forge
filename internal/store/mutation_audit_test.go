@@ -68,7 +68,7 @@ func TestStoreParityMutationAuditIsAtomic(t *testing.T) {
 				st := tc.open(t)
 				t.Cleanup(st.Close)
 				ctx := t.Context()
-				configs := []auth.TeamConfig{{Team: "teamname", OIDCGroups: []string{"original"}}}
+				configs := []auth.TeamConfig{{Team: "teamname", OIDCReaderGroups: []string{"original"}}}
 				if err := st.ReplaceTeamConfigs(ctx, configs); err != nil {
 					t.Fatal(err)
 				}
@@ -97,7 +97,7 @@ func TestStoreParityMutationAuditIsAtomic(t *testing.T) {
 					case "delete_release":
 						return st.DeleteRelease(mutationCtx, module.Owner, module.Name, original.Version)
 					case "access":
-						return st.ReplaceTeamConfigs(mutationCtx, []auth.TeamConfig{{Team: "teamname", OIDCGroups: []string{"changed"}}})
+						return st.ReplaceTeamConfigs(mutationCtx, []auth.TeamConfig{{Team: "teamname", OIDCReaderGroups: []string{"changed"}}})
 					default:
 						release := original
 						release.Description, release.StoragePath = "changed", "modules/changed"
@@ -126,7 +126,7 @@ func TestStoreParityMutationAuditIsAtomic(t *testing.T) {
 					t.Fatalf("failed mutation queued artifacts: %d, %v", pending, err)
 				}
 				loaded, err := st.LoadTeamConfigs(ctx)
-				if err != nil || len(loaded) != 1 || len(loaded[0].OIDCGroups) != 1 || loaded[0].OIDCGroups[0] != "original" {
+				if err != nil || len(loaded) != 1 || len(loaded[0].OIDCReaderGroups) != 1 || loaded[0].OIDCReaderGroups[0] != "original" {
 					t.Fatalf("failed mutation changed access: %#v, %v", loaded, err)
 				}
 				event.Action = "allowed_mutation"

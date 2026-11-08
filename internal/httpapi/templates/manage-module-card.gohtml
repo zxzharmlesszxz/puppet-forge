@@ -6,6 +6,7 @@
     <span class="item-title">{{.Module.Owner}}/{{.Module.Name}}</span>
     <span class="item-subtitle">{{if .Module.LatestVersion}}{{.Module.LatestVersion}}{{else}}none{{end}}</span>
     <span class="badge">{{$releaseCount}} version{{if ne $releaseCount 1}}s{{end}}</span>
+    {{if .Module.Status.State}}<span class="badge">{{.Module.Status.State}}</span>{{end}}
     {{if or .CanDelete .CanForceDeleteModule}}
     <span class="module-actions">
       {{if .CanDelete}}
@@ -16,6 +17,7 @@
     {{end}}
   </summary>
   <div class="module-notice-slot" aria-live="polite"></div>
+  {{if .CanDelete}}<p><a href="/manage/modules/{{.Module.Owner}}/{{.Module.Name}}/moderate">Moderate module</a></p>{{end}}
   {{if .CanDelete}}
   <form id="delete-module-{{.Module.Owner}}-{{.Module.Name}}" method="post" action="/manage/modules/{{.Module.Owner}}/{{.Module.Name}}/delete" hidden data-async-mutation data-remove-target="{{$cardID}}">
     {{csrfInput .CSRFToken}}
@@ -27,16 +29,18 @@
       {{range .Versions}}
       <div class="release-version{{if .Latest}} is-latest{{else if .Active}} is-active{{end}}">
         {{.Version}}
+        {{if .Status.State}}<span class="usage-badge">{{.Status.State}}</span>{{end}}
         {{if .Latest}}<span class="usage-badge">latest</span>{{end}}
         {{if .Active}}<span class="usage-badge">in use</span>{{end}}
-        {{if and (not .Latest) (not .Active) $.CanDelete}}
+        {{if $.CanDelete}}<a href="{{.ModerationURL}}">Moderate</a>{{if and (ne .Status.State "blocked") (ne $.Module.Status.State "blocked")}}<a href="{{.ReviewURL}}">Browse / Compare</a><a href="{{.DownloadURL}}" download>Download archive</a>{{end}}{{end}}
+        {{if and (not .Active) $.CanDelete}}
         <form method="post" action="/manage/modules/{{$.Module.Owner}}/{{$.Module.Name}}/versions/{{.Version}}/delete" data-async-mutation data-refresh-target="{{$cardID}}">
           {{csrfInput $.CSRFToken}}
           {{if $.Next}}<input type="hidden" name="next" value="{{$.Next}}">{{end}}
           <button class="release-danger-button" type="submit">Delete</button>
         </form>
         {{end}}
-        {{if and (or .Latest .Active) $.CanForceDeleteRelease}}
+        {{if and .Active $.CanForceDeleteRelease}}
         <a class="release-danger-button force-delete-link" href="{{.ForceDeleteURL}}">Force delete</a>
         {{end}}
       </div>

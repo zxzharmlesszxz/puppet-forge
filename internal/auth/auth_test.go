@@ -10,6 +10,21 @@ import (
 	"time"
 )
 
+func TestReaderMembershipDoesNotExpandTeamAdminPublishScope(t *testing.T) {
+	t.Parallel()
+	authorizer, err := NewAuthorizer([]TeamConfig{
+		{Team: "alpha", OIDCTeamAdminGroups: []string{"owners"}},
+		{Team: "beta", OIDCReaderGroups: []string{"readers"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, ok := authorizer.AuthenticateOIDC("", "", []string{"owners", "readers"})
+	if !ok || !principal.CanPublishOwner("alpha") || principal.CanPublishOwner("beta") || principal.CanDeleteOwner("beta") {
+		t.Fatalf("reader membership escalated rights: %#v", principal)
+	}
+}
+
 func TestAuthenticateStoredTokenIncludesConsumerIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -73,7 +88,7 @@ func TestRequirePublishUsesTeamAsDefaultOwner(t *testing.T) {
 	}
 }
 
-func TestExtraPublishSpacesDoNotReplacePrimaryTeamSpace(t *testing.T) {
+func TestExtraPublishSpacesRequireIndependentTeams(t *testing.T) {
 	t.Parallel()
 
 	authorizer, err := NewAuthorizer([]TeamConfig{
@@ -84,18 +99,11 @@ func TestExtraPublishSpacesDoNotReplacePrimaryTeamSpace(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("NewAuthorizer() error = %v", err)
+		t.Fatal(err)
 	}
-
 	principal, ok := authorizer.AuthenticateToken("publish-token")
-	if !ok {
-		t.Fatal("publish token was not accepted")
-	}
-	if _, ok := principal.PublishOwners["teamname"]; !ok {
-		t.Fatalf("primary team space missing from publish owners: %#v", principal.PublishOwners)
-	}
-	if _, ok := principal.PublishOwners["shared"]; !ok {
-		t.Fatalf("extra publish space missing from publish owners: %#v", principal.PublishOwners)
+	if !ok || !principal.CanPublishOwner("teamname") || principal.CanPublishOwner("shared") {
+		t.Fatalf("legacy namespace grant survived: %#v", principal)
 	}
 }
 
@@ -250,7 +258,7 @@ func TestAuthenticateOIDCMapsEmailSubjectAndDomain(t *testing.T) {
 	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
 			Team:          "teamname",
-			PublishOwners: []string{"teamname", "platform"},
+			PublishOwners: []string{"teamname"},
 			OIDCEmails:    []string{"Dev@Example.COM"},
 		},
 		{
@@ -269,11 +277,11 @@ func TestAuthenticateOIDCMapsEmailSubjectAndDomain(t *testing.T) {
 	}
 
 	principal, ok := authorizer.AuthenticateOIDC("dev@example.com", "", nil)
-	if !ok || principal.Team != "teamname" || !principal.CanPublish {
+	if !ok || principal.Team != "teamname" || principal.CanPublish || !principal.CanRead {
 		t.Fatalf("unexpected email principal: %#v ok=%v", principal, ok)
 	}
-	if _, ok := principal.PublishOwners["platform"]; !ok {
-		t.Fatalf("expected platform owner in principal: %#v", principal.PublishOwners)
+	if _, ok := principal.MemberTeams["teamname"]; !ok {
+		t.Fatalf("expected reader membership: %#v", principal.MemberTeams)
 	}
 
 	principal, ok = authorizer.AuthenticateOIDC("", "subject-123", nil)
@@ -292,9 +300,9 @@ func TestAuthenticateOIDCMapsGroup(t *testing.T) {
 
 	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
-			Team:          "teamname",
-			PublishOwners: []string{"teamname"},
-			OIDCGroups:    []string{"Forge Publishers"},
+			Team:             "teamname",
+			PublishOwners:    []string{"teamname"},
+			OIDCReaderGroups: []string{"Forge Publishers"},
 		},
 	})
 	if err != nil {
@@ -302,7 +310,7 @@ func TestAuthenticateOIDCMapsGroup(t *testing.T) {
 	}
 
 	principal, ok := authorizer.AuthenticateOIDC("", "", []string{"forge publishers"})
-	if !ok || principal.Team != "teamname" || !principal.CanPublish {
+	if !ok || principal.Team != "teamname" || principal.CanPublish || !principal.CanRead {
 		t.Fatalf("unexpected group principal: %#v ok=%v", principal, ok)
 	}
 }
@@ -321,7 +329,7 @@ func TestAuthenticateOIDCMapsAdminGroup(t *testing.T) {
 	}
 
 	principal, ok := authorizer.AuthenticateOIDC("", "", []string{"forge-admins"})
-	if !ok || principal.Team != "platform-admin" || !principal.CanAdmin || principal.CanPublish {
+	if !ok || principal.Team != "platform-admin" || !principal.CanAdmin || !principal.CanPublish {
 		t.Fatalf("unexpected admin principal: %#v ok=%v", principal, ok)
 	}
 }
@@ -333,7 +341,7 @@ func TestAuthenticateOIDCMapsTeamAdminGroup(t *testing.T) {
 		{
 			Team:                "teamname",
 			PublishOwners:       []string{"teamname"},
-			OIDCGroups:          []string{"teamname-devops"},
+			OIDCReaderGroups:    []string{"teamname-devops"},
 			OIDCTeamAdminEmails: []string{"owner@example.com"},
 			OIDCTeamAdminGroups: []string{"teamname-admins"},
 		},
@@ -362,7 +370,7 @@ func TestAuthenticateOIDCMergesMultipleTeamAdminMappings(t *testing.T) {
 	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
 			Team:                "teamname",
-			PublishOwners:       []string{"teamname", "shared"},
+			PublishOwners:       []string{"teamname"},
 			OIDCTeamAdminEmails: []string{"owner@example.com"},
 			OIDCTeamAdminGroups: []string{"teamname-admins"},
 		},
@@ -393,7 +401,7 @@ func TestAuthenticateOIDCMergesMultipleTeamAdminMappings(t *testing.T) {
 	if _, ok := principal.ManagedTeams["alpha"]; !ok {
 		t.Fatalf("principal cannot manage alpha: %#v", principal.ManagedTeams)
 	}
-	for _, owner := range []string{"teamname", "shared", "alpha"} {
+	for _, owner := range []string{"teamname", "alpha"} {
 		if _, ok := principal.PublishOwners[owner]; !ok {
 			t.Fatalf("principal cannot publish to %s: %#v", owner, principal.PublishOwners)
 		}
@@ -410,9 +418,9 @@ func TestAuthenticateOIDCCombinesAdminAndPublishMappings(t *testing.T) {
 
 	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
-			Team:          "teamname",
-			PublishOwners: []string{"teamname"},
-			OIDCGroups:    []string{"teamname-devops"},
+			Team:             "teamname",
+			PublishOwners:    []string{"teamname"},
+			OIDCReaderGroups: []string{"teamname-devops"},
 		},
 		{
 			Team:            "platform-admin",
@@ -491,7 +499,7 @@ func TestAuthenticateOIDCCombinesGlobalAndTeamAdminMappings(t *testing.T) {
 			if _, ok := principal.ManagedTeams["teamname"]; !ok {
 				t.Fatalf("combined principal lost managed team: %#v", principal)
 			}
-			if !principal.CanPublishOwner("teamname") || principal.CanPublishOwner("platform-admin") {
+			if !principal.CanPublishOwner("teamname") || !principal.CanPublishOwner("other") {
 				t.Fatalf("combined principal has incorrect publish spaces: %#v", principal)
 			}
 		})
@@ -515,7 +523,7 @@ func TestNewAuthorizerCombinesDuplicateOIDCEmailMappings(t *testing.T) {
 		t.Fatalf("NewAuthorizer() error = %v", err)
 	}
 	principal, ok := authorizer.AuthenticateOIDC("dev@example.com", "", nil)
-	if !ok || !principal.CanPublishOwner("teamname") || !principal.CanPublishOwner("alpha") {
+	if !ok || principal.CanPublish || len(principal.MemberTeams) != 2 {
 		t.Fatalf("duplicate email mappings were not combined: %#v ok=%v", principal, ok)
 	}
 }
@@ -525,19 +533,19 @@ func TestNewAuthorizerCombinesDuplicateOIDCGroupMappings(t *testing.T) {
 
 	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
-			Team:       "teamname",
-			OIDCGroups: []string{"forge-publishers"},
+			Team:             "teamname",
+			OIDCReaderGroups: []string{"forge-publishers"},
 		},
 		{
-			Team:       "alpha",
-			OIDCGroups: []string{"FORGE-PUBLISHERS"},
+			Team:             "alpha",
+			OIDCReaderGroups: []string{"FORGE-PUBLISHERS"},
 		},
 	})
 	if err != nil {
 		t.Fatalf("NewAuthorizer() error = %v", err)
 	}
 	principal, ok := authorizer.AuthenticateOIDC("", "", []string{"forge-publishers"})
-	if !ok || !principal.CanPublishOwner("teamname") || !principal.CanPublishOwner("alpha") {
+	if !ok || principal.CanPublish || len(principal.MemberTeams) != 2 {
 		t.Fatalf("duplicate group mappings were not combined: %#v ok=%v", principal, ok)
 	}
 }
@@ -548,7 +556,7 @@ func TestNewAuthorizerCombinesPublishAndTeamAdminGroup(t *testing.T) {
 	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
 			Team:                "teamname",
-			OIDCGroups:          []string{"Forge-Team"},
+			OIDCReaderGroups:    []string{"Forge-Team"},
 			OIDCTeamAdminGroups: []string{" forge-team "},
 		},
 	})

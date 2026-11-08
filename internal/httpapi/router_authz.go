@@ -36,6 +36,14 @@ func (r *Router) requireReadAccess(w http.ResponseWriter, req *http.Request) boo
 		writeError(w, http.StatusServiceUnavailable, errors.New("authorizer is not configured"))
 		return false
 	}
+	if req.Header.Get("Authorization") == "" && r.webAuth != nil {
+		if session, ok := r.webAuth.Session(req); ok {
+			if principal, ok := authorizer.AuthenticateOIDC(session.AuthorizationEmail(), session.Sub, session.Groups); ok && principal.CanRead {
+				*req = *req.WithContext(auth.ContextWithPrincipal(req.Context(), principal))
+				return true
+			}
+		}
+	}
 	principal, ok := authorizer.RequireRead(w, req)
 	if !ok {
 		slog.Debug("read access denied", "request_id", observability.RequestID(req.Context()), "reason", "authorization_failed")

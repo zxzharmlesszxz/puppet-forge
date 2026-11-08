@@ -20,7 +20,7 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
 
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 type sqliteQueryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -401,6 +401,9 @@ func migrateSQLiteSchema(db *sql.DB, tokenHasher *auth.TokenHasher) error {
 	defer func() {
 		_ = tx.Rollback()
 	}()
+	if _, err := tx.Exec(lifecycleSchema); err != nil {
+		return fmt.Errorf("create lifecycle schema: %w", err)
+	}
 
 	if err := sqliteEnsureReleaseMD5Column(tx); err != nil {
 		return err
@@ -462,6 +465,9 @@ func migrateSQLiteSchema(db *sql.DB, tokenHasher *auth.TokenHasher) error {
 		if _, err := tx.Exec(sqliteAccessOIDCMappingsMigration); err != nil {
 			return fmt.Errorf("migrate sqlite oidc mappings: %w", err)
 		}
+	}
+	if _, err := tx.Exec(`insert into access_teams (team) select distinct owner from access_publish_owners where true on conflict (team) do nothing; delete from access_publish_owners;`); err != nil {
+		return fmt.Errorf("migrate namespaces to teams: %w", err)
 	}
 	if _, err := tx.Exec(`update schema_metadata set version = ? where id = 1`, currentSchemaVersion); err != nil {
 		return fmt.Errorf("update sqlite schema version: %w", err)
@@ -1306,6 +1312,9 @@ func (s *SQLiteStore) createRelease(ctx context.Context, release domain.Release,
 		}
 	}
 
+	if err := initializeSQLiteStatus(ctx, tx, release); err != nil {
+		return domain.Release{}, err
+	}
 	if err := finishReleaseMutation(release, sqliteMutationWriter{ctx: ctx, tx: tx}); err != nil {
 		return domain.Release{}, err
 	}
@@ -1353,6 +1362,9 @@ func (s *SQLiteStore) DeleteModule(ctx context.Context, owner, name string) erro
 		return fmt.Errorf("queue module artifact deletions: %w", err)
 	}
 
+	if err := writeSQLiteStatus(ctx, tx, owner, name, "", domain.ResourceStatus{State: domain.StateDeleted, ChangedAt: time.Now().UTC()}); err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, `delete from modules where owner = ? and name = ?`, owner, name)
 	if err != nil {
 		return fmt.Errorf("delete module: %w", err)
@@ -1422,6 +1434,9 @@ func (s *SQLiteStore) DeleteRelease(ctx context.Context, owner, name, version st
 		where module_id = (select id from modules where owner = ? and name = ?)
 		  and version = ?
 	`
+	if err := writeSQLiteStatus(ctx, tx, owner, name, version, domain.ResourceStatus{State: domain.StateDeleted, ChangedAt: time.Now().UTC()}); err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, deleteQuery, owner, name, version)
 	if err != nil {
 		return fmt.Errorf("delete release: %w", err)
@@ -1627,7 +1642,7 @@ func sqliteModuleID(ctx context.Context, tx *sql.Tx, owner, name string) (string
 func sqliteLatestVersion(ctx context.Context, tx *sql.Tx, moduleID string) (string, error) {
 	// SQLite has no built-in semantic-version comparison, so keep the current
 	// maximum while streaming rows to preserve prerelease ordering in O(1) memory.
-	rows, err := tx.QueryContext(ctx, `select version from releases where module_id = ?`, moduleID)
+	rows, err := tx.QueryContext(ctx, `select r.version from releases r join modules m on m.id=r.module_id left join resource_states s on s.owner=m.owner and s.name=m.name and s.version=r.version where r.module_id = ? and coalesce(s.state,'available') in ('available','deprecated')`, moduleID)
 	if err != nil {
 		return "", fmt.Errorf("list versions for latest: %w", err)
 	}
@@ -1650,12 +1665,7 @@ func sqliteLatestVersion(ctx context.Context, tx *sql.Tx, moduleID string) (stri
 }
 
 func (w sqliteMutationWriter) currentLatestVersion(moduleID string) (string, error) {
-	var latest string
-	err := w.tx.QueryRowContext(w.ctx, `select coalesce(latest_version, '') from modules where id = ?`, moduleID).Scan(&latest)
-	if err != nil {
-		return "", fmt.Errorf("get current latest version: %w", err)
-	}
-	return latest, nil
+	return sqliteLatestVersion(w.ctx, w.tx, moduleID)
 }
 
 func (w sqliteMutationWriter) updateLatestVersion(moduleID, latest string) error {
@@ -1681,6 +1691,9 @@ func (s *SQLiteStore) ListModulesPagePrioritized(ctx context.Context, owners, pr
 		return nil, 0, err
 	}
 	filter, args := sqliteModuleFilter(owners, search)
+	if IsReadableCatalog(ctx) {
+		filter += " and " + readableModulePredicate
+	}
 	total, err := s.countFilteredModulesWithReleases(ctx, filter, args)
 	if err != nil {
 		return nil, 0, err

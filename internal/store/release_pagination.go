@@ -70,7 +70,7 @@ func (s *PostgresStore) ListReleasesPageFiltered(ctx context.Context, module, ve
 	if err := validateModulePagination(limit, offset); err != nil {
 		return nil, 0, err
 	}
-	const filter = ` where ($1 = '' or m.slug = $1) and ($2 = '' or r.version = $2)`
+	const filter = ` where ($1 = '' or m.slug = $1) and ($2 = '' or r.version = $2)` + readableReleaseFilter
 	var total int
 	if err := s.pool.QueryRow(ctx, `select count(*) from releases r join modules m on m.id = r.module_id`+filter, module, version).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count filtered releases: %w", err)
@@ -95,7 +95,7 @@ func (s *SQLiteStore) ListReleasesPageFiltered(ctx context.Context, module, vers
 	if err := validateModulePagination(limit, offset); err != nil {
 		return nil, 0, err
 	}
-	const filter = ` where (?1 = '' or m.slug = ?1) and (?2 = '' or r.version = ?2)`
+	const filter = ` where (?1 = '' or m.slug = ?1) and (?2 = '' or r.version = ?2)` + readableReleaseFilter
 	var total int
 	if err := s.db.QueryRowContext(ctx, `select count(*) from releases r join modules m on m.id = r.module_id`+filter, module, version).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count filtered releases: %w", err)

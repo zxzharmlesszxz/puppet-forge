@@ -735,7 +735,7 @@ func TestSQLiteAccessConfigLoadAndReplace(t *testing.T) {
 			ReadTokens:          []string{"read-token"},
 			PublishTokens:       []string{"publish-token"},
 			PublishOwners:       []string{"teamname"},
-			OIDCGroups:          []string{"teamname-devops"},
+			OIDCReaderGroups:    []string{"teamname-devops"},
 			OIDCTeamAdminEmails: []string{"owner@example.com"},
 			OIDCTeamAdminGroups: []string{"teamname-admins"},
 		},
@@ -753,8 +753,8 @@ func TestSQLiteAccessConfigLoadAndReplace(t *testing.T) {
 	if len(configs[0].PublishTokenRecords) != 1 || configs[0].PublishTokenRecords[0].Digest != hasher.Digest("publish-token") {
 		t.Fatalf("unexpected publish tokens: %#v", configs[0].PublishTokenRecords)
 	}
-	if len(configs[0].OIDCGroups) != 1 || configs[0].OIDCGroups[0] != "teamname-devops" {
-		t.Fatalf("unexpected oidc groups: %#v", configs[0].OIDCGroups)
+	if len(configs[0].OIDCReaderGroups) != 1 || configs[0].OIDCReaderGroups[0] != "teamname-devops" {
+		t.Fatalf("unexpected oidc groups: %#v", configs[0].OIDCReaderGroups)
 	}
 	if len(configs[0].OIDCTeamAdminEmails) != 1 || configs[0].OIDCTeamAdminEmails[0] != "owner@example.com" {
 		t.Fatalf("unexpected oidc team admin emails: %#v", configs[0].OIDCTeamAdminEmails)

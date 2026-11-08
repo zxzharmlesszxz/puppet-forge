@@ -14,6 +14,22 @@ import (
 )
 
 func (r *Router) v3Handler(w http.ResponseWriter, req *http.Request) {
+	req = req.WithContext(store.ReadableCatalogContext(req.Context()))
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(req.URL.Path, "/v3/"), "/"), "/")
+	if r.modules != nil && len(parts) == 2 {
+		slug := strings.TrimSuffix(parts[1], ".tar.gz")
+		identity := strings.SplitN(slug, "-", 3)
+		if (parts[0] == "modules" || parts[0] == "releases" || parts[0] == "files") && len(identity) >= 2 {
+			version := ""
+			if parts[0] != "modules" && len(identity) == 3 {
+				version = identity[2]
+			}
+			if err := r.modules.RequireAvailable(req.Context(), identity[0], identity[1], version); err != nil {
+				writeServiceError(w, err)
+				return
+			}
+		}
+	}
 	if r.serveLocalV3Response(w, req) {
 		return
 	}
@@ -91,6 +107,14 @@ func (r *Router) serveLocalV3Modules(w http.ResponseWriter, req *http.Request) {
 		versions := releasesByModule[module.Owner+"\x00"+module.Name]
 		releaseRefs := make([]v3ReleaseRef, 0, len(versions))
 		for _, version := range versions {
+			status, err := r.modules.ResourceStatus(req.Context(), module.Owner, module.Name, version.Version)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			if !status.State.Readable() {
+				continue
+			}
 			releaseRefs = append(releaseRefs, v3ReleaseRef{Slug: releaseSlug(module.Owner, module.Name, version.Version), Version: version.Version})
 		}
 
@@ -144,6 +168,7 @@ func v3OwnerResponse(owner string) map[string]any {
 
 func v3ReleaseResponse(req *http.Request, release domain.Release) map[string]any {
 	response := map[string]any{
+		"status":    release.Status,
 		"uri":       "/v3/releases/" + releaseSlug(release.Owner, release.Name, release.Version),
 		"slug":      releaseSlug(release.Owner, release.Name, release.Version),
 		"module":    map[string]any{"uri": "/v3/modules/" + moduleSlug(release.Owner, release.Name), "slug": moduleSlug(release.Owner, release.Name), "name": release.Name, "owner": v3OwnerResponse(release.Owner)},
@@ -250,6 +275,9 @@ func (r *Router) serveLocalV3Module(w http.ResponseWriter, req *http.Request, sl
 	}
 
 	versions, err := r.modules.ListReleases(req.Context(), module.Owner, module.Name)
+	if err == nil {
+		err = r.modules.RequireAvailable(req.Context(), module.Owner, module.Name, "")
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return true
@@ -299,6 +327,10 @@ func (r *Router) serveLocalV3Release(w http.ResponseWriter, req *http.Request, s
 	verifiedRelease, err := r.modules.EnsureReleaseChecksums(req.Context(), release)
 	if err != nil {
 		if release.Source == "upstream" {
+			if errors.Is(err, service.ErrUnavailable) {
+				writeServiceError(w, err)
+				return true
+			}
 			// A successful local v3 response must include checksums from the exact
 			// artifact that its file_uri serves. Let the Forge proxy return the
 			// authoritative upstream response when local materialization is incomplete.
@@ -315,6 +347,7 @@ func (r *Router) serveLocalV3Release(w http.ResponseWriter, req *http.Request, s
 
 	response := map[string]any{
 		"slug":        releaseSlug(release.Owner, release.Name, release.Version),
+		"status":      release.Status,
 		"version":     release.Version,
 		"file_uri":    releaseV3FileURI(req, release),
 		"file_name":   releaseV3FileName(release),
@@ -336,7 +369,7 @@ func (r *Router) serveLocalV3Release(w http.ResponseWriter, req *http.Request, s
 func (r *Router) serveLocalV3File(w http.ResponseWriter, req *http.Request, filename string) bool {
 	release, ok, err := r.findReleaseByFileName(req.Context(), filename)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeServiceError(w, err)
 		return true
 	}
 	if !ok {

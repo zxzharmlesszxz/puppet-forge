@@ -2,18 +2,18 @@ package httpapi
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
-	"slices"
 	"sort"
-	"strings"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
-	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
 
 func (r *Router) managePublishSpacesPage(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, errors.New("one team owns one namespace; create a team instead"))
+		return
+	}
 	principal, ok := r.requireManage(w, req)
 	if !ok {
 		return
@@ -22,35 +22,7 @@ func (r *Router) managePublishSpacesPage(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusForbidden, errors.New("global admin access required"))
 		return
 	}
-
-	switch req.Method {
-	case http.MethodGet:
-		r.renderManagePublishSpaces(w, req, principal, "")
-	case http.MethodPost:
-		if !r.requireManageCSRF(w, req) {
-			return
-		}
-		unlock, err := r.modules.LockAccessConfig(req.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		defer releaseAccessConfigLock(unlock)
-		configs, message, err := r.publishSpaceConfigsFromForm(req)
-		if err == nil {
-			r.prepareMutationAudit(req, principal, "change_publish_spaces", "assignment_action", req.FormValue("action"), "team", req.FormValue("team"), "space", req.FormValue("space"))
-			err = r.saveAccessConfigs(req.Context(), configs)
-		}
-		if err != nil {
-			r.audit(req, principal, "change_publish_spaces", "failure", auditReason(err), "assignment_action", req.FormValue("action"), "team", req.FormValue("team"), "space", req.FormValue("space"))
-			redirectManageResult(w, req, "/manage/admin/spaces", "error", manageErrorMessage(w, manageFormErrorStatus(err), err))
-			return
-		}
-		r.audit(req, principal, "change_publish_spaces", "success", "none", "assignment_action", req.FormValue("action"), "team", req.FormValue("team"), "space", req.FormValue("space"))
-		redirectManageResult(w, req, "/manage/admin/spaces", "message", message)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
-	}
+	r.renderManagePublishSpaces(w, req, principal, "")
 }
 
 func (r *Router) renderManagePublishSpaces(w http.ResponseWriter, req *http.Request, principal auth.Principal, errorMessage string) {
@@ -106,74 +78,6 @@ func (r *Router) renderManagePublishSpaces(w http.ResponseWriter, req *http.Requ
 	})
 }
 
-func (r *Router) publishSpaceConfigsFromForm(req *http.Request) ([]auth.TeamConfig, string, error) {
-	if err := req.ParseForm(); err != nil {
-		return nil, "", fmt.Errorf("parse publish space form: %w", err)
-	}
-	team := strings.TrimSpace(req.FormValue("team"))
-	space := strings.TrimSpace(req.FormValue("space"))
-	if team == "" {
-		return nil, "", errors.New("team is required")
-	}
-	if !domain.ValidModuleOwner(space) {
-		return nil, "", errors.New("publish space must contain only ASCII letters and digits")
-	}
-	if len(space) > 128 {
-		return nil, "", errors.New("publish space must not exceed 128 characters")
-	}
-
-	configs, err := r.modules.LoadTeamConfigs(req.Context())
-	if err != nil {
-		return nil, "", fmt.Errorf("%w: %w", errManageBackend, err)
-	}
-	cfg := findAccessConfig(configs, team)
-	if cfg == nil || isGlobalAdminConfig(*cfg) {
-		return nil, "", fmt.Errorf("team %q was not found", team)
-	}
-	if space == cfg.Team {
-		return nil, "", errors.New("the primary team space is managed automatically")
-	}
-	if primary := findAccessConfig(configs, space); primary != nil && primary.Team != cfg.Team {
-		return nil, "", fmt.Errorf("publish space %q is the primary space of another team", space)
-	}
-
-	action := strings.TrimSpace(req.FormValue("action"))
-	if action == "assign" {
-		upstreamSpaces, err := r.modules.CountUpstreamModulesByOwner(req.Context())
-		if err != nil {
-			return nil, "", fmt.Errorf("%w: %w", errManageBackend, err)
-		}
-		if _, upstream := upstreamSpaces[space]; upstream {
-			return nil, "", fmt.Errorf("publish space %q belongs to Official Forge and is read only", space)
-		}
-	}
-
-	extras := extraPublishOwnersForForm(cfg.Team, cfg.PublishOwners)
-	switch action {
-	case "assign":
-		if !containsString(extras, space) {
-			extras = append(extras, space)
-		}
-		sort.Strings(extras)
-		cfg.PublishOwners = publishOwnersFromExtra(cfg.Team, extras)
-		return configs, "publish space assigned", nil
-	case "unassign":
-		if !containsString(extras, space) {
-			return nil, "", fmt.Errorf("publish space %q is not assigned to team %q", space, team)
-		}
-		next := extras[:0]
-		for _, existing := range extras {
-			if existing != space {
-				next = append(next, existing)
-			}
-		}
-		cfg.PublishOwners = publishOwnersFromExtra(cfg.Team, next)
-		return configs, "publish space unassigned", nil
-	default:
-		return nil, "", errors.New("unknown publish space action")
-	}
-}
-
 func managePublishSpaceAssignments(configs []auth.TeamConfig, moduleCounts, upstreamModuleCounts map[string]int) ([]managePublishSpaceAssignment, []string) {
 	assignments := make([]managePublishSpaceAssignment, 0, len(configs)+len(upstreamModuleCounts))
 	teams := make([]string, 0, len(configs))
@@ -216,10 +120,6 @@ func managePublishSpaceAssignments(configs []auth.TeamConfig, moduleCounts, upst
 		return assignments[i].Space < assignments[j].Space
 	})
 	return assignments, teams
-}
-
-func containsString(values []string, want string) bool {
-	return slices.Contains(values, want)
 }
 
 func firstNonEmpty(values ...string) string {

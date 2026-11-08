@@ -29,10 +29,31 @@ import (
 )
 
 type testModuleStore struct {
+	statusMu   sync.Mutex
+	statuses   map[string]domain.ResourceStatus
 	moduleLock sync.Mutex
 	lockCalls  atomic.Int32
 	module     domain.Module
 	release    domain.Release
+}
+
+func (s *testModuleStore) GetResourceStatus(_ context.Context, owner, name, version string) (domain.ResourceStatus, error) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	if value, ok := s.statuses[owner+"/"+name+"@"+version]; ok {
+		return value, nil
+	}
+	return domain.ResourceStatus{State: domain.StateAvailable}, nil
+}
+
+func (s *testModuleStore) SetResourceStatus(_ context.Context, owner, name, version string, status domain.ResourceStatus) error {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	if s.statuses == nil {
+		s.statuses = make(map[string]domain.ResourceStatus)
+	}
+	s.statuses[owner+"/"+name+"@"+version] = status
+	return nil
 }
 
 type countingReleaseUsageStore struct {
@@ -675,7 +696,7 @@ func TestPublish(t *testing.T) {
 		t.Fatalf("manual metadata override was preserved: %#v", release.Metadata)
 	}
 
-	if release.DownloadURL != "https://example.invalid/"+wantObjectPath {
+	if release.DownloadURL != "" {
 		t.Fatalf("unexpected download url: %s", release.DownloadURL)
 	}
 
@@ -1370,7 +1391,7 @@ func TestIndexUpstreamModuleSkipsDeletedRelease(t *testing.T) {
 	}
 }
 
-func TestGetReleaseRestoresDeletedUpstreamReleaseOnDemand(t *testing.T) {
+func TestGetReleaseCannotRestoreDeletedUpstreamRelease(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1412,18 +1433,11 @@ func TestGetReleaseRestoresDeletedUpstreamReleaseOnDemand(t *testing.T) {
 
 	indexDeleteAndReindexUpstreamRelease(t, ctx, st, service, upstreamModule, "puppetlabs", "stdlib", "1.0.0")
 
-	release, err := service.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0")
-	if err != nil {
-		t.Fatalf("GetRelease(on demand) error = %v", err)
+	if _, err := service.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("deleted upstream release restored: %v", err)
 	}
-	if release.Source != "upstream" || release.Version != "1.0.0" || release.UpstreamFileURI == "" {
-		t.Fatalf("unexpected restored release: %#v", release)
-	}
-	if release.DownloadURL != release.UpstreamFileURI {
-		t.Fatalf("unexpected download URL: %q want %q", release.DownloadURL, release.UpstreamFileURI)
-	}
-	if _, err := st.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); err != nil {
-		t.Fatalf("GetRelease(restored local) error = %v", err)
+	if _, err := st.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted release reappeared: %v", err)
 	}
 }
 
@@ -1458,7 +1472,7 @@ func TestGetReleaseKeepsHydratedReleaseWhenSubsequentReadWouldFail(t *testing.T)
 	if release.Owner != "puppetlabs" || release.Name != "stdlib" || release.Version != "1.0.0" {
 		t.Fatalf("GetRelease() returned zero or mismatched release: %#v", release)
 	}
-	if release.DownloadURL == "" || release.DownloadURL != release.UpstreamFileURI {
+	if release.DownloadURL != "" {
 		t.Fatalf("GetRelease() download URL = %q, upstream URI = %q", release.DownloadURL, release.UpstreamFileURI)
 	}
 }
@@ -1853,7 +1867,7 @@ func TestIndexUpstreamModuleUsesModuleLock(t *testing.T) {
 	}
 }
 
-func TestIndexUpstreamModuleRestoresReleaseAfterModuleDelete(t *testing.T) {
+func TestIndexUpstreamModuleDoesNotRestoreDeletedModule(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1885,7 +1899,7 @@ func TestIndexUpstreamModuleRestoresReleaseAfterModuleDelete(t *testing.T) {
 	if err := service.IndexUpstreamModule(ctx, upstreamModule); err != nil {
 		t.Fatalf("IndexUpstreamModule() after module delete error = %v", err)
 	}
-	if _, err := st.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); err != nil {
+	if _, err := st.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("GetRelease(restored) error = %v", err)
 	}
 }

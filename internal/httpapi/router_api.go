@@ -104,6 +104,7 @@ func (r *Router) moduleItem(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) modulePage(w http.ResponseWriter, req *http.Request) {
+	req = req.WithContext(store.ReadableCatalogContext(req.Context()))
 	if req.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 		return
@@ -138,6 +139,10 @@ func (r *Router) modulePage(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	if err := r.modules.RequireAvailable(req.Context(), module.Owner, module.Name, ""); err != nil {
+		writeServiceError(w, err)
+		return
+	}
 	versions, err := r.modules.ListReleases(req.Context(), module.Owner, module.Name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -215,6 +220,7 @@ func validModuleFilePath(filePath string) bool {
 }
 
 func (r *Router) listModules(w http.ResponseWriter, req *http.Request) {
+	req = req.WithContext(store.ReadableCatalogContext(req.Context()))
 	if !r.requireReadAccess(w, req) {
 		return
 	}
@@ -254,24 +260,19 @@ func (r *Router) listModules(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func writeStoreResponse[T any](w http.ResponseWriter, data T, err error) {
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, data)
-}
-
 func (r *Router) getModule(w http.ResponseWriter, req *http.Request, owner, name string) {
 	if !r.requireReadAccess(w, req) {
 		return
 	}
 	module, err := r.modules.GetModule(req.Context(), owner, name)
-	writeStoreResponse(w, module, err)
+	if err == nil {
+		err = r.modules.RequireAvailable(req.Context(), owner, name, "")
+	}
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, module)
 }
 
 func (r *Router) requireDeleteAccess(w http.ResponseWriter, req *http.Request, owner string) (auth.Principal, bool) {
@@ -293,6 +294,11 @@ func (r *Router) requireDeleteAccess(w http.ResponseWriter, req *http.Request, o
 }
 
 func writeDeleteErrorResponse(w http.ResponseWriter, entityType string, err error) {
+	if errors.Is(err, service.ErrDeleteForbidden) {
+		metrics.ObserveDelete(entityType, err)
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		metrics.ObserveDelete(entityType, err)
 		writeError(w, http.StatusNotFound, err)
@@ -318,18 +324,8 @@ func (r *Router) deleteModule(w http.ResponseWriter, req *http.Request, owner, n
 		writeError(w, http.StatusBadRequest, parameterErr)
 		return
 	}
-	if force && !principal.CanAdmin {
-		r.audit(req, principal, "force_delete_module", "failure", "forbidden", "space", owner, "module", owner+"/"+name)
-		writeError(w, http.StatusForbidden, errors.New("global admin access required for force delete"))
-		return
-	}
 	action := r.prepareDeleteMutationAudit(req, principal, owner, name, "", justification, force)
-	var deleteErr error
-	if force {
-		deleteErr = r.modules.DeleteModule(req.Context(), owner, name)
-	} else {
-		deleteErr = r.modules.DeleteModuleIfAllowed(req.Context(), owner, name, time.Now().Add(-r.activeReleaseTTL))
-	}
+	deleteErr := r.modules.DeleteAuthorized(req.Context(), principal, owner, name, "", force, time.Now().Add(-r.activeReleaseTTL))
 	if deleteErr != nil {
 		r.audit(req, principal, action, "failure", auditReason(deleteErr), "space", owner, "module", owner+"/"+name, "justification", justification)
 		writeDeleteErrorResponse(w, "module", deleteErr)
@@ -372,12 +368,7 @@ func (r *Router) deleteRelease(w http.ResponseWriter, req *http.Request, owner, 
 		return
 	}
 	action := r.prepareDeleteMutationAudit(req, principal, owner, name, version, justification, force)
-	var deleteErr error
-	if force {
-		deleteErr = r.modules.DeleteRelease(req.Context(), owner, name, version)
-	} else {
-		deleteErr = r.modules.DeleteReleaseIfAllowed(req.Context(), owner, name, version, time.Now().Add(-r.activeReleaseTTL))
-	}
+	deleteErr := r.modules.DeleteAuthorized(req.Context(), principal, owner, name, version, force, time.Now().Add(-r.activeReleaseTTL))
 	if deleteErr != nil {
 		r.audit(req, principal, action, "failure", auditReason(deleteErr), "space", owner, "module", owner+"/"+name, "release", version, "justification", justification)
 		writeDeleteErrorResponse(w, "release", deleteErr)
@@ -493,6 +484,7 @@ func (r *Router) publishModuleWithReader(w http.ResponseWriter, req *http.Reques
 	}
 	defer cleanup()
 	requestedSpace := input.Owner
+	input.AwaitApproval = true
 	r.prepareMutationAudit(req, principal, "publish_module")
 	release, err := r.modules.PublishAuthorized(req.Context(), input, func(space string) error {
 		requestedSpace = space
@@ -559,26 +551,28 @@ func encodedV3UploadLimit(maxBytes int64) int64 {
 }
 
 type releaseAPIResponse struct {
-	ID          string         `json:"id"`
-	ModuleID    string         `json:"module_id"`
-	Owner       string         `json:"owner"`
-	Name        string         `json:"name"`
-	Source      string         `json:"source,omitempty"`
-	Version     string         `json:"version"`
-	Description string         `json:"description,omitempty"`
-	Readme      string         `json:"readme,omitempty"`
-	FileName    string         `json:"file_name"`
-	ContentType string         `json:"content_type"`
-	SizeBytes   int64          `json:"size_bytes"`
-	MD5         string         `json:"md5"`
-	SHA256      string         `json:"sha256"`
-	DownloadURL string         `json:"download_url"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
-	CreatedAt   time.Time      `json:"created_at"`
+	Status      domain.ResourceStatus `json:"status"`
+	ID          string                `json:"id"`
+	ModuleID    string                `json:"module_id"`
+	Owner       string                `json:"owner"`
+	Name        string                `json:"name"`
+	Source      string                `json:"source,omitempty"`
+	Version     string                `json:"version"`
+	Description string                `json:"description,omitempty"`
+	Readme      string                `json:"readme,omitempty"`
+	FileName    string                `json:"file_name"`
+	ContentType string                `json:"content_type"`
+	SizeBytes   int64                 `json:"size_bytes"`
+	MD5         string                `json:"md5"`
+	SHA256      string                `json:"sha256"`
+	DownloadURL string                `json:"download_url"`
+	Metadata    map[string]any        `json:"metadata,omitempty"`
+	CreatedAt   time.Time             `json:"created_at"`
 }
 
 func newReleaseAPIResponse(release domain.Release) releaseAPIResponse {
 	return releaseAPIResponse{
+		Status:      release.Status,
 		ID:          release.ID,
 		ModuleID:    release.ModuleID,
 		Owner:       release.Owner,

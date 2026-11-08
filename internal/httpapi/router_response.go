@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -50,6 +51,14 @@ func writeServiceError(w http.ResponseWriter, err error) {
 func serviceErrorStatus(err error) int {
 	status := http.StatusInternalServerError
 	switch {
+	case errors.Is(err, service.ErrReviewForbidden), errors.Is(err, service.ErrDeleteForbidden), errors.Is(err, service.ErrModerationForbidden):
+		status = http.StatusForbidden
+	case errors.Is(err, service.ErrReviewLimit):
+		status = http.StatusRequestEntityTooLarge
+	case errors.Is(err, service.ErrReviewBusy), errors.Is(err, context.DeadlineExceeded):
+		status = http.StatusServiceUnavailable
+	case errors.Is(err, service.ErrUnavailable):
+		status = http.StatusConflict
 	case errors.Is(err, service.ErrValidation):
 		status = http.StatusBadRequest
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, storage.ErrObjectNotFound):
@@ -64,6 +73,10 @@ func serviceErrorStatus(err error) int {
 
 func errorCode(status int, err error) string {
 	switch {
+	case errors.Is(err, service.ErrDeleteForbidden):
+		return "forbidden"
+	case errors.Is(err, service.ErrUnavailable):
+		return "resource_unavailable"
 	case errors.Is(err, service.ErrProtectedDelete):
 		return "protected_resource"
 	case errors.Is(err, store.ErrConflict):
@@ -139,7 +152,7 @@ func (r *Router) writeReleaseArchive(w http.ResponseWriter, req *http.Request, r
 	if response.Partial {
 		object, err = r.modules.OpenReleaseArchiveRange(req.Context(), release, response.Range.Start, response.Range.Length)
 	} else {
-		object, err = r.modules.OpenReleaseArchive(req.Context(), release.Owner, release.Name, release.Version)
+		object, err = r.modules.OpenReleaseArchiveSnapshot(req.Context(), release)
 	}
 	if err != nil {
 		clearArtifactResponseHeaders(w.Header())

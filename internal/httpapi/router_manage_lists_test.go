@@ -160,7 +160,7 @@ func TestConfiguredPublishSpacesReturnsSortedUniqueNonGlobalSpaces(t *testing.T)
 		{Team: "platform", PublishOwners: []string{"shared", "platform"}},
 		{Team: "security", PublishOwners: []string{"shared"}},
 	}
-	want := []string{"platform", "security", "shared"}
+	want := []string{"platform", "security"}
 	if got := configuredPublishSpaces(configs); !slices.Equal(got, want) {
 		t.Fatalf("configuredPublishSpaces() = %#v, want %#v", got, want)
 	}
@@ -174,10 +174,10 @@ func TestManagePublishSpaceAssignmentsIncludeReadOnlyUpstreamOwners(t *testing.T
 		map[string]int{"platform": 2, "shared": 1},
 		map[string]int{"puppetlabs": 4, "platform": 1},
 	)
-	if !slices.Equal(teams, []string{"platform"}) || len(assignments) != 4 {
+	if !slices.Equal(teams, []string{"platform"}) || len(assignments) != 3 {
 		t.Fatalf("managePublishSpaceAssignments() = (%#v, %#v)", assignments, teams)
 	}
-	upstream := assignments[2:]
+	upstream := assignments[1:]
 	if upstream[0].Space != "platform" || !upstream[0].Upstream || upstream[0].ModuleCount != 1 || upstream[0].ModulesURL != "/manage/modules?q=platform%2F" {
 		t.Fatalf("shared-name upstream assignment = %#v", upstream[0])
 	}

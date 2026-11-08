@@ -25,7 +25,11 @@ func finishReleaseMutation(release domain.Release, writer releaseMutationWriter)
 	if err != nil {
 		return err
 	}
-	if err := writer.updateLatestVersion(release.ModuleID, latestVersionWithCandidate(current, release.Version)); err != nil {
+	latest := current
+	if release.InitialState.Readable() {
+		latest = latestVersionWithCandidate(current, release.Version)
+	}
+	if err := writer.updateLatestVersion(release.ModuleID, latest); err != nil {
 		return fmt.Errorf("update module latest version: %w", err)
 	}
 	if err := writer.commit(); err != nil {

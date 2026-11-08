@@ -1050,7 +1050,7 @@ func TestStoreParityAccessConfigRoundTrip(t *testing.T) {
 					ReadTokens:          []string{"read-token"},
 					PublishTokens:       []string{"publish-token"},
 					PublishOwners:       []string{"teamname", "shared"},
-					OIDCGroups:          []string{"teamname-devops"},
+					OIDCReaderGroups:    []string{"teamname-devops"},
 					OIDCTeamAdminEmails: []string{"owner@example.com"},
 					OIDCTeamAdminGroups: []string{"teamname-admins"},
 				},
@@ -1819,7 +1819,7 @@ func normalizeTeamConfigs(configs []auth.TeamConfig) {
 		sort.Strings(configs[i].ReadTokens)
 		sort.Strings(configs[i].PublishTokens)
 		sort.Strings(configs[i].PublishOwners)
-		sort.Strings(configs[i].OIDCGroups)
+		sort.Strings(configs[i].OIDCReaderGroups)
 		sort.Strings(configs[i].OIDCTeamAdminEmails)
 		sort.Strings(configs[i].OIDCTeamAdminGroups)
 		sort.Strings(configs[i].OIDCAdminEmails)

@@ -215,6 +215,7 @@ type manageAuditRow struct {
 	Target        string
 	Details       string
 	Justification string
+	SHA256        string
 	TargetTokenID string
 	ActorTokenID  string
 	OIDCSubject   string
@@ -305,6 +306,7 @@ type manageNavigationData struct {
 	CSPNonce            string
 	CSRFToken           string
 	CanTeams            bool
+	CanManageTeam       bool
 	CanAdmin            bool
 	TeamPage            bool
 	TeamURL             string
@@ -331,9 +333,10 @@ type manageBreadcrumb struct {
 
 func newManageNavigation(principal auth.Principal, csrfToken, page, team string) manageNavigationData {
 	navigation := manageNavigationData{
-		CSRFToken: csrfToken,
-		CanTeams:  principal.CanAdmin || principal.CanManageTeam,
-		CanAdmin:  principal.CanAdmin,
+		CSRFToken:     csrfToken,
+		CanTeams:      principal.CanAdmin || principal.CanManageTeam || len(principal.MemberTeams) > 0,
+		CanManageTeam: canManageAccessTeam(principal, team),
+		CanAdmin:      principal.CanAdmin,
 	}
 
 	switch page {
@@ -399,7 +402,7 @@ type manageTeamSummary struct {
 	ModuleCount     int
 	ReadTokens      int
 	PublishTokens   int
-	PublishGroups   int
+	ReaderGroups    int
 	TeamAdminUsers  int
 	TeamAdminGroups int
 }
@@ -409,7 +412,7 @@ type accessTeamFormRow struct {
 	Tokens              []accessTokenFormRow
 	TokenHistory        []accessTokenFormRow
 	ExtraPublishSpaces  string
-	OIDCGroups          string
+	OIDCReaderGroups    string
 	OIDCTeamAdminEmails string
 	OIDCTeamAdminGroups string
 	Badges              []string
@@ -481,6 +484,10 @@ type manageModuleRow struct {
 }
 
 type manageVersionRow struct {
+	ReviewURL      string
+	DownloadURL    string
+	Status         domain.ResourceStatus
+	ModerationURL  string
 	Version        string
 	Active         bool
 	Latest         bool
@@ -610,6 +617,10 @@ var manageAuditTemplate = mustParsePage("manage-audit.gohtml", "manage-layout.go
 var manageTokenCreatedTemplate = mustParsePage("manage-token-created.gohtml", "manage-layout.gohtml")
 
 var manageForceDeleteTemplate = mustParsePage("manage-force-delete.gohtml", "manage-layout.gohtml")
+
+var manageModerationTemplate = mustParsePage("manage-moderation.gohtml", "manage-layout.gohtml")
+
+var manageReviewTemplate = mustParsePage("manage-review.gohtml", "manage-layout.gohtml")
 
 var manageTeamsTemplate = mustParsePage("manage-teams.gohtml", "manage-layout.gohtml")
 

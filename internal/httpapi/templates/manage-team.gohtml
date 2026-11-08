@@ -32,11 +32,11 @@
       <div class="readonly-field">
         <span class="readonly-label">Publish spaces</span>
         <div class="readonly-value">{{range .Spaces}}<span class="badge">{{.}}</span>{{end}}</div>
-        <p class="muted">The primary team space is automatic. Extra publish spaces are assigned by global administrators.{{if .Principal.CanAdmin}} <a href="/manage/admin/spaces">Manage publish spaces</a>.{{end}}</p>
+        <p class="muted">One team owns one namespace.</p>
       </div>
       <div>
-        <label for="team-publish-groups">OIDC publish groups</label>
-        <textarea id="team-publish-groups" name="oidc_groups">{{.Team.OIDCGroups}}</textarea>
+        <label for="team-publish-groups">OIDC team readers (groups)</label>
+        <textarea id="team-publish-groups" name="oidc_reader_groups">{{.Team.OIDCReaderGroups}}</textarea>
       </div>
       <div>
         <label for="team-admin-emails">OIDC team admins (emails)</label>

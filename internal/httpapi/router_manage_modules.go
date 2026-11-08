@@ -14,6 +14,7 @@ import (
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/service"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
@@ -37,6 +38,14 @@ func (r *Router) manageModulesPage(w http.ResponseWriter, req *http.Request) {
 	}
 
 	owners := manageableOwners(principal)
+	if principal.CanAdmin {
+		configs, err := r.modules.LoadTeamConfigs(req.Context())
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		owners = configuredPublishSpaces(configs)
+	}
 	query := strings.TrimSpace(req.URL.Query().Get("q"))
 	page, pageSize, err := requestedManageModulePage(req, "/manage/modules", manageModuleListTarget)
 	if err != nil {
@@ -100,6 +109,9 @@ func (r *Router) manageModulesRoot(w http.ResponseWriter, req *http.Request) {
 func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Principal, allowedOwners map[string]struct{}, query string, page, pageSize int) ([]manageModuleRow, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	if !principal.CanAdmin && !principal.CanManageTeam {
+		ctx = store.ReadableCatalogContext(ctx)
+	}
 
 	var owners []string
 	if allowedOwners != nil {
@@ -123,12 +135,19 @@ func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Princi
 
 	rows := make([]manageModuleRow, 0, len(modules))
 	for _, module := range modules {
-		canDelete := canDeleteInSpace(principal, module.Owner)
+		module.Status, err = r.modules.ResourceStatus(ctx, module.Owner, module.Name, "")
+		if err != nil {
+			return nil, 0, err
+		}
+		canDelete, err := r.modules.CanDeleteModule(ctx, principal, module.Owner, module.Name)
+		if err != nil {
+			return nil, 0, err
+		}
 		rows = append(rows, manageModuleRow{
 			Module:                module,
 			ReleaseCount:          releaseCounts[module.Owner+"\x00"+module.Name],
 			CanDelete:             canDelete,
-			CanForceDeleteModule:  principal.CanAdmin,
+			CanForceDeleteModule:  canDelete,
 			CanForceDeleteRelease: canDelete,
 			CardID:                manageModuleCardID(module.Owner, module.Name),
 			CardURL:               manageModuleCardURL(module.Owner, module.Name),
@@ -140,6 +159,12 @@ func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Princi
 func (r *Router) loadManageModuleCard(ctx context.Context, principal auth.Principal, owner, name string) (manageModuleRow, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	if !canDeleteInSpace(principal, owner) {
+		if err := r.modules.RequireAvailable(ctx, owner, name, ""); err != nil {
+			return manageModuleRow{}, err
+		}
+		ctx = store.ReadableCatalogContext(ctx)
+	}
 	module, err := r.modules.GetModule(ctx, owner, name)
 	if err != nil {
 		return manageModuleRow{}, err
@@ -159,15 +184,18 @@ func (r *Router) loadManageModuleCard(ctx context.Context, principal auth.Princi
 	rows := make([]manageVersionRow, 0, len(versions))
 	for _, version := range versions {
 		_, inUse := active[version.Version]
-		rows = append(rows, manageVersionRow{Version: version.Version, Active: inUse, Latest: version.Version == module.LatestVersion})
+		rows = append(rows, manageVersionRow{Version: version.Version, Status: version.Status, Active: inUse, Latest: version.Version == module.LatestVersion, ModerationURL: manageModerationURL(owner, name, version.Version)})
 	}
-	canDelete := canDeleteInSpace(principal, owner)
+	canDelete, err := r.modules.CanDeleteModule(ctx, principal, owner, name)
+	if err != nil {
+		return manageModuleRow{}, err
+	}
 	return manageModuleRow{
 		Module:                module,
 		Versions:              rows,
 		ReleaseCount:          len(rows),
 		CanDelete:             canDelete,
-		CanForceDeleteModule:  principal.CanAdmin,
+		CanForceDeleteModule:  canDelete,
 		CanForceDeleteRelease: canDelete,
 		VersionsLoaded:        true,
 		CardID:                manageModuleCardID(owner, name),
@@ -183,6 +211,8 @@ func configureManageModuleRows(rows []manageModuleRow, csrfToken, next string) {
 		row.ForceDeleteURL = manageForceDeleteURL(row.Module.Owner, row.Module.Name, "", next)
 		for versionIndex := range row.Versions {
 			version := &row.Versions[versionIndex]
+			version.DownloadURL = version.ModerationURL + "&download=true"
+			version.ReviewURL = manageReviewURL(row.Module.Owner, row.Module.Name, version.Version)
 			version.ForceDeleteURL = manageForceDeleteURL(row.Module.Owner, row.Module.Name, version.Version, next)
 		}
 		if next != "" && next != "/manage/modules" {
@@ -276,6 +306,10 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
+	if !principal.CanAdmin && !principal.CanManageTeam {
+		writeError(w, http.StatusForbidden, errors.New("administrator access required for manual upload"))
+		return
+	}
 	if !r.requirePublishSource(w, req, principal) {
 		return
 	}
@@ -303,6 +337,11 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer cleanup()
+	reason := strings.TrimSpace(req.FormValue("reason"))
+	if reason == "" || len(reason) > 500 {
+		respondManageMutationHTTPError(w, req, http.StatusBadRequest, errors.New("emergency upload requires a reason of at most 500 characters"))
+		return
+	}
 	input.Replace = req.FormValue("replace") == "true"
 	action, message := "publish_module", "module published"
 	if input.Replace {
@@ -310,7 +349,7 @@ func (r *Router) manageModules(w http.ResponseWriter, req *http.Request) {
 	}
 	requestedSpace := input.Owner
 	var authorizationErr error
-	r.prepareMutationAudit(req, principal, action)
+	r.prepareMutationAudit(req, principal, action, "reason", reason, "emergency", "true")
 	release, err := r.modules.PublishAuthorized(req.Context(), input, func(space string) error {
 		requestedSpace = space
 		switch {
@@ -377,6 +416,14 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 	}
 	trimmed := strings.Trim(strings.TrimPrefix(req.URL.Path, "/manage/modules/"), "/")
 	parts := strings.Split(trimmed, "/")
+	if len(parts) == 3 && parts[2] == "review" {
+		r.manageReleaseReview(w, req, principal, parts[0], parts[1])
+		return
+	}
+	if len(parts) == 3 && parts[2] == "moderate" {
+		r.manageModeration(w, req, principal, parts[0], parts[1])
+		return
+	}
 	if req.Method == http.MethodGet && ((len(parts) == 3 && parts[2] == "force-delete") || (len(parts) == 5 && parts[2] == "versions" && parts[4] == "force-delete")) {
 		r.renderManageForceDelete(w, req, principal, parts)
 		return
@@ -424,18 +471,8 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 			respondManageMutationError(w, req, err)
 			return
 		}
-		if force && !principal.CanAdmin {
-			err := errors.New("global admin access required for force delete")
-			r.audit(req, principal, "force_delete_module", "failure", "forbidden", "space", owner, "module", owner+"/"+name)
-			respondManageMutationHTTPError(w, req, http.StatusForbidden, err)
-			return
-		}
 		action := r.prepareDeleteMutationAudit(req, principal, owner, name, "", justification, force)
-		if force {
-			err = r.modules.DeleteModule(req.Context(), owner, name)
-		} else {
-			err = r.modules.DeleteModuleIfAllowed(req.Context(), owner, name, time.Now().Add(-r.activeReleaseTTL))
-		}
+		err = r.modules.DeleteAuthorized(req.Context(), principal, owner, name, "", force, time.Now().Add(-r.activeReleaseTTL))
 		if err != nil {
 			r.audit(req, principal, action, "failure", auditReason(err), "space", owner, "module", owner+"/"+name, "justification", justification)
 			respondManageMutationServiceError(w, req, err)
@@ -459,11 +496,7 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		action := r.prepareDeleteMutationAudit(req, principal, owner, name, version, justification, force)
-		if force {
-			err = r.modules.DeleteRelease(req.Context(), owner, name, version)
-		} else {
-			err = r.modules.DeleteReleaseIfAllowed(req.Context(), owner, name, version, time.Now().Add(-r.activeReleaseTTL))
-		}
+		err = r.modules.DeleteAuthorized(req.Context(), principal, owner, name, version, force, time.Now().Add(-r.activeReleaseTTL))
 		if err != nil {
 			r.audit(req, principal, action, "failure", auditReason(err), "space", owner, "module", owner+"/"+name, "release", version, "justification", justification)
 			respondManageMutationServiceError(w, req, err)
@@ -484,12 +517,7 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 func (r *Router) renderManageForceDelete(w http.ResponseWriter, req *http.Request, principal auth.Principal, parts []string) {
 	owner, name := parts[0], parts[1]
 	isModule := len(parts) == 3
-	if isModule {
-		if !principal.CanAdmin {
-			writeError(w, http.StatusForbidden, errors.New("global admin access required for force delete"))
-			return
-		}
-	} else if !canDeleteInSpace(principal, owner) {
+	if !canDeleteInSpace(principal, owner) {
 		writeError(w, http.StatusForbidden, errors.New("admin or team admin access required"))
 		return
 	}
@@ -497,6 +525,10 @@ func (r *Router) renderManageForceDelete(w http.ResponseWriter, req *http.Reques
 	row, err := r.loadManageModuleCard(req.Context(), principal, owner, name)
 	if err != nil {
 		writeServiceError(w, err)
+		return
+	}
+	if !row.CanForceDeleteModule {
+		writeServiceError(w, service.ErrDeleteForbidden)
 		return
 	}
 	next := manageReturnPath(req, "/manage/modules")
@@ -585,7 +617,7 @@ func forceDeleteParameters(req *http.Request, expectedConfirmation string) (bool
 }
 
 func canViewManageSpace(principal auth.Principal, owner string) bool {
-	if principal.CanAdmin || principal.CanPublishOwner(owner) {
+	if principal.CanRead {
 		return true
 	}
 	return slices.Contains(manageableOwners(principal), owner)

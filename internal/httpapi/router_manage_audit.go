@@ -70,6 +70,7 @@ func manageAuditRows(events []store.AuditEvent) []manageAuditRow {
 	rows := make([]manageAuditRow, 0, len(events))
 	for _, event := range events {
 		occurredAt := event.OccurredAt.UTC()
+		details, justification := auditEventDetails(event)
 		rows = append(rows, manageAuditRow{
 			OccurredAt:    occurredAt.Format(time.RFC3339),
 			OccurredDate:  occurredAt.Format("2006-01-02"),
@@ -80,8 +81,9 @@ func manageAuditRows(events []store.AuditEvent) []manageAuditRow {
 			Result:        event.Result,
 			Reason:        event.Reason,
 			Target:        auditTarget(event.Attributes),
-			Details:       event.Attributes["changes"],
-			Justification: event.Attributes["justification"],
+			Details:       details,
+			Justification: justification,
+			SHA256:        event.Attributes["sha256"],
 			TargetTokenID: event.Attributes["token_id"],
 			ActorTokenID:  event.Attributes["actor_token_id"],
 			OIDCSubject:   event.Attributes["oidc_subject"],
@@ -90,6 +92,30 @@ func manageAuditRows(events []store.AuditEvent) []manageAuditRow {
 		})
 	}
 	return rows
+}
+
+func auditEventDetails(event store.AuditEvent) (string, string) {
+	details, justification := event.Attributes["changes"], event.Attributes["justification"]
+	if event.Action != "moderate_resource" {
+		return details, justification
+	}
+	if justification == "" {
+		justification = event.Attributes["reason"]
+	}
+	var parts []string
+	if action := event.Attributes["moderation_action"]; action != "" {
+		parts = append(parts, "Decision: "+action)
+	}
+	if from, to := event.Attributes["from_state"], event.Attributes["to_state"]; from != "" || to != "" {
+		parts = append(parts, from+" -> "+to)
+	}
+	if replacement := event.Attributes["replacement"]; replacement != "" {
+		parts = append(parts, "Replacement: "+replacement)
+	}
+	if details != "" {
+		parts = append(parts, details)
+	}
+	return strings.Join(parts, "; "), justification
 }
 
 func auditTarget(attributes map[string]string) string {

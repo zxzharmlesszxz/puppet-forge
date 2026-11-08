@@ -1,5 +1,14 @@
 # Архітектура
 
+Відповідь з архівом використовує один незмінний знімок релізу для шляху об'єкта,
+ETag, розміру та повного або часткового вмісту. Заміна тієї самої версії
+адміністратором не перемикає вже підготовлену відповідь на новий об'єкт.
+Перед відкриттям знімка перевірка доступності lifecycle залишається обов'язковою.
+
+Модерація перевіряє права на namespace та походження upstream під тим самим
+блокуванням модуля, що й зміна стану. Попередньої HTTP-перевірки недостатньо:
+конкурентний імпорт може додати до локального модуля upstream-реліз.
+
 Колекція `/v3/releases` фільтрується та розбивається на сторінки в SQL, зі
 семантичним порядком версій через індексований ключ `version_order`. Міграція
 заповнює ключі наявних релізів обмеженими пакетами; сторінка не завантажує весь
@@ -235,15 +244,16 @@ of truth для teams, tokens, publish spaces та OIDC mappings. SQLite і Post
   Forwarded host/proto/client приймаються лише після opt-in, CIDR, syntax і
   conflict checks; `ALLOWED_PUBLIC_HOSTS` обмежує effective hosts;
 - global admins можуть видаляти в усіх spaces, team admins — лише у primary
-  space керованої команди. Extra publish spaces не дають delete ownership;
+  namespace керованої команди; додаткові простори не призначаються;
 - `ADMIN_TOKEN` — runtime-only bootstrap/break-glass credential, не записується
   в SQL;
-- інформаційний каталог `/` і `/modules/...` публічний незалежно від
-  `PUBLIC_MODULE_ACCESS`;
+- HTML-каталог `/` і сторінки опису модулів залишаються публічними незалежно від
+  `PUBLIC_MODULE_ACCESS`; завантаження архівів, витягнуті файли й API читання
+  зберігають окрему перевірку доступу;
 - `PUBLIC_MODULE_ACCESS=true` обходить лише read auth для install/API routes;
 - `PUBLIC_MODULE_ACCESS=false` вимагає read/publish/admin auth для цих routes.
 
-OIDC UI вмикається через `WEB_AUTH_MODE=oidc`. `oidc_groups` дають team publish,
+OIDC UI вмикається через `WEB_AUTH_MODE=oidc`. `oidc_reader_groups` дають читання й членство в команді,
 `oidc_team_admin_emails` та `oidc_team_admin_groups` — delegated team admin, а
 `oidc_admin_groups`, `oidc_admin_emails`, `oidc_admin_subjects` — global admin.
 Team admin редагує лише власні токени й OIDC mappings та видаляє лише у primary
@@ -252,7 +262,7 @@ space. `platform-admin` зарезервовано для global-admin configura
 
 Якщо одна OIDC identity збігається з кількома mappings, усі capabilities і team
 scopes об'єднуються. Global admin не скасовує team admin чи publishing rights,
-але global mapping сам по собі не дає publish rights.
+а global admin має адміністративні права в усіх namespace.
 
 `/manage/teams` показує доступні principal команди й підсумок spaces, modules,
 tokens та OIDC mappings. Access, Tokens і Modules розділені на окремі сторінки;
@@ -270,8 +280,8 @@ backend authorization незалежно перевіряє кожну опер�
 batch query.
 
 `/manage/admin/access` керує global OIDC access, `/manage/admin/spaces` —
-publish-space assignments. Повного HTTP replace access config немає. Global
-admins створюють teams, керують extra spaces, global mappings і всіма teams.
+огляд namespace. Повного HTTP replace access config немає. Global
+admins створюють teams, керують global mappings і всіма teams.
 Team admins керують власними token lifecycle та дозволеними OIDC mappings.
 Підроблений team update не може змінити space assignments.
 
@@ -284,7 +294,7 @@ Token creation вимагає назву та роль `read`/`publish`. Акт�
 readiness не очікує завершення retention. Невдалий cleanup повторюється через
 стабільну для кожної репліки затримку 25–35 секунд, а після успіху worker чекає
 повний налаштований interval. Primary team space створюється автоматично й
-не може бути unassigned. Extra spaces змінює лише global administration.
+не може бути unassigned. Один namespace відповідає одній команді.
 Bearer authorization отримує capabilities з атомарно прочитаного SQL snapshot, а
 потім на кожному protected request перевіряє immutable token ID безпосередньо в
 SQL. При помилці refresh застаріла access configuration використовується не довше
@@ -292,12 +302,12 @@ SQL. При помилці refresh застаріла access configuration ви�
 відмовляє одразу. Тому revoke та expiration закривають доступ на всіх replicas
 одразу після database commit без повного перечитування всіх teams.
 
-Звичайне видалення latest releases та releases, активних у межах
+Звичайне видалення releases, активних у межах
 `ACTIVE_RELEASE_TTL`, повертає `409`; module delete так само відхиляється, якщо є
 protected releases. Адміністратор команди-власника або глобальний адміністратор
 може явно примусово видалити такий release через окрему сторінку підтвердження
 після введення причини й точного `owner/name@version`. Примусове видалення module
-доступне лише глобальному адміністратору, використовує аналогічну окрему сторінку
+доступне адміністратору команди-власника та глобальному адміністратору, використовує окрему сторінку
 й вимагає підтвердження `owner/name`. Видалення latest
 призначає найвищу remaining semantic version, а видалення останнього release
 прибирає module. Адміністративні зміни створюють structured security-audit events
@@ -305,7 +315,7 @@ protected releases. Адміністратор команди-власника �
 `/manage/admin/audit`, доступна лише глобальному адміністратору, показує повну
 історію. `/manage/teams/{team}/audit` доступна адміністраторам цієї команди та
 глобальним адміністраторам і на backend обмежує журнал командою та всіма її
-primary і extra publish spaces. Scope визначається цільовим ресурсом, тому команда
+namespace. Scope визначається цільовим ресурсом, тому команда
 бачить також дії глобального адміністратора над її налаштуваннями, токенами,
 модулями й релізами. Обидві сторінки дають пошук і пагінацію за виконавцем, дією,
 ресурсом, результатом, diff налаштувань доступу та поясненням примусового

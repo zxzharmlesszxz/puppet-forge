@@ -65,7 +65,11 @@ test("shared styles preserve panel, badge, and control dimensions", async ({ pag
   expect(await page.locator(".team-row .badge").first().evaluate((element) => getComputedStyle(element).minHeight)).toBe("26px");
 
   await page.goto("/manage/teams/teamname/modules");
-  await expect(page.locator("#team-module-archive")).toHaveCount(0);
+  await expect(page.locator("#team-module-archive")).toHaveCount(1);
+  await page.locator('[data-section-key="upload-module"] > summary').click();
+  await expect(page.locator("#team-module-archive")).toBeVisible();
+  await expect(page.locator('form[action="/manage/modules"] input[name="reason"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: "Upload and allow", exact: true })).toBeVisible();
   const heights = await page.evaluate(() => [
     ".meta .badge", ".page-size-control select",
   ].map((selector) => {
@@ -77,15 +81,13 @@ test("shared styles preserve panel, badge, and control dimensions", async ({ pag
   expect(heights).toEqual(["24px", "32px"]);
 });
 
-test("publisher upload controls use shared dimensions without replacement privileges", async ({ page }) => {
+test("publish tokens cannot use emergency web uploads", async ({ page }) => {
   await signIn(page, "browser-publish-token");
   await page.goto("/manage/modules");
-  const archive = page.locator("#module-archive-input");
-  await expect(archive).toHaveCount(1);
-  await archive.locator("xpath=ancestor::details").evaluate((element) => { element.open = true; });
-  await expect(archive).toBeVisible();
-  expect(await archive.evaluate((element) => getComputedStyle(element).height)).toBe("42px");
+  await expect(page.locator("#module-archive-input")).toHaveCount(0);
   await expect(page.locator(".replace-option input")).toHaveCount(0);
+  const response = await page.request.post("/manage/modules", { form: { space: "teamname" } });
+  expect(response.status()).toBe(403);
 });
 
 test("public and manage catalogs share the same search component", async ({ page }) => {

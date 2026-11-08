@@ -7,11 +7,14 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
 const publicModulePageSize = 20
 
 func (r *Router) indexPage(w http.ResponseWriter, req *http.Request) {
+	req = req.WithContext(store.ReadableCatalogContext(req.Context()))
 	if req.URL.Path != "/" {
 		writeError(w, http.StatusNotFound, errors.New("route not found"))
 		return
@@ -20,7 +23,6 @@ func (r *Router) indexPage(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 		return
 	}
-
 	owner := strings.TrimSpace(req.URL.Query().Get("owner"))
 	query := strings.TrimSpace(req.URL.Query().Get("q"))
 	pageSize := requestedPageSize(req, "/", "per_page", "module-list", publicModulePageSize)

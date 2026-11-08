@@ -92,7 +92,7 @@ puppet-forge \
 | `README_IMAGE_ALLOWED_HOSTS`     | See README Images and Badges     | no                             | Exact HTTPS image hosts for README badges, separated by commas or spaces. Empty disables external images; see README Images and Badges.                                                                                                                                                              |
 | `TRUSTED_PROXY_CIDRS`            | empty                            | no                             | Comma- or space-separated direct ingress/reverse-proxy CIDRs. Use `*` for "trust all direct peers" (diagnostic only), or `0.0.0.0/0,::/0` as equivalent explicit form. These CIDRs may supply forwarded client identity and, only with `TRUST_FORWARDED_HEADERS=true`, forwarded host/proto.         |
 | `TRUST_FORWARDED_HEADERS`        | `false`                          | no                             | Accept validated `Forwarded`/`X-Forwarded-*` values only when the direct peer belongs to `TRUSTED_PROXY_CIDRS`. Otherwise every forwarded variant is removed before routing.                                                                                                                         |
-| `PUBLIC_MODULE_ACCESS`           | `false`                          | no                             | If `true`, read APIs, downloads, and `/v3/*` are open without a token. If `false`, install/API routes require a token with read, publish, or admin privileges. HTML catalog pages stay informationally public. Publishing, deletion, and management routes are always protected.                     |
+| `PUBLIC_MODULE_ACCESS`           | `false`                          | no                             | Controls anonymous read API and download access, not the public HTML catalog or module descriptions. If false, read authentication is required for APIs, archives and extracted files. Mutation and administration routes remain protected.                                                          |
 | `PUBLISH_ALLOWED_CIDRS`          | empty                            | no                             | Client CIDRs allowed to publish through API and Manage; empty disables the additional IP restriction.                                                                                                                                                                                                |
 | `ACTIVE_RELEASE_TTL`             | `720h`                           | no                             | How long a release is considered active/in use after an r10k or `puppet module install` request. Normal deletion protects active/latest versions; an owning team administrator or global administrator can explicitly override that protection with a reason and exact confirmation.                 |
 | `RELEASE_CONSUMER_TTL`           | `4320h`                          | no                             | Retention for named access-token observations of concrete module archive downloads. Set to `0s` to retain observations without automatic cleanup.                                                                                                                                                    |
@@ -280,16 +280,17 @@ Important rules:
 - `ADMIN_TOKEN` is a runtime-only bootstrap/break-glass admin token and is not persisted in SQL.
 - Persisted access tokens are generated as opaque credentials, returned only once, and stored as HMAC-SHA256 digests with a visible prefix and lifecycle metadata. Each new token has a required operator-facing name and a `read` or `publish` role; an active name/role pair must be unique within its team. Set the same `ACCESS_TOKEN_PEPPER` on every replica. Every protected bearer request checks the token ID's active state in SQL, so revocation and expiration apply across replicas immediately after commit. The management page uses one creation form and paginates the unified active-token list and inactive history independently; each list defaults to 20 records and supports a persisted choice of 10, 20, 50, or 100. `ACCESS_TOKEN_HISTORY_TTL` removes old expired/revoked metadata.
 - If the DB contains no effective access credential and `ADMIN_TOKEN` is not set, the service refuses to start.
-- On a clean start, log in to `/manage` with `ADMIN_TOKEN`, open `/manage/teams`, and configure teams, tokens, OIDC groups, and OIDC team admins. Global administrators assign extra publishing spaces under `/manage/admin/spaces`; global OIDC admins are configured under `/manage/admin/access`.
+- On a clean start, log in with `ADMIN_TOKEN`, create teams under `/manage/teams`, and configure team readers, team admins and tokens. Configure global OIDC access under `/manage/admin/access`; `/manage/admin/spaces` is a read-only namespace inventory.
 - Every token value must be globally unique across teams and access roles. Reusing a token with the `read` or `publish` role, or reusing an admin token, is rejected without exposing the token in the error.
 - `platform-admin` is a reserved configuration identity for global admin tokens and OIDC mappings. It cannot be created or used as a publishing team or module space.
-- Publishing team names and writable extra spaces use the module-owner syntax `[A-Za-z0-9]+`; team names must also be unique without regard to letter case.
-- The web catalog (`/` and `/modules/...`) remains informationally public regardless of `PUBLIC_MODULE_ACCESS`.
+- Team names and their namespaces use `[A-Za-z0-9]+` and are unique without regard to letter case.
+- The HTML catalog (`/` and module description pages) remains public regardless of `PUBLIC_MODULE_ACCESS`. Archive downloads, extracted files and read APIs have separate read authentication.
 - Read tokens allow read API, download, and `/v3/*` access.
 - Tokens with the `publish` role allow read and immutable publish access only within permitted publishing spaces; they cannot replace an existing version or delete modules.
 - Global administrators may replace an existing local release in any writable space. Team administrators may replace one only in their managed primary team space. Replacement uploads a new content-addressed object, atomically switches SQL metadata, and queues the superseded object for durable deletion; clients that cached the previous checksum may need to retry.
 - Deleting modules and versions is allowed for global admins in any namespace and for OIDC team admins only in their primary team space.
-- Extra publishing spaces are assigned or unassigned only by global administrators under `/manage/admin/spaces`. They allow publishing/updating, but do not grant delete ownership.
+- Official Forge imports can be deleted only by global administrators, even if their owner matches a team name. Any module containing an upstream release is protected, including mixed local/upstream modules. This applies to normal and forced deletion through both the API and Manage.
+- One team owns one namespace. Create a separate team for a shared namespace and configure that team's membership.
 - OIDC team-admin mappings allow editing tokens and OIDC groups only for the mapped team.
 - OIDC admin mappings grant global access to `/manage/admin/*` and delete access in any namespace.
 - `PUBLIC_MODULE_ACCESS=false` requires a token with read, publish, or admin privileges for install/API routes: read API, release downloads, extracted module files, and `/v3/*`.
@@ -497,7 +498,7 @@ and include the boolean claim in ID tokens.
 - `PUBLIC_BASE_URL` is optional and is only a fallback. The request `Host` is used by default, so multiple ingress hostnames work without a canonical URL.
 - Forwarded host/proto are ignored unless `TRUST_FORWARDED_HEADERS=true` and the direct peer matches `TRUSTED_PROXY_CIDRS`. Configure both behind an ingress when HTTPS termination requires the protocol to be forwarded. Use `ALLOWED_PUBLIC_HOSTS` for a fixed host set; leave it empty only when ingress routing and the identity-provider redirect policy restrict a controlled dynamic DNS zone.
 - Kubernetes ingress should forward the real host and scheme through `X-Forwarded-Host`/`X-Forwarded-Proto` or RFC `Forwarded`.
-- Team web UI access maps OIDC users to teams through `oidc_groups`.
+- Team web UI access maps OIDC users to teams through `oidc_reader_groups`.
 - Delegated team-admin access maps OIDC users through `oidc_team_admin_emails` or `oidc_team_admin_groups`.
 
 Configure OIDC through runtime environment variables or their command-line
@@ -569,24 +570,24 @@ For groups, prefer OIDC groups over individual emails:
 ```json
 {
   "team": "teamname",
-  "oidc_groups": ["teamname-devops"]
+  "oidc_reader_groups": ["teamname-devops"]
 }
 ```
 
-In Authentik, add users to the `teamname-devops` group and ensure the application/provider sends the `groups` claim in the ID token. For team access, `oidc_groups` grants publishing access to the publishing space named after `Team`. If the team also needs other spaces, a global administrator assigns them under `/manage/admin/spaces`.
+In Authentik, send the `groups` claim in ID tokens. Map team readers through `oidc_reader_groups` and team administrators through `oidc_team_admin_groups`. Reader mappings never grant publishing rights; CI uploads use publish tokens and await administrative approval.
 
 To let a team manage its own tokens and OIDC groups, add `OIDC team admins`. For one or two people, emails are convenient; when the list grows, use a group:
 
 ```json
 {
   "team": "teamname",
-  "oidc_groups": ["teamname-devops"],
+  "oidc_reader_groups": ["teamname-devops"],
   "oidc_team_admin_emails": ["owner@example.com"],
   "oidc_team_admin_groups": ["teamname-admins"]
 }
 ```
 
-A user with email `owner@example.com` or group `teamname-admins` can open `/manage/teams` and the separate Access, Tokens, and Modules pages for `teamname`. The same user cannot edit other teams, global admins, JSON config, or extra publishing spaces. Team admins can delete modules and versions only in the team's primary space. Extra publishing spaces remain publishing and update scope only; deletion there is global-admin-only.
+A user mapped through `oidc_team_admin_emails` or `oidc_team_admin_groups` administers only the mapped teams. Team admins can inspect and approve Pending releases, manage team access/tokens and delete owned resources with the documented usage checks or audited override.
 
 The same OIDC team-admin email or group can be added to multiple teams. The user will be able to edit all mapped teams under `/manage/teams`, but still cannot access unrelated teams or global admin settings.
 
@@ -612,7 +613,7 @@ To add yourself as an admin after the first startup:
 
 `ADMIN_TOKEN` should be kept for bootstrap/break-glass access, for example when OIDC is unavailable. Use OIDC admin groups or emails for daily access.
 
-Create and edit teams through `/manage/teams`, assign extra publishing spaces through `/manage/admin/spaces`, and configure global OIDC administrators through `/manage/admin/access`. The service intentionally provides no full-config JSON replacement endpoint.
+Create and edit teams through `/manage/teams`, and configure global OIDC administrators through `/manage/admin/access`. Each team owns one namespace; there is no full-config JSON replacement endpoint. See [Release Review](RELEASE_REVIEW.md) for approval and comparison.
 
 Access tokens are intentionally absent from this JSON contract. Create, rotate, and revoke them in `/manage/teams/{team}/tokens`; a newly generated raw token is displayed exactly once.
 

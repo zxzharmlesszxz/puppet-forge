@@ -86,6 +86,7 @@ func (e protectedDeleteError) Unwrap() error {
 }
 
 type ModuleService struct {
+	reviewSlots           chan struct{}
 	modules               store.ModuleStore
 	access                store.AccessStore
 	rateLimits            store.RateLimitStore
@@ -102,12 +103,13 @@ func NewModuleService(modules store.ModuleStore, artifacts storage.ArtifactStora
 	access, _ := modules.(store.AccessStore)
 	rateLimits, _ := modules.(store.RateLimitStore)
 	return &ModuleService{
-		modules:    modules,
-		access:     access,
-		rateLimits: rateLimits,
-		artifacts:  artifacts,
-		prefix:     prefix,
-		upstream:   upstream,
+		reviewSlots: make(chan struct{}, 2),
+		modules:     modules,
+		access:      access,
+		rateLimits:  rateLimits,
+		artifacts:   artifacts,
+		prefix:      prefix,
+		upstream:    upstream,
 		releaseUsageThrottle: throttle.NewExpirySet(
 			defaultReleaseUsageMaxEntries,
 			releaseUsageRecordInterval,
@@ -221,7 +223,11 @@ func (s *ModuleService) publish(ctx context.Context, input domain.PublishModuleI
 				metrics.ObservePublish(err)
 				return domain.Release{}, err
 			}
-			existing.DownloadURL = s.artifacts.PublicURL(existing.StoragePath)
+			existing.DownloadURL = ""
+			existing.Status, err = s.ResourceStatus(ctx, existing.Owner, existing.Name, existing.Version)
+			if err != nil {
+				return domain.Release{}, err
+			}
 			if event, pending := store.PendingMutationAudit(ctx); pending {
 				if err := s.RecordAuditEvent(ctx, event); err != nil {
 					metrics.ObservePublish(err)
@@ -282,6 +288,10 @@ func (s *ModuleService) publish(ctx context.Context, input domain.PublishModuleI
 		input.SizeBytes,
 		input.Metadata,
 	)
+	release.InitialState = domain.StateAvailable
+	if input.AwaitApproval {
+		release.InitialState = domain.StatePending
+	}
 
 	if input.Replace {
 		release, err = s.modules.CreateRelease(ctx, release)
@@ -292,7 +302,11 @@ func (s *ModuleService) publish(ctx context.Context, input domain.PublishModuleI
 		committed, getErr := s.modules.GetRelease(ctx, input.Owner, input.Name, input.Version)
 		if getErr == nil &&
 			committed.Source == "local" && committed.SHA256 == shaHex && committed.StoragePath == objectPath {
-			committed.DownloadURL = s.artifacts.PublicURL(committed.StoragePath)
+			committed.DownloadURL = ""
+			committed.Status, getErr = s.ResourceStatus(ctx, committed.Owner, committed.Name, committed.Version)
+			if getErr != nil {
+				return domain.Release{}, getErr
+			}
 			metrics.ObservePublish(nil)
 			return committed, nil
 		}
@@ -307,7 +321,11 @@ func (s *ModuleService) publish(ctx context.Context, input domain.PublishModuleI
 	}
 
 	metrics.ObservePublish(nil)
-	release.DownloadURL = s.artifacts.PublicURL(release.StoragePath)
+	release.DownloadURL = ""
+	release.Status, err = s.ResourceStatus(ctx, release.Owner, release.Name, release.Version)
+	if err != nil {
+		return domain.Release{}, err
+	}
 	return release, nil
 }
 
@@ -471,20 +489,7 @@ func (s *ModuleService) DeleteModuleIfAllowed(ctx context.Context, owner, name s
 	}
 	defer releaseModuleLock(unlock, owner, name)
 
-	versions, err := s.modules.ListReleases(ctx, owner, name)
-	if err != nil {
-		return err
-	}
-	for _, version := range versions {
-		active, err := s.isReleaseActive(ctx, owner, name, version.Version, activeSince)
-		if err != nil {
-			return err
-		}
-		if active {
-			return protectedDeleteError{message: fmt.Sprintf("module contains active release %s/%s %s cannot be deleted", owner, name, version.Version)}
-		}
-	}
-	return s.deleteModuleLocked(ctx, owner, name)
+	return s.deleteUnusedLocked(ctx, owner, name, "", activeSince)
 }
 
 func (s *ModuleService) deleteModuleLocked(ctx context.Context, owner, name string) error {
@@ -507,21 +512,7 @@ func (s *ModuleService) DeleteReleaseIfAllowed(ctx context.Context, owner, name,
 	}
 	defer releaseModuleLock(unlock, owner, name)
 
-	module, err := s.modules.GetModule(ctx, owner, name)
-	if err != nil {
-		return err
-	}
-	if module.LatestVersion == version {
-		return protectedDeleteError{message: fmt.Sprintf("latest release %s/%s %s cannot be deleted", owner, name, version)}
-	}
-	active, err := s.isReleaseActive(ctx, owner, name, version, activeSince)
-	if err != nil {
-		return err
-	}
-	if active {
-		return protectedDeleteError{message: fmt.Sprintf("active release %s/%s %s cannot be deleted", owner, name, version)}
-	}
-	return s.deleteReleaseLocked(ctx, owner, name, version)
+	return s.deleteUnusedLocked(ctx, owner, name, version, activeSince)
 }
 
 func (s *ModuleService) deleteReleaseLocked(ctx context.Context, owner, name, version string) error {
@@ -620,7 +611,22 @@ func (s *ModuleService) processArtifactDeletion(ctx context.Context, deletionSto
 }
 
 func (s *ModuleService) ListReleases(ctx context.Context, owner, name string) ([]domain.ModuleVersion, error) {
-	return s.modules.ListReleases(ctx, owner, name)
+	versions, err := s.modules.ListReleases(ctx, owner, name)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]domain.ModuleVersion, 0, len(versions))
+	for _, version := range versions {
+		version.Status, err = s.ResourceStatus(ctx, owner, name, version.Version)
+		if err != nil {
+			return nil, err
+		}
+		if store.IsReadableCatalog(ctx) && !version.Status.State.Readable() {
+			continue
+		}
+		result = append(result, version)
+	}
+	return result, nil
 }
 
 func (s *ModuleService) ListAllReleases(ctx context.Context) ([]store.ReleaseSummary, error) {
@@ -636,7 +642,12 @@ func (s *ModuleService) ListReleasesPageFiltered(ctx context.Context, module, ve
 }
 
 func (s *ModuleService) GetStoredRelease(ctx context.Context, owner, name, version string) (domain.Release, error) {
-	return s.modules.GetRelease(ctx, owner, name, version)
+	release, err := s.modules.GetRelease(ctx, owner, name, version)
+	if err != nil {
+		return domain.Release{}, err
+	}
+	release.Status, err = s.ResourceStatus(ctx, owner, name, version)
+	return release, err
 }
 
 func (s *ModuleService) ListReleasesForModules(ctx context.Context, modules []domain.Module) (map[string][]domain.ModuleVersion, error) {
@@ -809,7 +820,12 @@ func (s *ModuleService) ListActiveReleasesForModules(ctx context.Context, since 
 }
 
 func (s *ModuleService) GetModule(ctx context.Context, owner, name string) (domain.Module, error) {
-	return s.modules.GetModule(ctx, owner, name)
+	module, err := s.modules.GetModule(ctx, owner, name)
+	if err != nil {
+		return domain.Module{}, err
+	}
+	module.Status, err = s.ResourceStatus(ctx, owner, name, "")
+	return module, err
 }
 
 func (s *ModuleService) GetModuleBySlug(ctx context.Context, slug string) (domain.Module, error) {
@@ -817,7 +833,11 @@ func (s *ModuleService) GetModuleBySlug(ctx context.Context, slug string) (domai
 	if !ok {
 		return domain.Module{}, store.ErrNotFound
 	}
-	return slugStore.GetModuleBySlug(ctx, slug)
+	module, err := slugStore.GetModuleBySlug(ctx, slug)
+	if err != nil {
+		return domain.Module{}, err
+	}
+	return s.GetModule(ctx, module.Owner, module.Name)
 }
 
 func (s *ModuleService) GetReleaseBySlug(ctx context.Context, slug string) (domain.Release, error) {
@@ -845,6 +865,9 @@ func (s *ModuleService) GetReleaseBySlug(ctx context.Context, slug string) (doma
 }
 
 func (s *ModuleService) GetRelease(ctx context.Context, owner, name, version string) (domain.Release, error) {
+	if err := s.RequireAvailable(ctx, owner, name, version); err != nil {
+		return domain.Release{}, err
+	}
 	release, err := s.modules.GetRelease(ctx, owner, name, version)
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) || s.upstream == nil {
@@ -862,13 +885,9 @@ func (s *ModuleService) GetRelease(ctx context.Context, owner, name, version str
 			return domain.Release{}, err
 		}
 	}
-	if release.Source == "upstream" {
-		release.DownloadURL = release.UpstreamFileURI
-		return release, nil
-	}
-
-	release.DownloadURL = s.artifacts.PublicURL(release.StoragePath)
-	return release, nil
+	release.DownloadURL = ""
+	release.Status, err = s.ResourceStatus(ctx, owner, name, version)
+	return release, err
 }
 
 func (s *ModuleService) hydrateUpstreamRelease(ctx context.Context, snapshot domain.Release) (domain.Release, error) {
@@ -914,6 +933,9 @@ func sameReleaseArtifact(left, right domain.Release) bool {
 }
 
 func (s *ModuleService) restoreUpstreamRelease(ctx context.Context, owner, name, version string) (domain.Release, error) {
+	if err := s.RequireAvailable(ctx, owner, name, version); err != nil {
+		return domain.Release{}, err
+	}
 	slug := owner + "-" + name + "-" + version
 	upstreamRelease, err := s.upstream.FetchRelease(ctx, slug)
 	if err != nil {
@@ -950,6 +972,9 @@ func (s *ModuleService) restoreUpstreamRelease(ctx context.Context, owner, name,
 		return domain.Release{}, err
 	}
 	defer releaseModuleLock(unlock, owner, name)
+	if err := s.RequireAvailable(ctx, owner, name, version); err != nil {
+		return domain.Release{}, err
+	}
 	module, err := s.modules.UpsertModule(ctx, owner, name)
 	if err != nil {
 		return domain.Release{}, err
@@ -963,7 +988,7 @@ func (s *ModuleService) restoreUpstreamRelease(ctx context.Context, owner, name,
 	if err != nil {
 		return domain.Release{}, err
 	}
-	saved.DownloadURL = saved.UpstreamFileURI
+	saved.DownloadURL = ""
 	return saved, nil
 }
 
@@ -999,7 +1024,15 @@ func (s *ModuleService) OpenReleaseArchive(ctx context.Context, owner, name, ver
 	return s.openReleaseArchive(ctx, release)
 }
 
+// OpenReleaseArchiveSnapshot opens the same immutable object used to prepare response headers.
+func (s *ModuleService) OpenReleaseArchiveSnapshot(ctx context.Context, release domain.Release) (storage.ObjectReader, error) {
+	return s.openReleaseArchive(ctx, release)
+}
+
 func (s *ModuleService) openReleaseArchive(ctx context.Context, release domain.Release) (storage.ObjectReader, error) {
+	if err := s.RequireAvailable(ctx, release.Owner, release.Name, release.Version); err != nil {
+		return storage.ObjectReader{}, err
+	}
 	archivePath := releaseArchivePath(release)
 	if archivePath == "" {
 		return storage.ObjectReader{}, store.ErrNotFound
@@ -1017,6 +1050,9 @@ func (s *ModuleService) openReleaseArchive(ctx context.Context, release domain.R
 }
 
 func (s *ModuleService) StatReleaseArchive(ctx context.Context, release domain.Release) (storage.ObjectAttrs, error) {
+	if err := s.RequireAvailable(ctx, release.Owner, release.Name, release.Version); err != nil {
+		return storage.ObjectAttrs{}, err
+	}
 	archivePath := releaseArchivePath(release)
 	if archivePath == "" {
 		return storage.ObjectAttrs{}, store.ErrNotFound
@@ -1032,6 +1068,9 @@ func (s *ModuleService) StatReleaseArchive(ctx context.Context, release domain.R
 }
 
 func (s *ModuleService) OpenReleaseArchiveRange(ctx context.Context, release domain.Release, offset, length int64) (storage.ObjectReader, error) {
+	if err := s.RequireAvailable(ctx, release.Owner, release.Name, release.Version); err != nil {
+		return storage.ObjectReader{}, err
+	}
 	rangeStorage, ok := s.artifacts.(storage.RangeArtifactStorage)
 	if !ok {
 		return storage.ObjectReader{}, errors.New("artifact storage does not support range reads")
@@ -1061,6 +1100,9 @@ func releaseArchivePath(release domain.Release) string {
 }
 
 func (s *ModuleService) EnsureReleaseChecksums(ctx context.Context, release domain.Release) (domain.Release, error) {
+	if err := s.RequireAvailable(ctx, release.Owner, release.Name, release.Version); err != nil {
+		return domain.Release{}, err
+	}
 	checksumsComplete := release.MD5 != "" && release.SHA256 != "" && release.SizeBytes > 0
 	if checksumsComplete {
 		if release.Source != "upstream" {
@@ -1496,6 +1538,12 @@ func upstreamDomainRelease(module domain.Module, upstreamRelease proxy.UpstreamR
 }
 
 func (s *ModuleService) isDeletedUpstreamRelease(ctx context.Context, owner, name, version string) (bool, error) {
+	if err := s.RequireAvailable(ctx, owner, name, version); err != nil {
+		if errors.Is(err, ErrUnavailable) {
+			return true, nil
+		}
+		return false, err
+	}
 	deletedStore, ok := s.modules.(store.DeletedReleaseStore)
 	if !ok {
 		return false, nil

@@ -6,17 +6,19 @@ import (
 )
 
 type Module struct {
-	ID            string    `json:"id"`
-	Owner         string    `json:"owner"`
-	Name          string    `json:"name"`
-	LatestVersion string    `json:"latest_version,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	Status        ResourceStatus `json:"status"`
+	ID            string         `json:"id"`
+	Owner         string         `json:"owner"`
+	Name          string         `json:"name"`
+	LatestVersion string         `json:"latest_version,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
 type ModuleVersion struct {
-	Version   string    `json:"version"`
-	CreatedAt time.Time `json:"created_at"`
+	Status    ResourceStatus `json:"status"`
+	Version   string         `json:"version"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 
 type ReleaseMetricSummary struct {
@@ -26,6 +28,8 @@ type ReleaseMetricSummary struct {
 }
 
 type Release struct {
+	Status          ResourceStatus `json:"status"`
+	InitialState    ResourceState  `json:"-"`
 	ID              string         `json:"id"`
 	ModuleID        string         `json:"module_id"`
 	Owner           string         `json:"owner"`
@@ -48,16 +52,17 @@ type Release struct {
 }
 
 type PublishModuleInput struct {
-	Owner       string
-	Name        string
-	Version     string
-	Replace     bool
-	Description string
-	Readme      string
-	FileName    string
-	ContentType string
-	FileBytes   []byte
-	File        io.ReadSeeker
-	SizeBytes   int64
-	Metadata    map[string]any
+	AwaitApproval bool
+	Owner         string
+	Name          string
+	Version       string
+	Replace       bool
+	Description   string
+	Readme        string
+	FileName      string
+	ContentType   string
+	FileBytes     []byte
+	File          io.ReadSeeker
+	SizeBytes     int64
+	Metadata      map[string]any
 }

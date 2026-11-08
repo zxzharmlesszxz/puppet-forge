@@ -13,7 +13,7 @@
 
 {{template "notices" (notices .Message .Error)}}
 
-{{if .Principal.CanPublish}}
+{{if or .Principal.CanAdmin .Principal.CanManageTeam}}
 <section class="panel content-panel">
   <details class="panel-disclosure" data-section-key="upload-or-update">
     <summary><h2>Upload or Update</h2></summary>

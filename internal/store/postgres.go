@@ -462,6 +462,9 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) (returnErr 
 			}
 		}
 	}
+	if _, err := conn.Exec(ctx, lifecycleSchema); err != nil {
+		return fmt.Errorf("create lifecycle schema: %w", err)
+	}
 	if err := migratePostgresCanonicalSlugs(ctx, conn); err != nil {
 		return err
 	}
@@ -496,6 +499,9 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) (returnErr 
 		create index if not exists idx_rate_limits_reset_at on rate_limits (reset_at);
 	`); err != nil {
 		return fmt.Errorf("ensure postgres query indexes: %w", err)
+	}
+	if _, err := conn.Exec(ctx, `insert into access_teams (team) select distinct owner from access_publish_owners on conflict (team) do nothing; delete from access_publish_owners;`); err != nil {
+		return fmt.Errorf("migrate namespaces to teams: %w", err)
 	}
 	if _, err := conn.Exec(ctx, `update schema_metadata set version = $1 where id = 1`, currentSchemaVersion); err != nil {
 		return fmt.Errorf("update postgres schema version: %w", err)
@@ -1253,6 +1259,9 @@ func (s *PostgresStore) createRelease(ctx context.Context, release domain.Releas
 		}
 	}
 
+	if err := initializePostgresStatus(ctx, tx, release); err != nil {
+		return domain.Release{}, err
+	}
 	if err := finishReleaseMutation(release, postgresMutationWriter{ctx: ctx, tx: tx}); err != nil {
 		return domain.Release{}, err
 	}
@@ -1306,6 +1315,7 @@ func (s *PostgresStore) ListModulesPagePrioritized(ctx context.Context, owners, 
 		)
 			and ($1 = '' or strpos(lower(owner || '/' || name), lower($1)) > 0)
 			and (coalesce(cardinality($2::text[]), 0) = 0 or owner = any($2::text[]))
+			and (not $6 or (` + readableModulePredicate + `))
 		order by case when owner = any($3::text[]) then 0 else 1 end,
 			updated_at desc, owner asc, name asc, id asc
 		limit $4
@@ -1317,7 +1327,7 @@ func (s *PostgresStore) ListModulesPagePrioritized(ctx context.Context, owners, 
 	if err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.pool.Query(ctx, query, search, owners, priorityOwners, limit, offset)
+	rows, err := s.pool.Query(ctx, query, search, owners, priorityOwners, limit, offset, IsReadableCatalog(ctx))
 	if err != nil {
 		return nil, 0, fmt.Errorf("list modules: %w", err)
 	}
@@ -1356,9 +1366,10 @@ func (s *PostgresStore) countFilteredModulesWithReleases(ctx context.Context, ow
 		)
 			and ($1 = '' or strpos(lower(owner || '/' || name), lower($1)) > 0)
 			and (coalesce(cardinality($2::text[]), 0) = 0 or owner = any($2::text[]))
+			and (not $3 or (` + readableModulePredicate + `))
 	`
 	var total int
-	if err := s.pool.QueryRow(ctx, query, search, owners).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, query, search, owners, IsReadableCatalog(ctx)).Scan(&total); err != nil {
 		return 0, fmt.Errorf("count modules: %w", err)
 	}
 	return total, nil
@@ -1507,6 +1518,9 @@ func (s *PostgresStore) DeleteModule(ctx context.Context, owner, name string) er
 		where owner = $1 and name = $2
 	`
 
+	if err := writePostgresStatus(ctx, tx, owner, name, "", domain.ResourceStatus{State: domain.StateDeleted, ChangedAt: time.Now().UTC()}); err != nil {
+		return err
+	}
 	tag, err := tx.Exec(ctx, query, owner, name)
 	if err != nil {
 		return fmt.Errorf("delete module: %w", err)
@@ -1580,6 +1594,9 @@ func (s *PostgresStore) DeleteRelease(ctx context.Context, owner, name, version 
 		  and r.version = $3
 	`
 
+	if err := writePostgresStatus(ctx, tx, owner, name, version, domain.ResourceStatus{State: domain.StateDeleted, ChangedAt: time.Now().UTC()}); err != nil {
+		return err
+	}
 	tag, err := tx.Exec(ctx, deleteQuery, owner, name, version)
 	if err != nil {
 		return fmt.Errorf("delete release: %w", err)
@@ -1771,7 +1788,7 @@ func postgresModuleID(ctx context.Context, tx pgx.Tx, owner, name string) (strin
 
 func postgresLatestVersion(ctx context.Context, tx pgx.Tx, moduleID string) (string, error) {
 	rows, err := tx.Query(ctx, `
-		select version from releases where module_id = $1
+		select r.version from releases r join modules m on m.id=r.module_id left join resource_states s on s.owner=m.owner and s.name=m.name and s.version=r.version where r.module_id = $1 and coalesce(s.state,'available') in ('available','deprecated')
 	`, moduleID)
 	if err != nil {
 		return "", fmt.Errorf("list versions for latest: %w", err)
@@ -1793,12 +1810,7 @@ func postgresLatestVersion(ctx context.Context, tx pgx.Tx, moduleID string) (str
 }
 
 func (w postgresMutationWriter) currentLatestVersion(moduleID string) (string, error) {
-	var latest string
-	err := w.tx.QueryRow(w.ctx, `select coalesce(latest_version, '') from modules where id = $1 for update`, moduleID).Scan(&latest)
-	if err != nil {
-		return "", fmt.Errorf("get current latest version: %w", err)
-	}
-	return latest, nil
+	return postgresLatestVersion(w.ctx, w.tx, moduleID)
 }
 
 func (w postgresMutationWriter) updateLatestVersion(moduleID, latest string) error {

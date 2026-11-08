@@ -20,7 +20,7 @@
     <span class="spaces">{{range .Spaces}}<span class="badge">{{.}}</span>{{end}}</span>
     <span class="metric"><strong>{{.ModuleCount}}</strong><span>modules</span></span>
     <span class="metric"><strong>{{.PublishTokens}} / {{.ReadTokens}}</strong><span>publish / read tokens</span></span>
-    <span class="metric"><strong>{{.PublishGroups}} / {{.TeamAdminUsers}} / {{.TeamAdminGroups}}</strong><span>publish groups / admin users / admin groups</span></span>
+    <span class="metric"><strong>{{.ReaderGroups}} / {{.TeamAdminUsers}} / {{.TeamAdminGroups}}</strong><span>reader groups / admin users / admin groups</span></span>
   </a>
   {{end}}
   {{else}}

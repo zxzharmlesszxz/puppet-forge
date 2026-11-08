@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
@@ -13,6 +14,39 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/webauth"
 )
+
+func TestModerationAuditDisplaysDecisionAndComment(t *testing.T) {
+	for _, decision := range []struct{ action, from, to string }{
+		{"approve", "pending", "available"}, {"block", "available", "blocked"},
+		{"unblock", "blocked", "pending"}, {"deprecate", "available", "deprecated"},
+	} {
+		for _, commentKey := range []string{"reason", "justification"} {
+			t.Run(decision.action+"/"+commentKey, func(t *testing.T) {
+				event := store.AuditEvent{Action: "moderate_resource", Result: "success", Reason: "none", Attributes: map[string]string{
+					"moderation_action": decision.action, "from_state": decision.from, "to_state": decision.to,
+					"replacement": "<script>replacement</script>", commentKey: "<script>comment</script>", "sha256": "reviewed-sha", "module": "teamname/demo", "release": "1.0.0", "token_hash": "must-not-render",
+				}}
+				rows := manageAuditRows([]store.AuditEvent{event})
+				if len(rows) != 1 || !strings.Contains(rows[0].Details, "Decision: "+decision.action) || !strings.Contains(rows[0].Details, decision.from+" -> "+decision.to) || rows[0].Justification != event.Attributes[commentKey] {
+					t.Fatalf("incomplete moderation audit: %#v", rows)
+				}
+				for _, title := range []string{"Audit log", "Team audit log"} {
+					rec := httptest.NewRecorder()
+					executeHTMLTemplate(rec, manageAuditTemplate, manageAuditData{Title: title, Events: rows})
+					body := rec.Body.String()
+					for _, expected := range []string{"Decision: " + decision.action, "reviewed-sha", "&lt;script&gt;comment&lt;/script&gt;", "&lt;script&gt;replacement&lt;/script&gt;"} {
+						if !strings.Contains(body, expected) {
+							t.Fatalf("%s misses %q: %s", title, expected, body)
+						}
+					}
+					if strings.Contains(body, "<script>comment") || strings.Contains(body, "must-not-render") {
+						t.Fatal("audit rendered unsafe content or hidden credentials")
+					}
+				}
+			})
+		}
+	}
+}
 
 type cancelAfterModuleDeleteStore struct {
 	*store.SQLiteStore
@@ -77,7 +111,7 @@ func TestOIDCAuditTeamsUsesActualMemberships(t *testing.T) {
 	configs := []auth.TeamConfig{
 		{Team: auth.GlobalAdminTeam, OIDCAdminGroups: []string{"global-admins"}},
 		{Team: "teamtwo", OIDCTeamAdminGroups: []string{"team-admins"}},
-		{Team: "teamone", OIDCEmails: []string{"member@example.com"}},
+		{Team: "teamone", OIDCEmails: []string{"member@example.com"}, OIDCReaderGroups: []string{"readers"}},
 		{Team: "unrelated", PublishOwners: []string{"teamone"}},
 	}
 	for _, tc := range []struct {
@@ -86,6 +120,8 @@ func TestOIDCAuditTeamsUsesActualMemberships(t *testing.T) {
 	}{
 		{webauth.Session{Email: "member@example.com", EmailVerified: true, Groups: []string{"global-admins", "team-admins"}}, []string{"teamone", "teamtwo"}},
 		{webauth.Session{Email: "member@example.com", Groups: []string{"team-admins"}}, []string{"teamtwo"}},
+		{webauth.Session{Groups: []string{"readers"}}, []string{"teamone"}},
+		{webauth.Session{Groups: []string{"global-admins", "readers"}}, []string{"teamone"}},
 		{webauth.Session{Groups: []string{"global-admins"}}, nil},
 		{webauth.Session{Groups: []string{"unknown"}}, nil},
 	} {
@@ -104,7 +140,7 @@ func TestOIDCLoginAuditAppearsInEveryMemberTeam(t *testing.T) {
 	ctx := t.Context()
 	st := newHTTPAPITestStore(t)
 	if err := st.ReplaceTeamConfigs(ctx, []auth.TeamConfig{
-		{Team: "teamone", OIDCGroups: []string{"members"}},
+		{Team: "teamone", OIDCReaderGroups: []string{"members"}},
 		{Team: "teamtwo", OIDCTeamAdminGroups: []string{"members"}},
 	}); err != nil {
 		t.Fatal(err)
