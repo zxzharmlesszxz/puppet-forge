@@ -1,8 +1,15 @@
-{{define "layout-styles"}}<link rel="stylesheet" href="/assets/manage.css">{{end}}
+{{define "layout-styles"}}
+<!--suppress HtmlUnknownTarget -->
+<link rel="stylesheet" href="/assets/manage.css">
+{{end}}
 {{define "page-navigation"}}{{template "manage-navigation" .Navigation}}{{end}}
 {{define "layout-scripts"}}
+<!--suppress HtmlUnknownTarget -->
 <script nonce="{{.Navigation.CSPNonce}}" src="/assets/notices.js" defer></script>
+<!--suppress HtmlUnknownTarget -->
 <script nonce="{{.Navigation.CSPNonce}}" src="/assets/page-size-persistence.js" defer></script>
+<!--suppress HtmlUnknownTarget -->
 <script nonce="{{.Navigation.CSPNonce}}" src="/assets/async-lists.js" defer></script>
+<!--suppress HtmlUnknownTarget -->
 <script nonce="{{.Navigation.CSPNonce}}" src="/assets/sections.js" defer></script>
 {{end}}

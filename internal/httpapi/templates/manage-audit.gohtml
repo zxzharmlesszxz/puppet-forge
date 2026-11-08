@@ -2,7 +2,10 @@
 
 {{define "page-title"}}{{.Title}}{{end}}
 
-{{define "page-styles"}}<link rel="stylesheet" href="/assets/manage-audit.css">{{end}}
+{{define "page-styles"}}
+<!--suppress HtmlUnknownTarget -->
+<link rel="stylesheet" href="/assets/manage-audit.css">
+{{end}}
 
 {{define "page-subtitle"}}<div class="subtitle">Persistent security events for administrative changes, publication, authentication, and module deletion. Force-delete comments are shown with their target and request ID.</div>{{end}}
 

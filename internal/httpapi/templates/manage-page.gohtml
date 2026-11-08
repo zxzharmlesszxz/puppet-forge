@@ -2,7 +2,10 @@
 
 {{define "page-title"}}Manage Modules{{end}}
 
-{{define "page-styles"}}<link rel="stylesheet" href="/assets/manage-page.css">{{end}}
+{{define "page-styles"}}
+<!--suppress HtmlUnknownTarget -->
+<link rel="stylesheet" href="/assets/manage-page.css">
+{{end}}
 
 {{define "page-subtitle"}}<div class="meta">{{if .Principal.CanAdmin}}Global administrator{{if .Teams}} · {{if eq (len .Teams) 1}}Team:{{else}}Teams:{{end}} {{range $i, $team := .Teams}}{{if $i}}, {{end}}{{$team}}{{end}}{{end}}{{else}}{{if eq (len .Teams) 1}}Team:{{else}}Teams:{{end}} {{range $i, $team := .Teams}}{{if $i}}, {{end}}{{$team}}{{end}}{{end}}{{if .Owners}} · spaces: {{range $i, $owner := .Owners}}{{if $i}}, {{end}}{{$owner}}{{end}}{{end}}</div>{{end}}
 
@@ -48,6 +51,7 @@
 <section class="panel content-panel" id="manage-module-list" data-async-list>
   <h2>Modules</h2>
   {{template "list-filter" .Filter}}
+  {{template "module-state-legend"}}
   {{if .Modules}}
   {{range .Modules}}
   {{template "manage-module-card" .}}

@@ -2,7 +2,10 @@
 
 {{define "page-title"}}{{.Module.Owner}}/{{.Module.Name}}{{end}}
 
-{{define "page-styles"}}<link rel="stylesheet" href="/assets/module-page.css">{{end}}
+{{define "page-styles"}}
+<!--suppress HtmlUnknownTarget -->
+<link rel="stylesheet" href="/assets/module-page.css">
+{{end}}
 
 {{define "page-content"}}
 <section class="hero">
@@ -92,6 +95,8 @@ mod "{{.ModuleInstallID}}", "{{.Release.Version}}"</code></pre>
 {{end}}
 
 {{define "page-scripts"}}
+<!--suppress HtmlUnknownTarget -->
 <script nonce="{{.Navigation.CSPNonce}}" src="/assets/clipboard.js" defer></script>
+<!--suppress HtmlUnknownTarget -->
 <script nonce="{{.Navigation.CSPNonce}}" src="/assets/module-page.js" defer></script>
 {{end}}

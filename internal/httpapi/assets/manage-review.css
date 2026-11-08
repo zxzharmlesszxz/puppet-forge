@@ -48,7 +48,13 @@
 .review-warning { background: #fff4ce; color: #674e00; overflow-wrap: anywhere; }
 .review-eof { font-size: 12px; color: var(--muted); }
 .status-added { color: #206739; }.status-removed { color: #a12d29; }.status-modified { color: #845600; }
-.syntax-keyword { color: #8a278f; font-weight: 600; }.syntax-comment { color: #5f6b73; font-style: italic; }.syntax-string { color: #17613a; }.syntax-number { color: #7d4308; }.syntax-name { color: #15578a; }.syntax-operator { color: #8d273d; }
+/* Syntax classes are emitted by the Go highlighter. */
+.syntax-keyword { color: #8a278f; font-weight: 600; }
+.syntax-comment { color: #5f6b73; font-style: italic; }
+.syntax-string { color: #17613a; }
+.syntax-number { color: #7d4308; }
+.syntax-name { color: #15578a; }
+.syntax-operator { color: #8d273d; }
 .wrap-code .review-code code { white-space: pre-wrap; overflow-wrap: anywhere; }
 [hidden] { display: none !important; }
 @media (max-width: 800px) { .review-workspace { grid-template-columns: minmax(0, 1fr); }.review-sidebar { max-height: 240px; border-right: 0; border-bottom: 1px solid var(--line); }.review-options label { flex: 1 1 150px; }.review-options select { width: 100%; } }

@@ -16,6 +16,45 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
 
+func TestModuleStateIndicatorsAndLegend(t *testing.T) {
+	t.Parallel()
+	for _, state := range []domain.ResourceState{"", domain.StateAvailable, domain.StatePending, domain.StateDeprecated, domain.StateBlocked, domain.StateDeleted} {
+		var output bytes.Buffer
+		if err := managePageTemplate.ExecuteTemplate(&output, "module-state", state); err != nil {
+			t.Fatal(err)
+		}
+		if state == "" {
+			state = domain.StateAvailable
+		}
+		for _, want := range []string{`class="module-state state-` + string(state) + `"`, `aria-label="` + string(state) + `"`, `title="` + string(state) + `"`} {
+			if !strings.Contains(output.String(), want) {
+				t.Errorf("state indicator misses %s: %s", want, output.String())
+			}
+		}
+	}
+	var output bytes.Buffer
+	row := manageModuleRow{Module: domain.Module{Owner: "teamname", Name: "demo"}, Versions: []manageVersionRow{{Version: "1.0.0", Latest: true, Active: true}}}
+	if err := managePageTemplate.ExecuteTemplate(&output, "manage-module-card", row); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`>latest</span>`, `>in use</span>`, `aria-label="available"`} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("module card misses %s", want)
+		}
+	}
+	for _, page := range []*template.Template{managePageTemplate, manageTeamTemplate} {
+		output.Reset()
+		if err := page.ExecuteTemplate(&output, "module-state-legend", nil); err != nil {
+			t.Fatal(err)
+		}
+		for _, label := range []string{"Available", "Pending approval", "Deprecated", "Blocked", "Deleted", "Current version", "Recently downloaded"} {
+			if !strings.Contains(output.String(), label) {
+				t.Errorf("legend misses %s", label)
+			}
+		}
+	}
+}
+
 func testAssetSource(t *testing.T, names ...string) string {
 	t.Helper()
 	var source strings.Builder

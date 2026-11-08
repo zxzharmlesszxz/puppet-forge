@@ -1,6 +1,9 @@
 {{template "layout" .}}
 {{define "page-title"}}Release review{{end}}
-{{define "page-styles"}}<link rel="stylesheet" href="/assets/manage-review.css">{{end}}
+{{define "page-styles"}}
+<!--suppress HtmlUnknownTarget -->
+<link rel="stylesheet" href="/assets/manage-review.css">
+{{end}}
 {{define "page-content"}}
 {{template "page-header" .}}
 <section id="release-review" aria-label="Release review">
@@ -62,4 +65,7 @@
 {{define "review-tree"}}
 {{range .}}<li{{if .File}} data-review-file="{{.File.Path}}"{{end}}>{{if .File}}<a href="{{.File.URL}}" data-review-link class="status-{{.File.Status}}"{{if .File.Selected}} aria-current="true"{{end}}><span>{{.Name}}</span><small>{{.File.Status}}</small></a>{{else}}<details open data-directory="{{.Name}}"><summary>{{.Name}}</summary><ul>{{template "review-tree" .Children}}</ul></details>{{end}}</li>{{end}}
 {{end}}
-{{define "page-scripts"}}<script nonce="{{.Navigation.CSPNonce}}" src="/assets/manage-review.js" defer></script>{{end}}
+{{define "page-scripts"}}
+<!--suppress HtmlUnknownTarget -->
+<script nonce="{{.Navigation.CSPNonce}}" src="/assets/manage-review.js" defer></script>
+{{end}}

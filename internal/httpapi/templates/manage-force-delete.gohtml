@@ -2,7 +2,10 @@
 
 {{define "page-title"}}{{.Title}}{{end}}
 
-{{define "page-styles"}}<link rel="stylesheet" href="/assets/manage-force-delete.css">{{end}}
+{{define "page-styles"}}
+<!--suppress HtmlUnknownTarget -->
+<link rel="stylesheet" href="/assets/manage-force-delete.css">
+{{end}}
 
 {{define "page-subtitle"}}<p class="subtitle">This permanently removes the selected {{.ResourceKind}}. Supply an operational reason and type the exact resource identity to continue.</p>{{end}}
 

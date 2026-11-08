@@ -1425,8 +1425,11 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 	if !strings.Contains(pageBody, `data-module-card-url="/manage/modules/teamname/apache/card"`) {
 		t.Fatalf("manage page does not expose lazy module card endpoint:\n%s", pageBody)
 	}
-	if strings.Contains(pageBody, "in use") {
-		t.Fatalf("manage page eagerly renders release usage:\n%s", pageBody)
+	if strings.Contains(pageBody, `class="release-version`) {
+		t.Fatalf("manage page eagerly renders release rows:\n%s", pageBody)
+	}
+	if !strings.Contains(pageBody, "Open to load releases.") || !strings.Contains(pageBody, `class="module-state-legend"`) {
+		t.Fatal("manage page must show the lazy release placeholder and state legend")
 	}
 	body := getBody(t, client, server.URL+"/manage/modules/teamname/apache/card")
 
@@ -1454,7 +1457,7 @@ func TestDownloadMarksReleaseUsedAndManageHidesDelete(t *testing.T) {
 	if !hasStandardReleaseDelete(body, "/manage/modules/teamname/apache/versions/1.5.0/delete") {
 		t.Fatalf("manage page hides delete for inactive release:\n%s", body)
 	}
-	if !strings.Contains(body, `class="release-danger-button" type="submit">Delete</button>`) {
+	if !strings.Contains(body, `class="release-danger-button module-action" type="submit" title="Delete release" aria-label="Delete release `) {
 		t.Fatalf("manage page does not render release delete as a highlighted danger button:\n%s", body)
 	}
 	for _, wantStyle := range []string{
@@ -4879,7 +4882,7 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 		if !strings.Contains(body, `/manage/modules/teamname/apache/delete`) {
 			t.Fatalf("manage page hides module delete action for %#v:\n%s", tc.principal, body)
 		}
-		if !strings.Contains(body, `class="danger-button" type="submit" form="delete-module-teamname-apache">Delete module</button>`) {
+		if !strings.Contains(body, `class="danger-button module-action" type="submit" form="delete-module-teamname-apache" title="Delete module" aria-label="Delete module">`) {
 			t.Fatalf("manage page does not render module delete as a danger button for %#v:\n%s", tc.principal, body)
 		}
 		if !strings.Contains(body, `<form id="delete-module-teamname-apache" method="post" action="/manage/modules/teamname/apache/delete" hidden`) {
@@ -4902,7 +4905,7 @@ func TestManageModuleDeleteButtonVisibleForDeletePrincipals(t *testing.T) {
 		}
 		for _, want := range []string{
 			`href="/manage/modules/teamname/apache/versions/1.2.3/force-delete?next=%2Fmanage%2Fmodules"`,
-			`class="release-danger-button force-delete-link"`,
+			`class="release-danger-button force-delete-link module-action"`,
 		} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("manage page misses protected release override %q for %#v:\n%s", want, tc.principal, body)

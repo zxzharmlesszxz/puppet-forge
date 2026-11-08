@@ -130,6 +130,7 @@ main { margin: 0 auto; }
 .public-version-link-copy .copy-success-icon {
   display: none;
 }
+/* Copy feedback state is toggled by module-page.js. */
 .public-version-link-copy.is-copied {
   border-color: #537b5c;
   color: #3f6f49;

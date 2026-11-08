@@ -56,6 +56,36 @@ test("shared section controller restores open module cards", async ({ page }) =>
   await expect(module).toHaveAttribute("open", "");
 });
 
+test("module actions use accessible compact icons on desktop and mobile", async ({ page }) => {
+  await signIn(page);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/manage/modules");
+    const module = page.locator("#item-teamname-module-00");
+    const summary = module.locator(":scope > summary");
+    if (!(await module.evaluate((element) => element.open))) await summary.click();
+    await expect(module).toHaveAttribute("data-module-card-loaded", "true");
+    const actions = module.locator(".module-action");
+    expect(await actions.count()).toBeGreaterThan(3);
+    for (const action of await actions.all()) {
+      await expect(action).toHaveAttribute("title", /.+/);
+      await expect(action).toHaveAttribute("aria-label", /.+/);
+      await expect(action.locator('svg[aria-hidden="true"]')).toHaveCount(1);
+      await expect(action).toHaveText("");
+      const box = await action.boundingBox();
+      if (!box) throw new Error("module action is not visible");
+      expect(box.width).toBe(32);
+      expect(box.height).toBe(32);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const moderate = summary.getByRole("link", { name: "Moderate module", exact: true });
+    await moderate.focus();
+    await expect(moderate).toBeFocused();
+    await moderate.press("Enter");
+    await expect(page).toHaveURL(/\/moderate$/);
+  }
+});
+
 test("shared styles preserve panel, badge, and control dimensions", async ({ page }) => {
   await signIn(page);
   await page.goto("/manage/modules");
@@ -71,7 +101,7 @@ test("shared styles preserve panel, badge, and control dimensions", async ({ pag
   await expect(page.locator('form[action="/manage/modules"] input[name="reason"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "Upload and allow", exact: true })).toBeVisible();
   const heights = await page.evaluate(() => [
-    ".meta .badge", ".page-size-control select",
+    "#module-list > summary .badge", ".page-size-control select",
   ].map((selector) => {
     const element = document.querySelector(selector);
     if (!element) throw new Error(`missing control: ${selector}`);

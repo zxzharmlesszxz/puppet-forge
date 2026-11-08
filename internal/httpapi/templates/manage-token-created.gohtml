@@ -2,7 +2,10 @@
 
 {{define "page-title"}}Access Token Created{{end}}
 
-{{define "page-styles"}}<link rel="stylesheet" href="/assets/manage-token-created.css">{{end}}
+{{define "page-styles"}}
+<!--suppress HtmlUnknownTarget -->
+<link rel="stylesheet" href="/assets/manage-token-created.css">
+{{end}}
 
 {{define "page-content"}}
 <section class="panel content-panel">
@@ -15,6 +18,8 @@
 {{end}}
 
 {{define "page-scripts"}}
+<!--suppress HtmlUnknownTarget -->
 <script nonce="{{.Navigation.CSPNonce}}" src="/assets/clipboard.js" defer></script>
+<!--suppress HtmlUnknownTarget -->
 <script nonce="{{.Navigation.CSPNonce}}" src="/assets/manage-token-created.js" defer></script>
 {{end}}

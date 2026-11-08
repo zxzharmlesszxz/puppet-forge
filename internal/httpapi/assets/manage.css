@@ -59,6 +59,7 @@ main { max-width: 1440px; margin: 0 auto; padding: 32px 20px 56px; }
   font-weight: 800;
 }
 .global-navigation form { margin: 0; }
+/* The shared navigation template builds this class conditionally. */
 .administration-menu {
   position: relative;
   flex: 0 0 auto;
@@ -173,6 +174,7 @@ main { max-width: 1440px; margin: 0 auto; padding: 32px 20px 56px; }
   flex: 0 0 auto;
   gap: 4px;
 }
+/* Notice controls and dismissal state are added by notices.js. */
 .notice.is-dismissing {
   max-height: 0;
   margin-top: 0;
@@ -293,6 +295,8 @@ main { max-width: 1440px; margin: 0 auto; padding: 32px 20px 56px; }
 
 .release-version {
   display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
   gap: 7px;
   align-items: center;
   border: 1px solid var(--line);
@@ -370,6 +374,36 @@ main { max-width: 1440px; margin: 0 auto; padding: 32px 20px 56px; }
 }
 .release-version form { margin: 0; }
 
+.module-state { display: inline-block; flex: 0 0 10px; width: 10px; height: 10px; border: 1px solid rgba(0, 0, 0, 0.25); border-radius: 50%; }
+.module-state.state-available { background: #27834c; }
+.module-state.state-pending { background: #d18b13; }
+.module-state.state-deprecated { background: #6f5aa8; }
+.module-state.state-blocked { background: #bd3d34; }
+.module-state.state-deleted { background: #75808a; }
+.module-state-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin: 0 0 16px; color: var(--muted); font-size: 12px; }
+.module-state-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.module-state-legend .usage-badge { padding: 2px 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); }
+
+.module-details .module-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  text-decoration: none;
+}
+.module-action svg { width: 18px; height: 18px; pointer-events: none; }
+.module-details a.module-action:not(.danger-button):not(.release-danger-button) { color: var(--accent); background: transparent; border-color: var(--line); }
+.module-details a.module-action:not(.danger-button):not(.release-danger-button):hover { background: #edf5f5; border-color: var(--accent); }
+.module-details .module-action:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+
 header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; }
 h1 { margin: 0; font-size: 32px; line-height: 1.15; }
 h2 { margin: 0 0 16px; font-size: 20px; }
@@ -386,6 +420,7 @@ a { color: var(--accent); text-decoration: none; font-weight: 700; }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 13px; font-weight: 700; }
 input, select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; font: inherit; background: #fff; color: var(--ink); }
+/* Used by shared Go form templates. */
 :where(.compact-fields) input, :where(.compact-fields) select { height: 42px; padding: 0 11px; }
 input:focus, select:focus, textarea:focus { border-color: #81aeb0; outline: 3px solid #dceced; }
 button, .action-button { min-height: 42px; padding: 0 16px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }

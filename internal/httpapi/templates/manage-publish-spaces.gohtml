@@ -2,7 +2,10 @@
 
 {{define "page-title"}}Publish spaces{{end}}
 
-{{define "page-styles"}}<link rel="stylesheet" href="/assets/manage-publish-spaces.css">{{end}}
+{{define "page-styles"}}
+<!--suppress HtmlUnknownTarget -->
+<link rel="stylesheet" href="/assets/manage-publish-spaces.css">
+{{end}}
 
 {{define "page-subtitle"}}<div class="subtitle">Team namespaces and read-only namespaces synchronized from the official Forge.</div>{{end}}
 
@@ -28,5 +31,6 @@
 {{end}}
 
 {{define "page-scripts"}}
+<!--suppress HtmlUnknownTarget -->
 <script nonce="{{.Navigation.CSPNonce}}" src="/assets/manage-publish-spaces.js" defer></script>
 {{end}}

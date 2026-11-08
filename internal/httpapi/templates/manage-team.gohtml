@@ -2,7 +2,10 @@
 
 {{define "page-title"}}Team {{.Team.Team}}{{end}}
 
-{{define "page-styles"}}<link rel="stylesheet" href="/assets/manage-team.css">{{end}}
+{{define "page-styles"}}
+<!--suppress HtmlUnknownTarget -->
+<link rel="stylesheet" href="/assets/manage-team.css">
+{{end}}
 
 {{define "page-heading"}}{{.Team.Team}}{{end}}
 
@@ -121,6 +124,7 @@
     <summary class="section-summary"><span class="section-title">Modules <span class="badge">{{.Pagination.Total}}</span></span></summary>
     <div class="section-content">
       {{template "list-filter" .ModuleFilter}}
+      {{template "module-state-legend"}}
       {{if .Modules}}
       {{range .Modules}}
       {{template "manage-module-card" .}}

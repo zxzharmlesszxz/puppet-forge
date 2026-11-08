@@ -2,10 +2,15 @@
 
 {{define "page-title"}}Puppet Forge{{end}}
 
-{{define "page-styles"}}<link rel="stylesheet" href="/assets/index-page.css">{{end}}
+{{define "page-styles"}}
+<!--suppress HtmlUnknownTarget -->
+<link rel="stylesheet" href="/assets/index-page.css">
+{{end}}
 
 {{define "page-scripts"}}
+<!--suppress HtmlUnknownTarget -->
 <script nonce="{{.Navigation.CSPNonce}}" src="/assets/page-size-persistence.js" defer></script>
+<!--suppress HtmlUnknownTarget -->
 <script nonce="{{.Navigation.CSPNonce}}" src="/assets/async-lists.js" defer></script>
 {{end}}
 

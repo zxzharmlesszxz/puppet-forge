@@ -2,7 +2,10 @@
 
 {{define "page-title"}}{{.Title}}{{end}}
 
-{{define "page-styles"}}<link rel="stylesheet" href="/assets/manage-legacy-usage.css">{{end}}
+{{define "page-styles"}}
+<!--suppress HtmlUnknownTarget -->
+<link rel="stylesheet" href="/assets/manage-legacy-usage.css">
+{{end}}
 
 {{define "page-subtitle"}}<div class="subtitle">Named tokens that downloaded a module version older than its current latest release. Entries remain visible until release-consumer retention removes them.</div>{{end}}
 
