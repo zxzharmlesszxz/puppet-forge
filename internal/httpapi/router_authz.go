@@ -29,10 +29,12 @@ func (r *Router) requireReadAccess(w http.ResponseWriter, req *http.Request) boo
 	}
 	authorizer, err := r.currentAuthorizer(req.Context())
 	if err != nil {
+		logReadAuthorization(req, nil, "access_config_unavailable")
 		writeError(w, http.StatusServiceUnavailable, err)
 		return false
 	}
 	if authorizer == nil {
+		logReadAuthorization(req, nil, "authorizer_unconfigured")
 		writeError(w, http.StatusServiceUnavailable, errors.New("authorizer is not configured"))
 		return false
 	}
@@ -46,7 +48,7 @@ func (r *Router) requireReadAccess(w http.ResponseWriter, req *http.Request) boo
 	}
 	principal, ok := authorizer.RequireRead(w, req)
 	if !ok {
-		slog.Debug("read access denied", "request_id", observability.RequestID(req.Context()), "reason", "authorization_failed")
+		logReadAuthorization(req, authorizer, "")
 		return false
 	}
 	if !r.requireActiveAccessToken(w, req, principal) {
@@ -90,16 +92,19 @@ func (r *Router) requireActiveAccessToken(w http.ResponseWriter, req *http.Reque
 		return true
 	}
 	if r.modules == nil {
+		logReadAuthorization(req, nil, "token_store_unavailable")
 		writeError(w, http.StatusServiceUnavailable, errors.New("access token store is not available"))
 		return false
 	}
 	active, err := r.modules.IsAccessTokenActive(req.Context(), principal.TokenID, time.Now())
 	if err != nil {
 		slog.Default().Warn("validate access token failed", "err", err, "token_id", principal.TokenID)
+		logReadAuthorization(req, nil, "token_validation_failed")
 		writeError(w, http.StatusServiceUnavailable, errors.New("access token validation failed"))
 		return false
 	}
 	if !active {
+		logReadAuthorization(req, nil, "token_inactive_in_store")
 		writeError(w, http.StatusUnauthorized, errors.New("access token is inactive"))
 		return false
 	}
@@ -168,14 +173,28 @@ func (r *Router) refreshAuthorizer(ctx context.Context, force bool) error {
 		return nil
 	}
 
-	now := time.Now()
 	if force {
 		r.authorizerRefreshMu.Lock()
 	} else if !r.authorizerRefreshMu.TryLock() {
-		slog.Debug("access config refresh skipped", "reason", "refresh_in_progress")
-		return nil
+		_, refreshedAt := r.authorizerSnapshotState()
+		if !refreshedAt.IsZero() && time.Since(refreshedAt) <= accessConfigMaxStaleTTL {
+			slog.Debug("access config refresh skipped", "reason", "refresh_in_progress")
+			return nil
+		}
+		waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for !r.authorizerRefreshMu.TryLock() {
+			select {
+			case <-waitCtx.Done():
+				return waitCtx.Err()
+			case <-ticker.C:
+			}
+		}
 	}
 	defer r.authorizerRefreshMu.Unlock()
+	now := time.Now()
 	_, refreshedAt := r.authorizerSnapshotState()
 	if !force && !refreshedAt.IsZero() && now.Sub(refreshedAt) < accessConfigRefreshTTL {
 		slog.Debug("access config refresh skipped", "reason", "refresh_ttl", "age", now.Sub(refreshedAt).Round(time.Millisecond))

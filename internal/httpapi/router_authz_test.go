@@ -42,7 +42,7 @@ func newSQLiteStoreForTests(t *testing.T) *store.SQLiteStore {
 }
 
 func blockingStoreRouter(ctx *testing.T) *blockingAccessConfigStore {
-	baseStore := newSQLiteStoreForTests(ctx)
+	baseStore := newHTTPAPITestStore(ctx)
 	return &blockingAccessConfigStore{
 		SQLiteStore: baseStore,
 		started:     make(chan struct{}, 1),
@@ -148,7 +148,9 @@ func TestCurrentAuthorizerRejectsExpiredSnapshotWhileRefreshIsInProgress(t *test
 	firstDone := asyncCurrentAuthorizer(router)
 	<-blockingStore.started
 
-	got, err := router.currentAuthorizer(context.Background())
+	waitCtx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	defer cancel()
+	got, err := router.currentAuthorizer(waitCtx)
 	if err == nil {
 		t.Fatalf("currentAuthorizer() = %p, nil; want unavailable error", got)
 	}
@@ -164,6 +166,60 @@ func TestCurrentAuthorizerRejectsExpiredSnapshotWhileRefreshIsInProgress(t *test
 		}
 	case <-time.After(time.Second):
 		t.Fatal("access-config refresh did not finish")
+	}
+}
+
+func TestCurrentAuthorizerWaitsForUsableSnapshot(t *testing.T) {
+	t.Parallel()
+	for _, cold := range []bool{true, false} {
+		name := "expired"
+		if cold {
+			name = "cold"
+		}
+		t.Run(name, func(t *testing.T) {
+			blockingStore := blockingStoreRouter(t)
+			if err := blockingStore.ReplaceTeamConfigs(t.Context(), []auth.TeamConfig{{Team: "consumer", ReadTokens: []string{"new-read-token"}}}); err != nil {
+				t.Fatal(err)
+			}
+			router := makeAuthorizerRouter(blockingStore, nil, -accessConfigMaxStaleTTL-time.Second)
+			router.tokenHasher = httpAPITestTokenHasher()
+			if cold {
+				router.authorizerRefreshed = time.Time{}
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			t.Cleanup(func() { close(blockingStore.release) })
+			firstDone := asyncCurrentAuthorizer(router)
+			select {
+			case <-blockingStore.started:
+			case <-ctx.Done():
+				t.Fatal("access-config refresh did not start")
+			}
+			secondDone := make(chan authorizerResult, 1)
+			go func() {
+				authorizer, err := router.currentAuthorizer(ctx)
+				secondDone <- authorizerResult{authorizer: authorizer, err: err}
+			}()
+			select {
+			case result := <-secondDone:
+				t.Fatalf("request did not wait for a usable snapshot: %v", result.err)
+			case <-time.After(25 * time.Millisecond):
+			}
+			blockingStore.release <- struct{}{}
+			for _, done := range []<-chan authorizerResult{firstDone, secondDone} {
+				select {
+				case result := <-done:
+					if result.err != nil || result.authorizer == nil {
+						t.Fatalf("currentAuthorizer() = %v, %v", result.authorizer, result.err)
+					}
+					if _, ok := result.authorizer.AuthenticateToken("new-read-token"); !ok {
+						t.Fatal("refreshed snapshot rejected the read token")
+					}
+				case <-ctx.Done():
+					t.Fatal("request did not finish after access-config refresh")
+				}
+			}
+		})
 	}
 }
 

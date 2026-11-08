@@ -9,6 +9,23 @@ deployment.
 > multi-instance runtime flows, shared-state boundaries, safety mechanisms, and
 > point-by-point verification procedures.
 
+## Read Authorization Diagnostics
+
+With `LOG_LEVEL=debug`, `read authorization rejected` events identify failed
+protected reads by `request_id`. `authorization_present` indicates whether the
+header is nonempty; `authorization_multiple` flags repeated headers.
+`authorization_scheme` is a fixed category (`none`, `bearer`, or `other`), never
+the client-supplied scheme text.
+
+The `reason` distinguishes missing authorization, unsupported schemes, empty
+Bearer credentials, whitespace inside credentials (including a doubled Bearer
+prefix), and `token_unknown_or_inactive_in_snapshot`. The last category cannot
+distinguish an unknown token from a revoked or expired token: inactive records
+are excluded from the authorization snapshot. `token_inactive_in_store` means
+the snapshot matched but the live SQL check rejected the token. Configuration
+and token-store failures have separate reasons and retain HTTP 503 responses.
+These events never include credentials, prefixes, token lengths, or digests.
+
 ## Configuration
 
 See [`.env.example`](../.env.example).
