@@ -221,12 +221,11 @@ GO-2026-6809. Docker builds, integration runners, and CI use the same patch vers
 GO=go GOLANGCI_LINT=golangci-lint make check
 ```
 
-`GOSEC_VERSION` temporarily pins upstream commit
-`14ef84f6feccf40be7f5092fd2db119bf3f5f836`, which uses `golang.org/x/tools v0.52.0`.
-The latest tagged gosec release, `v2.29.0`, uses `v0.49.0` and fails to decode
-Go 1.27.2 export data. Keep security scans enabled; replace the commit pin with
-a compatible tagged release when available. Package-loading or SSA errors mean
-the scan failed, even when its summary reports zero issues.
+`GOSEC_VERSION` pins the tagged release `v2.30.0`, which uses
+`golang.org/x/tools v0.52.0` and supports Go 1.27 export data.
+It replaces the temporary upstream commit pin required by older releases.
+Package-loading or SSA errors mean the scan failed, even when its summary
+reports zero issues.
 
 `make helm-lint` validates unreleased chart sources with the development values
 matrix; those values are not intended for production deployment.

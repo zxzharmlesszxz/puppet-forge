@@ -28,7 +28,7 @@ permissions:
   contents: read
 
 env:
-  TRIVY_VERSION: v0.76.0
+  TRIVY_VERSION: v0.76.2
 
 jobs:
   go-check:
@@ -175,7 +175,7 @@ jobs:
       - go-check
     services:
       postgres:
-        image: postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
+        image: postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
         env:
           POSTGRES_DB: forge
           POSTGRES_USER: forge
@@ -231,7 +231,7 @@ jobs:
             --publish 127.0.0.1:8333:8333 \
             --env AWS_ACCESS_KEY_ID=forge-local \
             --env AWS_SECRET_ACCESS_KEY=forge-local-secret \
-            chrislusf/seaweedfs:4.50@sha256:c2658820e763294a9e9de7b36c81e59b879e3459148351aee4e31a126ca64860 \
+            chrislusf/seaweedfs:4.52@sha256:57877e32bb90073b37dc109b438ba66e84fd5ed9ced5f5c04f56444ef243ce59 \
             mini -dir=/data -ip.bind=0.0.0.0 \
             -master.volumeSizeLimitMB=128 -master.telemetry=false \
             -s3.autoCreateBucket=false -s3.allowDeleteBucketNotEmpty=false \
