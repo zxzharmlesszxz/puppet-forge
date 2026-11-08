@@ -55,6 +55,52 @@ func TestModuleStateIndicatorsAndLegend(t *testing.T) {
 	}
 }
 
+func TestOIDCAccessFieldsDescribeInputAndPermissions(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		page *template.Template
+		data any
+		ids  []string
+		text []string
+	}{
+		{
+			name: "team access", page: manageTeamTemplate,
+			data: manageTeamData{Team: accessTeamFormRow{Team: "teamname"}, ShowAccess: true},
+			ids:  []string{"team-readers-hint", "team-reader-emails-hint", "team-admin-emails-hint", "team-admin-groups-hint"},
+			text: []string{"no management rights", "not global administration", "email_verified=true", "release approval"},
+		},
+		{
+			name: "add team", page: manageAccessAddTeamTemplate, data: manageAccessAddTeamData{},
+			ids:  []string{"new-readers-hint", "new-reader-emails-hint", "new-admin-emails-hint", "new-admin-groups-hint"},
+			text: []string{"no management rights", "not global administration", "email_verified=true", "release approval"},
+		},
+		{
+			name: "global access", page: manageAccessTemplate, data: manageAccessData{},
+			ids:  []string{"global-admin-groups-hint", "global-admin-emails-hint", "global-admin-subjects-hint"},
+			text: []string{"global administrator", "upstream modules", "email_verified=true", "<code>sub</code>", "not email addresses or display names"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			if err := tc.page.Execute(&output, tc.data); err != nil {
+				t.Fatal(err)
+			}
+			body := output.String()
+			for _, id := range tc.ids {
+				if !strings.Contains(body, `aria-describedby="`+id+`"`) || strings.Count(body, `id="`+id+`"`) != 1 {
+					t.Errorf("field must reference exactly one hint %q", id)
+				}
+			}
+			for _, text := range append(tc.text, "Enter one value per line.", "<code>groups</code>") {
+				if !strings.Contains(body, text) {
+					t.Errorf("page misses OIDC guidance %q", text)
+				}
+			}
+		})
+	}
+}
+
 func testAssetSource(t *testing.T, names ...string) string {
 	t.Helper()
 	var source strings.Builder

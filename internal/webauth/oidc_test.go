@@ -349,6 +349,24 @@ func TestOIDCEmailAuthorizationRequiresVerification(t *testing.T) {
 			if !ok || !principal.CanManageTeam || principal.CanAdmin != (state == "true") {
 				t.Fatalf("verification state %s grants wrong rights: %#v", state, principal)
 			}
+			readers, err := internalAuth.NewAuthorizer([]internalAuth.TeamConfig{
+				{Team: "readteam", OIDCEmails: []string{"user@example.com"}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader, matched := readers.AuthenticateOIDC(session.AuthorizationEmail(), session.Sub, session.Groups)
+			if matched != (state == "true") {
+				t.Fatalf("email verification %s: reader matched=%v", state, matched)
+			}
+			if matched && (!reader.CanRead || reader.CanPublish || reader.CanManageTeam || reader.CanAdmin) {
+				t.Fatalf("email reader has incorrect permissions: %#v", reader)
+			}
+			if matched {
+				if _, member := reader.MemberTeams["readteam"]; !member {
+					t.Fatal("email reader is missing team membership")
+				}
+			}
 		})
 	}
 }

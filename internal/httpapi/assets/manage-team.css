@@ -1,16 +1,6 @@
-.meta { color: var(--muted); }
-
-.meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-
 .panel { margin-bottom:18px; padding:22px; scroll-margin-top:16px; }
 
 .grid { gap:16px; }
-
-.readonly-field { min-width: 0; }
-
-.readonly-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 13px; font-weight: 700; }
-
-.readonly-value { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 42px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 6px; background: #f4f6f5; color: #465057; }
 
 label { margin-bottom:6px; }
 

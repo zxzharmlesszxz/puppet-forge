@@ -290,6 +290,11 @@ the migration and use a database backup if a rollback is required.
 
 Important rules:
 
+Saving Team Access changes only fields exposed by that form. Existing subject
+and domain mappings and token records are retained for both team and global
+administrators. Submitting an empty visible field explicitly clears that field;
+hidden mapping fields cannot be changed by adding parameters to the form.
+
 - `ADMIN_TOKEN` is a runtime-only bootstrap/break-glass admin token and is not persisted in SQL.
 - Persisted access tokens are generated as opaque credentials, returned only once, and stored as HMAC-SHA256 digests with a visible prefix and lifecycle metadata. Each new token has a required operator-facing name and a `read` or `publish` role; an active name/role pair must be unique within its team. Set the same `ACCESS_TOKEN_PEPPER` on every replica. Every protected bearer request checks the token ID's active state in SQL, so revocation and expiration apply across replicas immediately after commit. The management page uses one creation form and paginates the unified active-token list and inactive history independently; each list defaults to 20 records and supports a persisted choice of 10, 20, 50, or 100. `ACCESS_TOKEN_HISTORY_TTL` removes old expired/revoked metadata.
 - If the DB contains no effective access credential and `ADMIN_TOKEN` is not set, the service refuses to start.
@@ -500,6 +505,13 @@ but grants no permissions. Subject and group mappings do not depend on this clai
 Existing sessions migrate as unverified: users relying on email mappings must
 sign in again after upgrading. Configure the provider to verify email ownership
 and include the boolean claim in ID tokens.
+
+Team Access and Add Team expose **OIDC team readers (emails)**, stored as
+`oidc_emails`: one individual email address per line. A verified match grants
+read access and team membership, not publishing or administration. Team
+administrators may edit their own team's reader emails. Group-based reader
+access remains independent of email verification. Reader email changes appear
+in the access audit diff.
 
 - `WEB_AUTH_MODE=oidc` enables session login for the web UI through OIDC/Authentik.
 - API access remains token-based.

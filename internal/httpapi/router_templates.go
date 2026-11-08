@@ -412,6 +412,7 @@ type accessTeamFormRow struct {
 	Tokens              []accessTokenFormRow
 	TokenHistory        []accessTokenFormRow
 	OIDCReaderGroups    string
+	OIDCReaderEmails    string
 	OIDCTeamAdminEmails string
 	OIDCTeamAdminGroups string
 	Badges              []string
@@ -589,6 +590,7 @@ func mustParsePage(filename, layout string) *template.Template {
 	files := []string{
 		"templates/layout.gohtml", "templates/manage-navigation.gohtml", "templates/public-navigation.gohtml",
 		"templates/manage-module-card.gohtml", "templates/list-filter.gohtml", "templates/pagination.gohtml", "templates/publish-form.gohtml",
+		"templates/oidc-field-hints.gohtml",
 	}
 	if layout != "" {
 		files = append(files, "templates/"+layout)

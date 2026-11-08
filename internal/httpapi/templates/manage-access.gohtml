@@ -19,15 +19,18 @@
     <div class="grid">
       <div>
         <label for="global-admin-groups">OIDC admin groups</label>
-        <textarea id="global-admin-groups" name="oidc_admin_groups" placeholder="forge-admins">{{.AdminOIDCGroups}}</textarea>
+        <textarea id="global-admin-groups" name="oidc_admin_groups" placeholder="forge-admins" aria-describedby="global-admin-groups-hint">{{.AdminOIDCGroups}}</textarea>
+        <p id="global-admin-groups-hint" class="field-hint">{{template "oidc-field-hint" "global-admin-groups"}}</p>
       </div>
       <div>
         <label for="global-admin-emails">OIDC admin emails</label>
-        <textarea id="global-admin-emails" name="oidc_admin_emails" placeholder="admin@example.com">{{.AdminOIDCEmails}}</textarea>
+        <textarea id="global-admin-emails" name="oidc_admin_emails" placeholder="admin@example.com" aria-describedby="global-admin-emails-hint">{{.AdminOIDCEmails}}</textarea>
+        <p id="global-admin-emails-hint" class="field-hint">{{template "oidc-field-hint" "global-admin-emails"}}</p>
       </div>
       <div>
         <label for="global-admin-subjects">OIDC admin subjects</label>
-        <textarea id="global-admin-subjects" name="oidc_admin_subjects">{{.AdminOIDCSubjects}}</textarea>
+        <textarea id="global-admin-subjects" name="oidc_admin_subjects" aria-describedby="global-admin-subjects-hint">{{.AdminOIDCSubjects}}</textarea>
+        <p id="global-admin-subjects-hint" class="field-hint">{{template "oidc-field-hint" "global-admin-subjects"}}</p>
       </div>
     </div>
     <button type="submit">Save Global Access</button>

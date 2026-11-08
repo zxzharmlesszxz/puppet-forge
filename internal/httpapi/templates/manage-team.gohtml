@@ -9,7 +9,7 @@
 
 {{define "page-heading"}}{{.Team.Team}}{{end}}
 
-{{define "page-subtitle"}}<div class="meta">{{range .Spaces}}<span class="badge">{{.}}</span>{{end}}</div>{{end}}
+{{define "page-subtitle"}}{{end}}
 
 {{define "page-section-key"}}puppet-forge:manage-team:{{.Team.Team}}:open-sections{{end}}
 
@@ -25,29 +25,28 @@
     {{csrfInput $.CSRFToken}}
     <input type="hidden" name="action" value="save_team">
     <input type="hidden" name="original_team" value="{{.Team.Team}}">
+    <input type="hidden" name="team" value="{{.Team.Team}}">
     <input type="hidden" name="next" value="/manage/teams/{{.Team.Team}}/access">
     <div class="grid">
-      <div class="readonly-field">
-        <span class="readonly-label">Team</span>
-        <div class="readonly-value"><strong>{{.Team.Team}}</strong></div>
-        <input type="hidden" name="team" value="{{.Team.Team}}">
-      </div>
-      <div class="readonly-field">
-        <span class="readonly-label">Publish spaces</span>
-        <div class="readonly-value">{{range .Spaces}}<span class="badge">{{.}}</span>{{end}}</div>
-        <p class="muted">One team owns one namespace.</p>
-      </div>
       <div>
         <label for="team-publish-groups">OIDC team readers (groups)</label>
-        <textarea id="team-publish-groups" name="oidc_reader_groups">{{.Team.OIDCReaderGroups}}</textarea>
+        <textarea id="team-publish-groups" name="oidc_reader_groups" aria-describedby="team-readers-hint">{{.Team.OIDCReaderGroups}}</textarea>
+        <p id="team-readers-hint" class="field-hint">{{template "oidc-field-hint" "team-readers"}}</p>
+      </div>
+      <div>
+        <label for="team-reader-emails">OIDC team readers (emails)</label>
+        <textarea id="team-reader-emails" name="oidc_emails" placeholder="reader@example.com" aria-describedby="team-reader-emails-hint">{{.Team.OIDCReaderEmails}}</textarea>
+        <p id="team-reader-emails-hint" class="field-hint">{{template "oidc-field-hint" "team-reader-emails"}}</p>
       </div>
       <div>
         <label for="team-admin-emails">OIDC team admins (emails)</label>
-        <textarea id="team-admin-emails" name="oidc_team_admin_emails">{{.Team.OIDCTeamAdminEmails}}</textarea>
+        <textarea id="team-admin-emails" name="oidc_team_admin_emails" aria-describedby="team-admin-emails-hint">{{.Team.OIDCTeamAdminEmails}}</textarea>
+        <p id="team-admin-emails-hint" class="field-hint">{{template "oidc-field-hint" "team-admin-emails"}}</p>
       </div>
       <div>
         <label for="team-admin-groups">OIDC team admins (groups)</label>
-        <textarea id="team-admin-groups" name="oidc_team_admin_groups">{{.Team.OIDCTeamAdminGroups}}</textarea>
+        <textarea id="team-admin-groups" name="oidc_team_admin_groups" aria-describedby="team-admin-groups-hint">{{.Team.OIDCTeamAdminGroups}}</textarea>
+        <p id="team-admin-groups-hint" class="field-hint">{{template "oidc-field-hint" "team-admin-groups"}}</p>
       </div>
     </div>
     <button type="submit">Save Team</button>

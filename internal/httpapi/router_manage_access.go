@@ -207,19 +207,22 @@ func accessConfigChangeSummary(before, after []auth.TeamConfig, team string) str
 	if stateChange != "" {
 		changes = append(changes, stateChange)
 	}
-	var beforeGroups, beforeAdminEmails, beforeAdminGroups []string
+	var beforeGroups, beforeEmails, beforeAdminEmails, beforeAdminGroups []string
 	if beforeConfig != nil {
 		beforeGroups = beforeConfig.OIDCReaderGroups
+		beforeEmails = beforeConfig.OIDCEmails
 		beforeAdminEmails = beforeConfig.OIDCTeamAdminEmails
 		beforeAdminGroups = beforeConfig.OIDCTeamAdminGroups
 	}
-	var afterGroups, afterAdminEmails, afterAdminGroups []string
+	var afterGroups, afterEmails, afterAdminEmails, afterAdminGroups []string
 	if afterConfig != nil {
 		afterGroups = afterConfig.OIDCReaderGroups
+		afterEmails = afterConfig.OIDCEmails
 		afterAdminEmails = afterConfig.OIDCTeamAdminEmails
 		afterAdminGroups = afterConfig.OIDCTeamAdminGroups
 	}
 	changes = appendValueChanges(changes, "reader groups", beforeGroups, afterGroups)
+	changes = appendValueChanges(changes, "reader emails", beforeEmails, afterEmails)
 	changes = appendValueChanges(changes, "team admin emails", beforeAdminEmails, afterAdminEmails)
 	changes = appendValueChanges(changes, "team admin groups", beforeAdminGroups, afterAdminGroups)
 	if len(changes) == 0 {
@@ -354,14 +357,16 @@ func (r *Router) accessConfigsWithUpsertedTeam(req *http.Request, principal auth
 		if existing == nil {
 			return nil, "", fmt.Errorf("team %q was not found", originalTeam)
 		}
-		cfg.OIDCEmails = append([]string(nil), existing.OIDCEmails...)
+	}
+	if existing != nil {
 		cfg.OIDCSubjects = append([]string(nil), existing.OIDCSubjects...)
 		cfg.OIDCDomains = append([]string(nil), existing.OIDCDomains...)
 		cfg.OIDCAdminEmails = append([]string(nil), existing.OIDCAdminEmails...)
 		cfg.OIDCAdminSubjects = append([]string(nil), existing.OIDCAdminSubjects...)
 		cfg.OIDCAdminGroups = append([]string(nil), existing.OIDCAdminGroups...)
-	}
-	if existing != nil {
+		if !req.PostForm.Has("oidc_emails") {
+			cfg.OIDCEmails = append([]string(nil), existing.OIDCEmails...)
+		}
 		cfg.ReadTokenRecords = append([]auth.AccessTokenRecord(nil), existing.ReadTokenRecords...)
 		cfg.PublishTokenRecords = append([]auth.AccessTokenRecord(nil), existing.PublishTokenRecords...)
 	}
@@ -471,6 +476,7 @@ func accessTeamConfigFromForm(req *http.Request) auth.TeamConfig {
 	return auth.TeamConfig{
 		Team:                team,
 		OIDCReaderGroups:    splitLineValues(req.FormValue("oidc_reader_groups")),
+		OIDCEmails:          splitLineValues(req.FormValue("oidc_emails")),
 		OIDCTeamAdminEmails: splitLineValues(req.FormValue("oidc_team_admin_emails")),
 		OIDCTeamAdminGroups: splitLineValues(req.FormValue("oidc_team_admin_groups")),
 	}
@@ -499,7 +505,7 @@ func accessTeamFormRows(configs []auth.TeamConfig, principal auth.Principal) []a
 		if n := len(publishTokens); n > 0 {
 			badges = append(badges, fmt.Sprintf("Publish: %d", n))
 		}
-		if n := len(cfg.OIDCReaderGroups) + len(cfg.OIDCTeamAdminEmails) + len(cfg.OIDCTeamAdminGroups); n > 0 {
+		if n := len(cfg.OIDCReaderGroups) + len(cfg.OIDCEmails) + len(cfg.OIDCTeamAdminEmails) + len(cfg.OIDCTeamAdminGroups); n > 0 {
 			badges = append(badges, fmt.Sprintf("OIDC: %d", n))
 		}
 		rows = append(rows, accessTeamFormRow{
@@ -507,6 +513,7 @@ func accessTeamFormRows(configs []auth.TeamConfig, principal auth.Principal) []a
 			Tokens:              tokens,
 			TokenHistory:        tokenHistory,
 			OIDCReaderGroups:    joinLineValues(cfg.OIDCReaderGroups),
+			OIDCReaderEmails:    joinLineValues(cfg.OIDCEmails),
 			OIDCTeamAdminEmails: joinLineValues(cfg.OIDCTeamAdminEmails),
 			OIDCTeamAdminGroups: joinLineValues(cfg.OIDCTeamAdminGroups),
 			Badges:              badges,

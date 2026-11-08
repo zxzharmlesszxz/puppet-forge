@@ -5168,11 +5168,11 @@ func TestAccessConfigChangeSummaryExcludesCredentials(t *testing.T) {
 
 	before := []auth.TeamConfig{
 		{Team: auth.GlobalAdminTeam, OIDCAdminGroups: []string{"old-admins"}, OIDCAdminEmails: []string{"old@example.com"}},
-		{Team: "teamname", ReadTokens: []string{"secret-read-token"}, OIDCReaderGroups: []string{"old-publishers"}, OIDCTeamAdminGroups: []string{"old-team-admins"}},
+		{Team: "teamname", ReadTokens: []string{"secret-read-token"}, OIDCEmails: []string{"old-reader@example.com"}, OIDCReaderGroups: []string{"old-publishers"}, OIDCTeamAdminGroups: []string{"old-team-admins"}},
 	}
 	after := []auth.TeamConfig{
 		{Team: auth.GlobalAdminTeam, OIDCAdminGroups: []string{"new-admins"}, OIDCAdminSubjects: []string{"admin-subject"}},
-		{Team: "teamname", ReadTokens: []string{"different-secret"}, OIDCReaderGroups: []string{"new-publishers"}, OIDCTeamAdminEmails: []string{"owner@example.com"}},
+		{Team: "teamname", ReadTokens: []string{"different-secret"}, OIDCEmails: []string{"new-reader@example.com"}, OIDCReaderGroups: []string{"new-publishers"}, OIDCTeamAdminEmails: []string{"owner@example.com"}},
 	}
 
 	globalChanges := globalAccessChangeSummary(before, after)
@@ -5182,7 +5182,7 @@ func TestAccessConfigChangeSummaryExcludesCredentials(t *testing.T) {
 		}
 	}
 	teamChanges := accessConfigChangeSummary(before, after, "teamname")
-	for _, want := range []string{"reader groups added [new-publishers]", "reader groups removed [old-publishers]", "team admin emails added [owner@example.com]", "team admin groups removed [old-team-admins]"} {
+	for _, want := range []string{"reader groups added [new-publishers]", "reader groups removed [old-publishers]", "reader emails added [new-reader@example.com]", "reader emails removed [old-reader@example.com]", "team admin emails added [owner@example.com]", "team admin groups removed [old-team-admins]"} {
 		if !strings.Contains(teamChanges, want) {
 			t.Fatalf("team access changes miss %q: %s", want, teamChanges)
 		}
@@ -5290,8 +5290,11 @@ func TestSaveTeamCannotChangePublishSpaces(t *testing.T) {
 	if !strings.Contains(body, `href="/manage/admin/spaces">Publish spaces</a>`) {
 		t.Fatalf("global admin team page misses publish-space management link:\n%s", body)
 	}
-	if !strings.Contains(body, "One team owns one namespace.") {
-		t.Fatalf("team access page misses namespace ownership policy:\n%s", body)
+	if strings.Contains(body, `class="readonly-field"`) || strings.Contains(body, "One team owns one namespace.") {
+		t.Fatal("team access page repeats team and namespace information in the form")
+	}
+	if !strings.Contains(body, `<input type="hidden" name="team" value="teamname">`) {
+		t.Fatal("team access form is missing its team identifier")
 	}
 }
 
