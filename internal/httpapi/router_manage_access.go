@@ -343,7 +343,6 @@ func (r *Router) accessConfigsWithUpsertedTeam(req *http.Request, principal auth
 	}
 
 	existing := findAccessConfig(configs, originalTeam)
-	cfg.PublishOwners = nil
 
 	if !principal.CanAdmin {
 		if !principal.CanManageTeam {
@@ -471,7 +470,6 @@ func accessTeamConfigFromForm(req *http.Request) auth.TeamConfig {
 	team := strings.TrimSpace(req.FormValue("team"))
 	return auth.TeamConfig{
 		Team:                team,
-		PublishOwners:       publishOwnersFromExtra(team, nil),
 		OIDCReaderGroups:    splitLineValues(req.FormValue("oidc_reader_groups")),
 		OIDCTeamAdminEmails: splitLineValues(req.FormValue("oidc_team_admin_emails")),
 		OIDCTeamAdminGroups: splitLineValues(req.FormValue("oidc_team_admin_groups")),
@@ -487,7 +485,6 @@ func accessTeamFormRows(configs []auth.TeamConfig, principal auth.Principal) []a
 		if !principal.CanAdmin && !canManageAccessTeam(principal, cfg.Team) {
 			continue
 		}
-		extraSpaces := extraPublishOwnersForForm(cfg.Team, cfg.PublishOwners)
 		now := time.Now()
 		readTokens, readHistory := splitAccessTokenFormRows(accessTokenFormRows(cfg.ReadTokenRecords, "Read", now))
 		publishTokens, publishHistory := splitAccessTokenFormRows(accessTokenFormRows(cfg.PublishTokenRecords, "Publish", now))
@@ -502,9 +499,6 @@ func accessTeamFormRows(configs []auth.TeamConfig, principal auth.Principal) []a
 		if n := len(publishTokens); n > 0 {
 			badges = append(badges, fmt.Sprintf("Publish: %d", n))
 		}
-		if n := len(extraSpaces); n > 0 {
-			badges = append(badges, fmt.Sprintf("Spaces: %d", n))
-		}
 		if n := len(cfg.OIDCReaderGroups) + len(cfg.OIDCTeamAdminEmails) + len(cfg.OIDCTeamAdminGroups); n > 0 {
 			badges = append(badges, fmt.Sprintf("OIDC: %d", n))
 		}
@@ -512,7 +506,6 @@ func accessTeamFormRows(configs []auth.TeamConfig, principal auth.Principal) []a
 			Team:                cfg.Team,
 			Tokens:              tokens,
 			TokenHistory:        tokenHistory,
-			ExtraPublishSpaces:  joinLineValues(extraSpaces),
 			OIDCReaderGroups:    joinLineValues(cfg.OIDCReaderGroups),
 			OIDCTeamAdminEmails: joinLineValues(cfg.OIDCTeamAdminEmails),
 			OIDCTeamAdminGroups: joinLineValues(cfg.OIDCTeamAdminGroups),
@@ -532,46 +525,6 @@ func splitAccessTokenFormRows(rows []accessTokenFormRow) (active, history []acce
 	}
 	sort.Slice(active, func(i, j int) bool { return active[i].sortAt.After(active[j].sortAt) })
 	return active, history
-}
-
-func publishOwnersFromExtra(team string, extraOwners []string) []string {
-	team = strings.TrimSpace(team)
-	if team == "" && len(extraOwners) == 0 {
-		return nil
-	}
-
-	owners := make([]string, 0, len(extraOwners)+1)
-	seen := make(map[string]struct{}, len(extraOwners)+1)
-	add := func(owner string) {
-		owner = strings.TrimSpace(owner)
-		if owner == "" {
-			return
-		}
-		if _, exists := seen[owner]; exists {
-			return
-		}
-		seen[owner] = struct{}{}
-		owners = append(owners, owner)
-	}
-
-	add(team)
-	for _, owner := range extraOwners {
-		add(owner)
-	}
-	return owners
-}
-
-func extraPublishOwnersForForm(team string, owners []string) []string {
-	team = strings.TrimSpace(team)
-	extra := make([]string, 0, len(owners))
-	for _, owner := range owners {
-		owner = strings.TrimSpace(owner)
-		if owner == "" || owner == team {
-			continue
-		}
-		extra = append(extra, owner)
-	}
-	return extra
 }
 
 func (r *Router) accessConfigsWithGlobalAdmins(req *http.Request) ([]auth.TeamConfig, string, error) {
@@ -624,7 +577,6 @@ func hasNoAccessConfig(cfg auth.TeamConfig) bool {
 		len(cfg.PublishTokens) == 0 &&
 		len(cfg.ReadTokenRecords) == 0 &&
 		len(cfg.PublishTokenRecords) == 0 &&
-		len(cfg.PublishOwners) == 0 &&
 		len(cfg.OIDCReaderGroups) == 0 &&
 		len(cfg.OIDCTeamAdminEmails) == 0 &&
 		len(cfg.OIDCTeamAdminGroups) == 0 &&

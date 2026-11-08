@@ -112,7 +112,7 @@ func TestOIDCAuditTeamsUsesActualMemberships(t *testing.T) {
 		{Team: auth.GlobalAdminTeam, OIDCAdminGroups: []string{"global-admins"}},
 		{Team: "teamtwo", OIDCTeamAdminGroups: []string{"team-admins"}},
 		{Team: "teamone", OIDCEmails: []string{"member@example.com"}, OIDCReaderGroups: []string{"readers"}},
-		{Team: "unrelated", PublishOwners: []string{"teamone"}},
+		{Team: "unrelated"},
 	}
 	for _, tc := range []struct {
 		session webauth.Session

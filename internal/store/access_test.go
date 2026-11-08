@@ -13,7 +13,6 @@ type recordingAccessConfigWriter struct {
 }
 
 func (w *recordingAccessConfigWriter) insertTeam(string) error                           { return nil }
-func (w *recordingAccessConfigWriter) insertOwner(string, string) error                  { return nil }
 func (w *recordingAccessConfigWriter) insertOIDCMapping(string, accessOIDCMapping) error { return nil }
 func (w *recordingAccessConfigWriter) insertToken(_ string, tokenType string, record auth.AccessTokenRecord) error {
 	if record.ID == "" || record.Digest == "" {

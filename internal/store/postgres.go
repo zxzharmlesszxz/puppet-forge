@@ -303,12 +303,6 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) (returnErr 
 			last_used_at timestamptz
 		);
 
-		create table if not exists access_publish_owners (
-			team text not null references access_teams (team) on delete cascade,
-			owner text not null,
-			primary key (team, owner)
-		);
-
 		create table if not exists access_oidc_mappings (
 			team text not null references access_teams (team) on delete cascade,
 			mapping_type text not null,
@@ -500,8 +494,8 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) (returnErr 
 	`); err != nil {
 		return fmt.Errorf("ensure postgres query indexes: %w", err)
 	}
-	if _, err := conn.Exec(ctx, `insert into access_teams (team) select distinct owner from access_publish_owners on conflict (team) do nothing; delete from access_publish_owners;`); err != nil {
-		return fmt.Errorf("migrate namespaces to teams: %w", err)
+	if err := migratePostgresNamespaces(ctx, conn); err != nil {
+		return err
 	}
 	if _, err := conn.Exec(ctx, `update schema_metadata set version = $1 where id = 1`, currentSchemaVersion); err != nil {
 		return fmt.Errorf("update postgres schema version: %w", err)
@@ -825,13 +819,6 @@ func (w postgresMutationWriter) insertToken(team, tokenType string, token auth.A
 	return insertPostgresAccessTokenRecord(w.ctx, w.tx, team, tokenType, token)
 }
 
-func (w postgresMutationWriter) insertOwner(team, owner string) error {
-	if _, err := w.tx.Exec(w.ctx, `insert into access_publish_owners (team, owner) values ($1, $2)`, team, owner); err != nil {
-		return fmt.Errorf("insert access owner: %w", err)
-	}
-	return nil
-}
-
 func (w postgresMutationWriter) insertOIDCMapping(team string, mapping accessOIDCMapping) error {
 	if _, err := w.tx.Exec(w.ctx, `insert into access_oidc_mappings (team, mapping_type, value) values ($1, $2, $3)`, team, mapping.kind, mapping.value); err != nil {
 		return fmt.Errorf("insert oidc mapping: %w", err)
@@ -1092,24 +1079,6 @@ func nullablePostgresTime(value sql.NullTime) *time.Time {
 	}
 	parsed := value.Time.UTC()
 	return &parsed
-}
-
-func (l postgresAccessConfigLoader) loadAccessOwners(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
-	rows, err := l.queryer.Query(ctx, `select team, owner from access_publish_owners order by team, owner`)
-	if err != nil {
-		return fmt.Errorf("list access owners: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var team, owner string
-		if err := rows.Scan(&team, &owner); err != nil {
-			return fmt.Errorf("scan access owner: %w", err)
-		}
-		if i, ok := index[team]; ok {
-			configs[i].PublishOwners = append(configs[i].PublishOwners, owner)
-		}
-	}
-	return rows.Err()
 }
 
 func (l postgresAccessConfigLoader) loadAccessOIDC(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {

@@ -270,10 +270,23 @@ Access configuration is stored only in SQL tables:
 
 - `access_teams`;
 - `access_tokens`;
-- `access_publish_owners`;
 - `access_oidc_mappings`.
 
 `ACCESS_JSON` is no longer used.
+
+One team owns exactly one namespace with the same name. Additional namespaces
+must be separate teams, with their own administrators and tokens.
+The removed JSON fields `extra_publish_spaces` and `publish_owners` are rejected.
+During database upgrades, legacy namespace assignments become independent teams
+without inheriting credentials or OIDC mappings. Existing teams and module
+releases are preserved; the obsolete assignment table is removed.
+Before writing namespace changes, migration rejects names differing only by
+letter case, including conflicts between existing teams and legacy assignments.
+The error names the conflict; the legacy table and access configuration remain
+unchanged. Resolve the conflicting assignments explicitly and retry. Do not
+blindly lowercase namespaces: module identities retain their original case.
+Schema version 9 is incompatible with older binaries: stop older replicas before
+the migration and use a database backup if a rollback is required.
 
 Important rules:
 

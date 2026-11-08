@@ -20,7 +20,7 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
 
-const currentSchemaVersion = 8
+const currentSchemaVersion = 9
 
 type sqliteQueryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -113,12 +113,6 @@ create table if not exists access_tokens (
     expires_at text,
     revoked_at text,
     last_used_at text
-);
-
-create table if not exists access_publish_owners (
-    team text not null references access_teams (team) on delete cascade,
-    owner text not null,
-    primary key (team, owner)
 );
 
 create table if not exists access_oidc_mappings (
@@ -466,8 +460,8 @@ func migrateSQLiteSchema(db *sql.DB, tokenHasher *auth.TokenHasher) error {
 			return fmt.Errorf("migrate sqlite oidc mappings: %w", err)
 		}
 	}
-	if _, err := tx.Exec(`insert into access_teams (team) select distinct owner from access_publish_owners where true on conflict (team) do nothing; delete from access_publish_owners;`); err != nil {
-		return fmt.Errorf("migrate namespaces to teams: %w", err)
+	if err := migrateSQLiteNamespaces(tx); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(`update schema_metadata set version = ? where id = 1`, currentSchemaVersion); err != nil {
 		return fmt.Errorf("update sqlite schema version: %w", err)
@@ -813,13 +807,6 @@ func (w sqliteMutationWriter) insertToken(team, tokenType string, token auth.Acc
 	return insertSQLiteAccessTokenRecord(w.ctx, w.tx, team, tokenType, token)
 }
 
-func (w sqliteMutationWriter) insertOwner(team, owner string) error {
-	if _, err := w.tx.ExecContext(w.ctx, `insert into access_publish_owners (team, owner) values (?, ?)`, team, owner); err != nil {
-		return fmt.Errorf("insert access owner: %w", err)
-	}
-	return nil
-}
-
 func (w sqliteMutationWriter) insertOIDCMapping(team string, mapping accessOIDCMapping) error {
 	if _, err := w.tx.ExecContext(w.ctx, `insert into access_oidc_mappings (team, mapping_type, value) values (?, ?, ?)`, team, mapping.kind, mapping.value); err != nil {
 		return fmt.Errorf("insert oidc mapping: %w", err)
@@ -1153,26 +1140,6 @@ const sqliteTimestampZoneLayout = "2006-01-02 15:04:05.999999999Z07:00"
 
 func sqliteTime(value time.Time) string {
 	return value.UTC().Format(sqliteTimestampLayout)
-}
-
-func (l sqliteAccessConfigLoader) loadAccessOwners(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {
-	rows, err := l.queryer.QueryContext(ctx, `select team, owner from access_publish_owners order by team, owner`)
-	if err != nil {
-		return fmt.Errorf("list access owners: %w", err)
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-	for rows.Next() {
-		var team, owner string
-		if err := rows.Scan(&team, &owner); err != nil {
-			return fmt.Errorf("scan access owner: %w", err)
-		}
-		if i, ok := index[team]; ok {
-			configs[i].PublishOwners = append(configs[i].PublishOwners, owner)
-		}
-	}
-	return rows.Err()
 }
 
 func (l sqliteAccessConfigLoader) loadAccessOIDC(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error {

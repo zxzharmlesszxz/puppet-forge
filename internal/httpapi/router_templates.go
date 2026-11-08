@@ -411,7 +411,6 @@ type accessTeamFormRow struct {
 	Team                string
 	Tokens              []accessTokenFormRow
 	TokenHistory        []accessTokenFormRow
-	ExtraPublishSpaces  string
 	OIDCReaderGroups    string
 	OIDCTeamAdminEmails string
 	OIDCTeamAdminGroups string

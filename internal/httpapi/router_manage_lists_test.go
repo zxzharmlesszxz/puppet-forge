@@ -156,9 +156,9 @@ func TestConfiguredPublishSpacesReturnsSortedUniqueNonGlobalSpaces(t *testing.T)
 	t.Parallel()
 
 	configs := []auth.TeamConfig{
-		{Team: auth.GlobalAdminTeam, PublishOwners: []string{"ignored"}},
-		{Team: "platform", PublishOwners: []string{"shared", "platform"}},
-		{Team: "security", PublishOwners: []string{"shared"}},
+		{Team: auth.GlobalAdminTeam},
+		{Team: "platform"},
+		{Team: "security"},
 	}
 	want := []string{"platform", "security"}
 	if got := configuredPublishSpaces(configs); !slices.Equal(got, want) {
@@ -170,7 +170,7 @@ func TestManagePublishSpaceAssignmentsIncludeReadOnlyUpstreamOwners(t *testing.T
 	t.Parallel()
 
 	assignments, teams := managePublishSpaceAssignments(
-		[]auth.TeamConfig{{Team: "platform", PublishOwners: []string{"platform", "shared"}}},
+		[]auth.TeamConfig{{Team: "platform"}},
 		map[string]int{"platform": 2, "shared": 1},
 		map[string]int{"puppetlabs": 4, "platform": 1},
 	)

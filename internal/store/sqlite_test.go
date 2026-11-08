@@ -734,7 +734,6 @@ func TestSQLiteAccessConfigLoadAndReplace(t *testing.T) {
 			Team:                "teamname",
 			ReadTokens:          []string{"read-token"},
 			PublishTokens:       []string{"publish-token"},
-			PublishOwners:       []string{"teamname"},
 			OIDCReaderGroups:    []string{"teamname-devops"},
 			OIDCTeamAdminEmails: []string{"owner@example.com"},
 			OIDCTeamAdminGroups: []string{"teamname-admins"},

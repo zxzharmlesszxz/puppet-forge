@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -88,14 +87,13 @@ func TestRequirePublishUsesTeamAsDefaultOwner(t *testing.T) {
 	}
 }
 
-func TestExtraPublishSpacesRequireIndependentTeams(t *testing.T) {
+func TestPublishTokenIsLimitedToTeamNamespace(t *testing.T) {
 	t.Parallel()
 
 	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
 			Team:          "teamname",
 			PublishTokens: []string{"publish-token"},
-			PublishOwners: []string{"shared"},
 		},
 	})
 	if err != nil {
@@ -103,36 +101,34 @@ func TestExtraPublishSpacesRequireIndependentTeams(t *testing.T) {
 	}
 	principal, ok := authorizer.AuthenticateToken("publish-token")
 	if !ok || !principal.CanPublishOwner("teamname") || principal.CanPublishOwner("shared") {
-		t.Fatalf("legacy namespace grant survived: %#v", principal)
+		t.Fatalf("publish token is not scoped to its team namespace: %#v", principal)
 	}
 }
 
-func TestTeamConfigJSONUsesExtraPublishSpacesWithLegacyFallback(t *testing.T) {
+func TestTeamConfigJSONRejectsRemovedNamespaceFields(t *testing.T) {
 	t.Parallel()
-
-	var cfg TeamConfig
-	if err := json.Unmarshal([]byte(`{"team":"teamname","extra_publish_spaces":["teamname","shared"]}`), &cfg); err != nil {
-		t.Fatalf("UnmarshalJSON(extra_publish_spaces) error = %v", err)
+	for _, field := range []string{"extra_publish_spaces", "publish_owners"} {
+		for _, value := range []string{`["shared"]`, `[]`, `null`} {
+			var cfg TeamConfig
+			payload := `{"team":"teamname","` + field + `":` + value + `}`
+			if err := json.Unmarshal([]byte(payload), &cfg); err == nil || !strings.Contains(err.Error(), "one team owns one namespace") {
+				t.Fatalf("removed field %s accepted: %v", field, err)
+			}
+		}
 	}
-	if !reflect.DeepEqual(cfg.PublishOwners, []string{"teamname", "shared"}) {
-		t.Fatalf("unexpected extra publish spaces: %#v", cfg.PublishOwners)
-	}
-
-	cfg = TeamConfig{}
-	if err := json.Unmarshal([]byte(`{"team":"teamname","publish_owners":["legacy"]}`), &cfg); err != nil {
-		t.Fatalf("UnmarshalJSON(publish_owners) error = %v", err)
-	}
-	if !reflect.DeepEqual(cfg.PublishOwners, []string{"legacy"}) {
-		t.Fatalf("unexpected legacy publish owners: %#v", cfg.PublishOwners)
-	}
-
-	cfg = TeamConfig{Team: "teamname", PublishOwners: []string{"teamname", "shared"}}
+	cfg := TeamConfig{Team: "teamname"}
 	body, err := json.Marshal(cfg)
 	if err != nil {
-		t.Fatalf("MarshalJSON() error = %v", err)
+		t.Fatal(err)
 	}
-	if !json.Valid(body) || !strings.Contains(string(body), "extra_publish_spaces") {
-		t.Fatalf("expected marshaled config to use extra_publish_spaces, got %s", string(body))
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"extra_publish_spaces", "publish_owners"} {
+		if _, exists := fields[field]; exists {
+			t.Fatalf("removed field %s emitted: %s", field, body)
+		}
 	}
 }
 
@@ -179,7 +175,6 @@ func TestRequireDeleteRejectsPublisher(t *testing.T) {
 		{
 			Team:          "teamname",
 			PublishTokens: []string{"publish-token"},
-			PublishOwners: []string{"teamname"},
 		},
 	})
 	if err != nil {
@@ -257,19 +252,16 @@ func TestAuthenticateOIDCMapsEmailSubjectAndDomain(t *testing.T) {
 
 	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
-			Team:          "teamname",
-			PublishOwners: []string{"teamname"},
-			OIDCEmails:    []string{"Dev@Example.COM"},
+			Team:       "teamname",
+			OIDCEmails: []string{"Dev@Example.COM"},
 		},
 		{
-			Team:          "alpha",
-			PublishOwners: []string{"alpha"},
-			OIDCSubjects:  []string{"subject-123"},
+			Team:         "alpha",
+			OIDCSubjects: []string{"subject-123"},
 		},
 		{
-			Team:          "infra",
-			PublishOwners: []string{"infra"},
-			OIDCDomains:   []string{"ops.example.com"},
+			Team:        "infra",
+			OIDCDomains: []string{"ops.example.com"},
 		},
 	})
 	if err != nil {
@@ -301,7 +293,6 @@ func TestAuthenticateOIDCMapsGroup(t *testing.T) {
 	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
 			Team:             "teamname",
-			PublishOwners:    []string{"teamname"},
 			OIDCReaderGroups: []string{"Forge Publishers"},
 		},
 	})
@@ -340,7 +331,6 @@ func TestAuthenticateOIDCMapsTeamAdminGroup(t *testing.T) {
 	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
 			Team:                "teamname",
-			PublishOwners:       []string{"teamname"},
 			OIDCReaderGroups:    []string{"teamname-devops"},
 			OIDCTeamAdminEmails: []string{"owner@example.com"},
 			OIDCTeamAdminGroups: []string{"teamname-admins"},
@@ -370,13 +360,11 @@ func TestAuthenticateOIDCMergesMultipleTeamAdminMappings(t *testing.T) {
 	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
 			Team:                "teamname",
-			PublishOwners:       []string{"teamname"},
 			OIDCTeamAdminEmails: []string{"owner@example.com"},
 			OIDCTeamAdminGroups: []string{"teamname-admins"},
 		},
 		{
 			Team:                "alpha",
-			PublishOwners:       []string{"alpha"},
 			OIDCTeamAdminEmails: []string{"owner@example.com"},
 			OIDCTeamAdminGroups: []string{"alpha-admins"},
 		},
@@ -419,7 +407,6 @@ func TestAuthenticateOIDCCombinesAdminAndPublishMappings(t *testing.T) {
 	authorizer, err := NewAuthorizer([]TeamConfig{
 		{
 			Team:             "teamname",
-			PublishOwners:    []string{"teamname"},
 			OIDCReaderGroups: []string{"teamname-devops"},
 		},
 		{
@@ -626,11 +613,6 @@ func TestNewAuthorizerValidatesPublishingTeamNames(t *testing.T) {
 			name:    "invalid team",
 			configs: []TeamConfig{{Team: "team-name"}},
 			wantErr: "must contain only ASCII letters and digits",
-		},
-		{
-			name:    "invalid extra space",
-			configs: []TeamConfig{{Team: "teamname", PublishOwners: []string{"shared_space"}}},
-			wantErr: "publish space",
 		},
 		{
 			name:    "case insensitive duplicate",

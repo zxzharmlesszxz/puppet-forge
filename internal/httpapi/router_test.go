@@ -311,7 +311,6 @@ func TestManageTokenLoginCanSwitchFromPublisherToAdmin(t *testing.T) {
 	authorizer := newAdminAuthorizer(t, auth.TeamConfig{
 		Team:          "teamname",
 		PublishTokens: []string{"teamname-token"},
-		PublishOwners: []string{"teamname"},
 	})
 
 	server := httptest.NewServer(newTestRouter(moduleSvc, nil, "http://example.test", authorizer, nil, "admin-token", false, defaultActiveReleaseTTL))
@@ -461,7 +460,6 @@ func TestRevokedPublishTokenInvalidatesManageSession(t *testing.T) {
 	if err := st.ReplaceTeamConfigs(ctx, []auth.TeamConfig{{
 		Team:          "teamname",
 		PublishTokens: []string{"session-publish-token"},
-		PublishOwners: []string{"teamname"},
 	}}); err != nil {
 		t.Fatalf("ReplaceTeamConfigs() error = %v", err)
 	}
@@ -643,7 +641,6 @@ func TestManageAccessPostRefreshesStaleAdminBeforeSaving(t *testing.T) {
 		{
 			Team:          "teamname",
 			PublishTokens: []string{"session-token"},
-			PublishOwners: []string{"teamname"},
 		},
 	}); err != nil {
 		t.Fatalf("ReplaceTeamConfigs() error = %v", err)
@@ -792,7 +789,6 @@ func TestManageAccessTokenCreateRotateAndRevoke(t *testing.T) {
 	st := newHTTPAPITestStore(t)
 	client, baseURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{
 		Team:             "teamname",
-		PublishOwners:    []string{"teamname"},
 		OIDCReaderGroups: []string{"teamname-publishers"},
 	}})
 	unnamed := manageFormValues(t, client, baseURL, url.Values{
@@ -958,8 +954,7 @@ func TestManageAccessTokenNormalizesRoleBeforeStorage(t *testing.T) {
 	ctx := context.Background()
 	st := newHTTPAPITestStore(t)
 	client, baseURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{
-		Team:          "teamname",
-		PublishOwners: []string{"teamname"},
+		Team: "teamname",
 	}})
 	form := manageFormValues(t, client, baseURL, url.Values{
 		"action": {"create"}, "team": {"teamname"}, "role": {"READ"}, "name": {"deployment"},
@@ -1012,7 +1007,6 @@ func TestManageAdminCanDeleteVersion(t *testing.T) {
 	authorizer := newAdminAuthorizer(t, auth.TeamConfig{
 		Team:          "teamname",
 		PublishTokens: []string{"teamname-token"},
-		PublishOwners: []string{"teamname"},
 	})
 
 	server := httptest.NewServer(newTestRouter(moduleSvc, nil, "http://example.test", authorizer, nil, "admin-token", false, defaultActiveReleaseTTL))
@@ -2620,7 +2614,6 @@ func TestHTTPAPIAccessMatrix(t *testing.T) {
 		Team:          "teamname",
 		ReadTokens:    []string{"read-token"},
 		PublishTokens: []string{"publish-token"},
-		PublishOwners: []string{"teamname"},
 	})
 
 	tests := []struct {
@@ -2735,7 +2728,6 @@ func TestPublishWithoutSpaceUsesMetadataNamespaceForAuthorization(t *testing.T) 
 			authorizer := newAdminAuthorizer(t, auth.TeamConfig{
 				Team:          "teamname",
 				PublishTokens: []string{"publish-token"},
-				PublishOwners: []string{"shared"},
 			})
 			server := httptest.NewServer(newTestRouter(service.NewModuleService(st, testArtifactStorage{}, "modules", nil), nil, "http://example.test", authorizer, nil, "admin-token", false, defaultActiveReleaseTTL))
 			t.Cleanup(server.Close)
@@ -2786,7 +2778,6 @@ func TestManageActionsEnforceRoleBoundary(t *testing.T) {
 		Team:          "teamname",
 		ReadTokens:    []string{"read-token"},
 		PublishTokens: []string{"publish-token"},
-		PublishOwners: []string{"teamname"},
 	})
 
 	moduleSvc := service.NewModuleService(st, testArtifactStorage{}, "modules", nil)
@@ -3353,7 +3344,6 @@ func TestReadOnlyPrincipalsCannotWriteOrDeleteHTTPAPI(t *testing.T) {
 		Team:          "teamname",
 		ReadTokens:    []string{"read-token"},
 		PublishTokens: []string{"publish-token"},
-		PublishOwners: []string{"teamname"},
 	})
 
 	archive, err := testutil.BuildTarGz(map[string]string{
@@ -3500,7 +3490,6 @@ func TestPublishRejectsUploadOverConfiguredLimit(t *testing.T) {
 	authorizer := newAdminAuthorizer(t, auth.TeamConfig{
 		Team:          "teamname",
 		PublishTokens: []string{"publish-token"},
-		PublishOwners: []string{"teamname"},
 	})
 
 	archive, err := testutil.BuildTarGz(map[string]string{
@@ -3832,8 +3821,8 @@ func TestManageAdminCanManageStructuredAccessConfig(t *testing.T) {
 	for _, cfg := range configs {
 		if cfg.Team == "alpha" {
 			foundAlpha = true
-			if len(cfg.PublishOwners) != 0 || !slices.Equal(teamPublishSpaces(cfg), []string{"alpha"}) {
-				t.Fatalf("unexpected alpha owners: %#v", cfg.PublishOwners)
+			if !slices.Equal(teamPublishSpaces(cfg), []string{"alpha"}) {
+				t.Fatalf("unexpected alpha namespace: %#v", teamPublishSpaces(cfg))
 			}
 			if len(cfg.PublishTokenRecords) != 0 {
 				t.Fatalf("structured team form created a token record: %#v", cfg.PublishTokenRecords)
@@ -3881,7 +3870,6 @@ func TestManageAccessRequiresAdmin(t *testing.T) {
 		{
 			Team:          "teamname",
 			PublishTokens: []string{"teamname-token"},
-			PublishOwners: []string{"teamname"},
 		},
 	}
 	if err := st.ReplaceTeamConfigs(context.Background(), configs); err != nil {
@@ -3921,7 +3909,6 @@ func TestTeamAdminCanManageOnlyOwnTeamAccess(t *testing.T) {
 			Team:                "teamname",
 			ReadTokens:          []string{"old-read"},
 			PublishTokens:       []string{"old-publish"},
-			PublishOwners:       []string{"teamname", "shared"},
 			OIDCReaderGroups:    []string{"teamname-devops"},
 			OIDCTeamAdminEmails: []string{"old-owner@example.com"},
 			OIDCTeamAdminGroups: []string{"teamname-admins"},
@@ -3930,7 +3917,6 @@ func TestTeamAdminCanManageOnlyOwnTeamAccess(t *testing.T) {
 			Team:             "alpha",
 			ReadTokens:       []string{"alpha-read"},
 			PublishTokens:    []string{"alpha-publish"},
-			PublishOwners:    []string{"alpha"},
 			OIDCReaderGroups: []string{"alpha-devops"},
 		},
 	}
@@ -3977,8 +3963,8 @@ func TestTeamAdminCanManageOnlyOwnTeamAccess(t *testing.T) {
 	if len(teamname.PublishTokenRecords) != 1 || !strings.HasPrefix(teamname.PublishTokenRecords[0].Prefix, "legacy_publish_") {
 		t.Fatalf("teamname publish token records were not preserved: %#v", teamname.PublishTokenRecords)
 	}
-	if len(teamname.PublishOwners) != 0 || !slices.Equal(teamPublishSpaces(*teamname), []string{"teamname"}) {
-		t.Fatalf("team admin changed publish owners: %#v", teamname.PublishOwners)
+	if !slices.Equal(teamPublishSpaces(*teamname), []string{"teamname"}) {
+		t.Fatalf("team admin changed namespace: %#v", teamPublishSpaces(*teamname))
 	}
 	if len(teamname.OIDCReaderGroups) != 1 || teamname.OIDCReaderGroups[0] != "teamname-publishers" {
 		t.Fatalf("unexpected teamname oidc groups: %#v", teamname.OIDCReaderGroups)
@@ -4020,21 +4006,18 @@ func TestTeamAdminCanManageMultipleOwnTeams(t *testing.T) {
 			Team:                "teamname",
 			ReadTokens:          []string{"teamname-read"},
 			PublishTokens:       []string{"teamname-publish"},
-			PublishOwners:       []string{"teamname"},
 			OIDCTeamAdminGroups: []string{"platform-owners"},
 		},
 		{
 			Team:                "alpha",
 			ReadTokens:          []string{"alpha-read"},
 			PublishTokens:       []string{"alpha-publish"},
-			PublishOwners:       []string{"alpha", "shared"},
 			OIDCTeamAdminGroups: []string{"platform-owners"},
 		},
 		{
 			Team:          "oxygen",
 			ReadTokens:    []string{"oxygen-read"},
 			PublishTokens: []string{"oxygen-publish"},
-			PublishOwners: []string{"oxygen"},
 		},
 	}
 	if err := st.ReplaceTeamConfigs(ctx, configs); err != nil {
@@ -4075,8 +4058,8 @@ func TestTeamAdminCanManageMultipleOwnTeams(t *testing.T) {
 	if len(alpha.ReadTokenRecords) != 1 || !strings.HasPrefix(alpha.ReadTokenRecords[0].Prefix, "legacy_read_") {
 		t.Fatalf("alpha read token record was not preserved: %#v", alpha.ReadTokenRecords)
 	}
-	if len(alpha.PublishOwners) != 0 || !slices.Equal(teamPublishSpaces(*alpha), []string{"alpha"}) {
-		t.Fatalf("team admin changed alpha publish owners: %#v", alpha.PublishOwners)
+	if !slices.Equal(teamPublishSpaces(*alpha), []string{"alpha"}) {
+		t.Fatalf("team admin changed alpha namespace: %#v", teamPublishSpaces(*alpha))
 	}
 
 	if _, _, err := router.accessConfigsFromForm(formRequest(url.Values{
@@ -4098,7 +4081,6 @@ func TestManageAccessStructuredRenameTeam(t *testing.T) {
 		{
 			Team:             "teamname",
 			PublishTokens:    []string{"teamname-token"},
-			PublishOwners:    []string{"teamname", "platform"},
 			OIDCReaderGroups: []string{"teamname-devops"},
 		},
 	}
@@ -4134,8 +4116,8 @@ func TestManageAccessStructuredRenameTeam(t *testing.T) {
 	if renamed == nil {
 		t.Fatalf("renamed team was not saved: %#v", saved)
 	}
-	if len(renamed.PublishOwners) != 0 || !slices.Equal(teamPublishSpaces(*renamed), []string{"teamnameplatform"}) {
-		t.Fatalf("unexpected renamed owners: %#v", renamed.PublishOwners)
+	if !slices.Equal(teamPublishSpaces(*renamed), []string{"teamnameplatform"}) {
+		t.Fatalf("unexpected renamed namespace: %#v", teamPublishSpaces(*renamed))
 	}
 	if len(renamed.OIDCReaderGroups) != 1 || renamed.OIDCReaderGroups[0] != "teamname-platform-devops" {
 		t.Fatalf("unexpected renamed oidc groups: %#v", renamed.OIDCReaderGroups)
@@ -4203,7 +4185,6 @@ func TestManageAccessContainsOnlyGlobalControls(t *testing.T) {
 			Team:          "teamname",
 			ReadTokens:    []string{"teamname-read"},
 			PublishTokens: []string{"teamname-publish"},
-			PublishOwners: []string{"teamname"},
 		},
 	}
 	if err := st.ReplaceTeamConfigs(ctx, configs); err != nil {
@@ -4233,12 +4214,11 @@ func TestManageTeamSummariesRespectPrincipalScope(t *testing.T) {
 			Team:                "teamname",
 			ReadTokens:          []string{"read-token"},
 			PublishTokens:       []string{"publish-token"},
-			PublishOwners:       []string{"teamname", "shared"},
 			OIDCReaderGroups:    []string{"teamname-publishers"},
 			OIDCTeamAdminEmails: []string{"owner@example.com"},
 			OIDCTeamAdminGroups: []string{"teamname-admins"},
 		},
-		{Team: "alpha", PublishOwners: []string{"alpha"}},
+		{Team: "alpha"},
 	}
 	moduleCounts := map[string]int{"teamname": 1, "shared": 1, "alpha": 1}
 	principal := auth.Principal{
@@ -4276,7 +4256,6 @@ func TestManageTeamsPagesGroupAccessAndModules(t *testing.T) {
 			Team:          "teamname",
 			ReadTokens:    []string{"read-token"},
 			PublishTokens: []string{"publish-token"},
-			PublishOwners: []string{"teamname", "shared"},
 		},
 	}
 	client, serverURL := newAccessManageClient(t, st, ctx, configs)
@@ -4469,7 +4448,6 @@ func TestPublishSpacesEndpointReturnsOnlyPrincipalSpaces(t *testing.T) {
 	authorizer := newAdminAuthorizer(t, auth.TeamConfig{
 		Team:          "teamname",
 		PublishTokens: []string{"publish-token"},
-		PublishOwners: []string{"shared"},
 	})
 	_, server := newHTTPAPIAccessMatrixServer(t, authorizer)
 	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/manage/publish-spaces", nil)
@@ -5163,7 +5141,7 @@ func TestTeamAuditLogIncludesGlobalAdminActionsOnTeamResources(t *testing.T) {
 			t.Fatalf("RecordAuditEvent() error = %v", err)
 		}
 	}
-	adminClient, serverURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{Team: "teamname", PublishOwners: []string{"shared"}}})
+	adminClient, serverURL := newAccessManageClient(t, st, ctx, []auth.TeamConfig{{Team: "teamname"}})
 	body := getBody(t, adminClient, serverURL+"/manage/teams/teamname/audit")
 	for _, want := range []string{
 		`<h1>Audit log: teamname</h1>`,
@@ -5279,7 +5257,6 @@ func TestSaveTeamCannotChangePublishSpaces(t *testing.T) {
 	configs := []auth.TeamConfig{{
 		Team:          "teamname",
 		PublishTokens: []string{"team-publish-token"},
-		PublishOwners: []string{"teamname", "shared"},
 	}}
 	adminClient, serverURL := newAccessManageClient(t, st, ctx, configs)
 
@@ -5299,7 +5276,7 @@ func TestSaveTeamCannotChangePublishSpaces(t *testing.T) {
 		t.Fatalf("LoadTeamConfigs() error = %v", err)
 	}
 	team := findTeamConfig(saved, "teamname")
-	if team == nil || len(team.PublishOwners) != 0 || !slices.Equal(teamPublishSpaces(*team), []string{"teamname"}) {
+	if team == nil || !slices.Equal(teamPublishSpaces(*team), []string{"teamname"}) {
 		t.Fatalf("save_team changed publish spaces: %#v", saved)
 	}
 
@@ -5321,8 +5298,8 @@ func TestSaveTeamRejectsDuplicateCreateAndRename(t *testing.T) {
 	st := newHTTPAPITestStore(t)
 	ctx := context.Background()
 	configs := []auth.TeamConfig{
-		{Team: "teamname", PublishTokens: []string{"team-publish-token"}, PublishOwners: []string{"teamname", "shared"}},
-		{Team: "alpha", ReadTokens: []string{"alpha-read-token"}, PublishOwners: []string{"alpha"}},
+		{Team: "teamname", PublishTokens: []string{"team-publish-token"}},
+		{Team: "alpha", ReadTokens: []string{"alpha-read-token"}},
 	}
 	if err := st.ReplaceTeamConfigs(ctx, configs); err != nil {
 		t.Fatalf("ReplaceTeamConfigs() error = %v", err)
@@ -5344,7 +5321,7 @@ func TestSaveTeamRejectsDuplicateCreateAndRename(t *testing.T) {
 		t.Fatalf("LoadTeamConfigs() error = %v", err)
 	}
 	team := findTeamConfig(saved, "teamname")
-	if team == nil || !slices.Contains(team.PublishOwners, "shared") {
+	if team == nil || len(saved) != 2 || len(team.PublishTokenRecords) != 1 || len(team.ReadTokenRecords) != 0 {
 		t.Fatalf("duplicate update changed existing team: %#v", saved)
 	}
 }

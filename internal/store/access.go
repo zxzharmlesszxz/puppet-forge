@@ -36,7 +36,6 @@ func scanTeamRows(rows rowScanner) ([]auth.TeamConfig, map[string]int, error) {
 
 type teamConfigLoader interface {
 	loadAccessTokens(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error
-	loadAccessOwners(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error
 	loadAccessOIDC(ctx context.Context, configs []auth.TeamConfig, index map[string]int) error
 }
 
@@ -46,9 +45,6 @@ func loadTeamConfigs(ctx context.Context, rows rowScanner, loader teamConfigLoad
 		return nil, err
 	}
 	if err := loader.loadAccessTokens(ctx, configs, index); err != nil {
-		return nil, err
-	}
-	if err := loader.loadAccessOwners(ctx, configs, index); err != nil {
 		return nil, err
 	}
 	if err := loader.loadAccessOIDC(ctx, configs, index); err != nil {
@@ -111,7 +107,6 @@ type typedAccessTokenRecord struct {
 type accessConfigWriter interface {
 	insertTeam(team string) error
 	insertToken(team, tokenType string, token auth.AccessTokenRecord) error
-	insertOwner(team, owner string) error
 	insertOIDCMapping(team string, mapping accessOIDCMapping) error
 }
 
@@ -148,15 +143,6 @@ func persistTeamConfigs(configs []auth.TeamConfig, hasher *auth.TokenHasher, wri
 		}
 		for _, token := range tokens {
 			if err := writer.insertToken(cfg.Team, token.tokenType, token.record); err != nil {
-				return err
-			}
-		}
-		for _, owner := range cfg.PublishOwners {
-			owner = strings.TrimSpace(owner)
-			if owner == "" {
-				continue
-			}
-			if err := writer.insertOwner(cfg.Team, owner); err != nil {
 				return err
 			}
 		}

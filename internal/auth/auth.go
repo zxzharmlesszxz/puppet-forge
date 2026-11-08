@@ -17,7 +17,6 @@ type TeamConfig struct {
 	ReadTokens       []string `json:"-"`
 	PublishTokens    []string `json:"-"`
 	AdminTokens      []string `json:"-"`
-	PublishOwners    []string `json:"extra_publish_spaces,omitempty"`
 	OIDCEmails       []string `json:"oidc_emails"`
 	OIDCSubjects     []string `json:"oidc_subjects"`
 	OIDCDomains      []string `json:"oidc_domains"`
@@ -39,11 +38,19 @@ const GlobalAdminTeam = "platform-admin"
 const runtimeAdminTeam = "bootstrap-admin"
 
 func (cfg *TeamConfig) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for _, field := range []string{"extra_publish_spaces", "publish_owners"} {
+		if _, exists := fields[field]; exists {
+			return fmt.Errorf("unsupported team configuration field %q: one team owns one namespace", field)
+		}
+	}
 	type teamConfigAlias TeamConfig
 	var aux struct {
 		teamConfigAlias
-		LegacyPublishOwners []string `json:"publish_owners"`
-		LegacyOIDCGroups    []string `json:"oidc_groups"`
+		LegacyOIDCGroups []string `json:"oidc_groups"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
@@ -51,9 +58,6 @@ func (cfg *TeamConfig) UnmarshalJSON(data []byte) error {
 	*cfg = TeamConfig(aux.teamConfigAlias)
 	if cfg.OIDCReaderGroups == nil {
 		cfg.OIDCReaderGroups = aux.LegacyOIDCGroups
-	}
-	if len(cfg.PublishOwners) == 0 && len(aux.LegacyPublishOwners) > 0 {
-		cfg.PublishOwners = aux.LegacyPublishOwners
 	}
 	return nil
 }
@@ -200,13 +204,7 @@ func newAuthorizer(configs []TeamConfig, tokenHasher *TokenHasher) (*Authorizer,
 			return nil, err
 		}
 
-		ownerSet := make(map[string]struct{}, len(cfg.PublishOwners)+1)
-		ownerSet[cfg.Team] = struct{}{}
-		for _, owner := range cfg.PublishOwners {
-			if owner != "" && !domain.ValidModuleOwner(owner) {
-				return nil, fmt.Errorf("invalid legacy publish space %q", owner)
-			}
-		}
+		ownerSet := map[string]struct{}{cfg.Team: {}}
 
 		for _, token := range cfg.ReadTokens {
 			err := registerToken(token, cfg.Team+" read access", Principal{
@@ -323,7 +321,6 @@ func validateTeamConfigRole(cfg TeamConfig) error {
 			len(cfg.PublishTokens) > 0 ||
 			len(cfg.ReadTokenRecords) > 0 ||
 			len(cfg.PublishTokenRecords) > 0 ||
-			len(cfg.PublishOwners) > 0 ||
 			len(cfg.OIDCEmails) > 0 ||
 			len(cfg.OIDCSubjects) > 0 ||
 			len(cfg.OIDCDomains) > 0 ||
