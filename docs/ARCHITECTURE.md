@@ -9,6 +9,11 @@ Moderation checks namespace and upstream-origin authority under the same module
 lock as its state change. A prior HTTP permission check is not sufficient: a
 concurrent import may have changed a local module into a mixed-origin module.
 
+Single-module and batched release listings join lifecycle state in SQL, treating
+legacy rows without a state record as Available. Public catalog filtering is
+applied within those queries. Adding release versions does not add individual
+state lookups; management listings retain non-readable states for moderation.
+
 The `/v3/releases` collection filters and paginates in SQL, including semantic
 version ordering through an indexed `version_order` key. Schema migration
 backfills existing keys in bounded batches; a page does not load the entire

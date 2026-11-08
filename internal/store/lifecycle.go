@@ -73,6 +73,21 @@ func initializePostgresStatus(ctx context.Context, tx pgx.Tx, release domain.Rel
 
 type statusScanner interface{ Scan(...any) error }
 
+// scanVersionStatus reads the lifecycle columns joined to a version row.
+func scanVersionStatus(row statusScanner, status *domain.ResourceStatus, columns ...any) error {
+	var changed string
+	columns = append(columns, &status.State, &status.Previous, &status.Reason, &status.Replacement, &status.SHA256, &changed)
+	if err := row.Scan(columns...); err != nil {
+		return err
+	}
+	if changed == "" {
+		return nil
+	}
+	var err error
+	status.ChangedAt, err = time.Parse(time.RFC3339Nano, changed)
+	return err
+}
+
 func scanResourceStatus(row statusScanner) (domain.ResourceStatus, error) {
 	var status domain.ResourceStatus
 	var changed string

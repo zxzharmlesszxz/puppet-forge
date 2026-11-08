@@ -107,12 +107,7 @@ func (r *Router) serveLocalV3Modules(w http.ResponseWriter, req *http.Request) {
 		versions := releasesByModule[module.Owner+"\x00"+module.Name]
 		releaseRefs := make([]v3ReleaseRef, 0, len(versions))
 		for _, version := range versions {
-			status, err := r.modules.ResourceStatus(req.Context(), module.Owner, module.Name, version.Version)
-			if err != nil {
-				writeServiceError(w, err)
-				return
-			}
-			if !status.State.Readable() {
+			if !version.Status.State.Readable() {
 				continue
 			}
 			releaseRefs = append(releaseRefs, v3ReleaseRef{Slug: releaseSlug(module.Owner, module.Name, version.Version), Version: version.Version})

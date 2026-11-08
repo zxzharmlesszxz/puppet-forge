@@ -617,10 +617,6 @@ func (s *ModuleService) ListReleases(ctx context.Context, owner, name string) ([
 	}
 	result := make([]domain.ModuleVersion, 0, len(versions))
 	for _, version := range versions {
-		version.Status, err = s.ResourceStatus(ctx, owner, name, version.Version)
-		if err != nil {
-			return nil, err
-		}
 		if store.IsReadableCatalog(ctx) && !version.Status.State.Readable() {
 			continue
 		}
@@ -659,7 +655,7 @@ func (s *ModuleService) ListReleasesForModules(ctx context.Context, modules []do
 		}
 		for _, release := range releases {
 			key := release.Owner + "\x00" + release.Name
-			grouped[key] = append(grouped[key], domain.ModuleVersion{Version: release.Version, CreatedAt: release.CreatedAt})
+			grouped[key] = append(grouped[key], domain.ModuleVersion{Version: release.Version, CreatedAt: release.CreatedAt, Status: release.Status})
 		}
 		return grouped, nil
 	}

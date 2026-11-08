@@ -1,11 +1,74 @@
 package store
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
+
+func TestStoreParityReleaseListsIncludeLifecycle(t *testing.T) {
+	for _, tc := range parityStoreCases(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			st := tc.open(t)
+			t.Cleanup(st.Close)
+			states := st.(LifecycleStore)
+			var modules []domain.Module
+			expected := make(map[string]domain.ResourceStatus)
+			for _, name := range []string{"first", "second"} {
+				module, err := st.UpsertModule(t.Context(), "reviewteam", name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				modules = append(modules, module)
+				for index, state := range []domain.ResourceState{domain.StateAvailable, domain.StatePending, domain.StateDeprecated, domain.StateBlocked, domain.StateDeleted} {
+					version := fmt.Sprintf("1.0.%d", index)
+					release := NewRelease(module.ID, module.Owner, name, version, "", "", "demo.tar.gz", "application/gzip", "md5", "sha", "object", 1, nil)
+					if _, err := st.CreateRelease(t.Context(), release); err != nil {
+						t.Fatal(err)
+					}
+					status := domain.ResourceStatus{State: domain.StateAvailable}
+					if index != 0 {
+						status = domain.ResourceStatus{State: state, Previous: domain.StateAvailable, Reason: "reviewed", Replacement: "2.0.0", SHA256: "sha", ChangedAt: time.Now().UTC().Truncate(time.Microsecond)}
+						if err := states.SetResourceStatus(t.Context(), module.Owner, name, version, status); err != nil {
+							t.Fatal(err)
+						}
+					}
+					expected[name+"@"+version] = status
+				}
+			}
+			for _, readable := range []bool{false, true} {
+				ctx := t.Context()
+				want := 5
+				if readable {
+					ctx, want = ReadableCatalogContext(ctx), 2
+				}
+				for _, module := range modules {
+					versions, err := st.ListReleases(ctx, module.Owner, module.Name)
+					if err != nil || len(versions) != want {
+						t.Fatalf("list readable=%v: %#v %v", readable, versions, err)
+					}
+					for _, version := range versions {
+						if !reflect.DeepEqual(version.Status, expected[module.Name+"@"+version.Version]) || readable && !version.Status.State.Readable() {
+							t.Fatalf("wrong version status: %#v", version)
+						}
+					}
+				}
+				releases, err := st.ListReleasesForModules(ctx, modules)
+				if err != nil || len(releases) != want*len(modules) {
+					t.Fatalf("batch readable=%v: %#v %v", readable, releases, err)
+				}
+				for _, release := range releases {
+					if !reflect.DeepEqual(release.Status, expected[release.Name+"@"+release.Version]) || readable && !release.Status.State.Readable() {
+						t.Fatalf("wrong batch status: %#v", release)
+					}
+				}
+			}
+		})
+	}
+}
 
 func TestStoreParityResourceStatusFailureRollsBack(t *testing.T) {
 	for _, tc := range parityStoreCases(t) {

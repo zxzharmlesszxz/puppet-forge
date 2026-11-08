@@ -1888,11 +1888,15 @@ func (s *SQLiteStore) MarkUpstreamModuleRefreshAttempt(ctx context.Context, owne
 
 func (s *SQLiteStore) ListReleases(ctx context.Context, owner, name string) ([]domain.ModuleVersion, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		select r.version, r.created_at
+		select r.version, r.created_at,
+         coalesce(s.state,'available'), coalesce(s.previous_state,''), coalesce(s.reason,''),
+         coalesce(s.replacement,''), coalesce(s.sha256,''), coalesce(s.changed_at,'')
 		from releases r
 		join modules m on m.id = r.module_id
+		left join resource_states s on s.owner=m.owner and s.name=m.name and s.version=r.version
 		where m.owner = ? and m.name = ?
-	`, owner, name)
+		and (not ? or coalesce(s.state,'available') in ('available','deprecated'))
+	`, owner, name, IsReadableCatalog(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("list releases: %w", err)
 	}
@@ -1904,7 +1908,7 @@ func (s *SQLiteStore) ListReleases(ctx context.Context, owner, name string) ([]d
 	for rows.Next() {
 		var version domain.ModuleVersion
 		var createdAt sqliteTimestamp
-		if err := rows.Scan(&version.Version, &createdAt); err != nil {
+		if err := scanVersionStatus(rows, &version.Status, &version.Version, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan release version: %w", err)
 		}
 		version.CreatedAt = createdAt.Time
@@ -1930,12 +1934,17 @@ func (s *SQLiteStore) ListReleasesForModules(ctx context.Context, modules []doma
 		selected.WriteString("(m.owner = ? and m.name = ?)")
 		args = append(args, module.Owner, module.Name)
 	}
+	args = append(args, IsReadableCatalog(ctx))
 	// #nosec G202 -- selected contains only fixed predicates/placeholders; module identities remain bound parameters.
 	rows, err := s.db.QueryContext(ctx, `
-		select m.owner, m.name, r.version, r.created_at
+		select m.owner, m.name, r.version, r.created_at,
+         coalesce(s.state,'available'), coalesce(s.previous_state,''), coalesce(s.reason,''),
+         coalesce(s.replacement,''), coalesce(s.sha256,''), coalesce(s.changed_at,'')
 		from releases r
 		join modules m on m.id = r.module_id
-		where `+selected.String()+`
+		left join resource_states s on s.owner=m.owner and s.name=m.name and s.version=r.version
+		where (`+selected.String()+`)
+		and (not ? or coalesce(s.state,'available') in ('available','deprecated'))
 		order by m.owner, m.name, r.created_at desc, r.version desc
 	`, args...)
 	if err != nil {
@@ -1947,7 +1956,7 @@ func (s *SQLiteStore) ListReleasesForModules(ctx context.Context, modules []doma
 	for rows.Next() {
 		var release ModuleReleaseSummary
 		var createdAt sqliteTimestamp
-		if err := rows.Scan(&release.Owner, &release.Name, &release.Version, &createdAt); err != nil {
+		if err := scanVersionStatus(rows, &release.Status, &release.Owner, &release.Name, &release.Version, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan module release summary: %w", err)
 		}
 		release.CreatedAt = createdAt.Time

@@ -60,6 +60,7 @@ type ModuleStore interface {
 	CountUpstreamModulesByOwner(ctx context.Context) (map[string]int, error)
 	ListUpstreamModules(ctx context.Context, limit int) ([]domain.Module, error)
 	MarkUpstreamModuleRefreshAttempt(ctx context.Context, owner, name string, attemptedAt time.Time) error
+	// ListReleases includes lifecycle status and honors ReadableCatalogContext.
 	ListReleases(ctx context.Context, owner, name string) ([]domain.ModuleVersion, error)
 	ListAllReleases(ctx context.Context) ([]ReleaseSummary, error)
 	GetModule(ctx context.Context, owner, name string) (domain.Module, error)
@@ -1855,13 +1856,17 @@ func (s *PostgresStore) GetModuleForReleaseSlug(ctx context.Context, releaseSlug
 
 func (s *PostgresStore) ListReleases(ctx context.Context, owner, name string) ([]domain.ModuleVersion, error) {
 	const query = `
-		select r.version, r.created_at
+		select r.version, r.created_at,
+         coalesce(s.state,'available'), coalesce(s.previous_state,''), coalesce(s.reason,''),
+         coalesce(s.replacement,''), coalesce(s.sha256,''), coalesce(s.changed_at,'')
 		from releases r
 		join modules m on m.id = r.module_id
+		left join resource_states s on s.owner=m.owner and s.name=m.name and s.version=r.version
 		where m.owner = $1 and m.name = $2
+		and (not $3 or coalesce(s.state,'available') in ('available','deprecated'))
 	`
 
-	rows, err := s.pool.Query(ctx, query, owner, name)
+	rows, err := s.pool.Query(ctx, query, owner, name, IsReadableCatalog(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("list releases: %w", err)
 	}
@@ -1870,7 +1875,7 @@ func (s *PostgresStore) ListReleases(ctx context.Context, owner, name string) ([
 	var versions []domain.ModuleVersion
 	for rows.Next() {
 		var version domain.ModuleVersion
-		if err := rows.Scan(&version.Version, &version.CreatedAt); err != nil {
+		if err := scanVersionStatus(rows, &version.Status, &version.Version, &version.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan release version: %w", err)
 		}
 		versions = append(versions, version)
@@ -1894,13 +1899,17 @@ func (s *PostgresStore) ListReleasesForModules(ctx context.Context, modules []do
 		names[i] = module.Name
 	}
 	const query = `
-		select m.owner, m.name, r.version, r.created_at
+		select m.owner, m.name, r.version, r.created_at,
+         coalesce(s.state,'available'), coalesce(s.previous_state,''), coalesce(s.reason,''),
+         coalesce(s.replacement,''), coalesce(s.sha256,''), coalesce(s.changed_at,'')
 		from unnest($1::text[], $2::text[]) as selected(owner, name)
 		join modules m on m.owner = selected.owner and m.name = selected.name
 		join releases r on r.module_id = m.id
+		left join resource_states s on s.owner=m.owner and s.name=m.name and s.version=r.version
+		where not $3 or coalesce(s.state,'available') in ('available','deprecated')
 		order by m.owner, m.name, r.created_at desc, r.version desc
 	`
-	rows, err := s.pool.Query(ctx, query, owners, names)
+	rows, err := s.pool.Query(ctx, query, owners, names, IsReadableCatalog(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("list releases for modules: %w", err)
 	}
@@ -1909,7 +1918,7 @@ func (s *PostgresStore) ListReleasesForModules(ctx context.Context, modules []do
 	var releases []ModuleReleaseSummary
 	for rows.Next() {
 		var release ModuleReleaseSummary
-		if err := rows.Scan(&release.Owner, &release.Name, &release.Version, &release.CreatedAt); err != nil {
+		if err := scanVersionStatus(rows, &release.Status, &release.Owner, &release.Name, &release.Version, &release.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan module release summary: %w", err)
 		}
 		releases = append(releases, release)

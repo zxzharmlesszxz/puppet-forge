@@ -58,6 +58,7 @@ type ModuleReleaseSummary struct {
 	Name      string
 	Version   string
 	CreatedAt time.Time
+	Status    domain.ResourceStatus
 }
 
 type ArtifactReleaseRecord struct {
@@ -175,6 +176,7 @@ type AccessStore interface {
 type AccessConfigUnlock func() error
 
 type ModuleReleaseBatchStore interface {
+	// ListReleasesForModules includes lifecycle status and honors ReadableCatalogContext.
 	ListReleasesForModules(ctx context.Context, modules []domain.Module) ([]ModuleReleaseSummary, error)
 	CountReleasesForModules(ctx context.Context, modules []domain.Module) ([]ModuleReleaseCount, error)
 }
