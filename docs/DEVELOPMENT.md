@@ -265,7 +265,61 @@ helm repo update puppet-forge
 helm search repo puppet-forge/puppet-forge --versions
 ```
 
+## OpenVox 8 Installer Tests
+
+Choose an [official OpenVox agent image](https://github.com/OpenVoxProject/container-openvoxagent)
+with major version 8, preferably pinned by digest; no image is selected implicitly.
+The opt-in test starts an ephemeral authenticated Forge and upstream JSON fixture,
+then runs the unmodified installer inside Docker:
+
+```bash
+make test-openvox OPENVOX_TEST_IMAGE=ghcr.io/openvoxproject/openvoxagent:8.28.1
+```
+
+The fixture contains valid synthetic archives for Common 1.0.0, apt 11.4.0,
+and stdlib 10.1.0, including dependencies. The upstream modules are initially
+absent from SQL and their archives are absent from object storage. It rejects
+anonymous V3 access and checks first-query catalog indexing, artifact download,
+and warm-cache installation with fresh client
+directories. Containers, listeners, and SQL fixtures are removed afterward.
+This verifies protocol compatibility, not the contents of real upstream or
+private modules. Ordinary Go checks skip it unless
+`PUPPET_FORGE_TEST_OPENVOX_IMAGE` is set. Docker Desktop must allow container
+access to `host.docker.internal`; the temporary fixture listens on an ephemeral
+host port and requires a random token.
+
+For actual modules through an already running local Forge with
+`PUBLIC_MODULE_ACCESS=false`:
+
+```bash
+export OPENVOX_READ_TOKEN='<read-token>'
+export OPENVOX_COMMON_MODULE='<owner-common>'
+make openvox-smoke OPENVOX_TEST_IMAGE=ghcr.io/openvoxproject/openvoxagent:8.28.1
+```
+
+`OPENVOX_FORGE_URL` defaults to `http://host.docker.internal:8080` in the container.
+Override it for another reachable Forge origin. `OPENVOX_COMMON_VERSION`
+overrides 1.0.0. Omitting Common explicitly skips that private acceptance case.
+The smoke uses standard `forge_authorization`, verifies installed metadata,
+does not disable dependency resolution or checksums, and does not patch Ruby.
+Credentials are stored only in a temporary private config.
+
+The full project-specific sshd check and its 100% resource-coverage gate must
+still run in the owning module repository. Neither fixture nor smoke establishes
+that result. Investigate intermittent `503` separately using request IDs and
+server logs; do not hide it with retries or claim an unverified cause.
+
+Catalog regressions run on SQLite and, with `PUPPET_FORGE_TEST_POSTGRES_DSN`,
+on isolated PostgreSQL schemas with independent connection pools for two replicas.
+`make test-postgres` and PostgreSQL integration coverage include these HTTP cases
+as well as store parity. They cover rollback before the completion marker,
+expired/replaced leases, concurrent moderation during HTTP fetch, empty/version/
+offset filters, retries, and preservation of local releases. Tests are added,
+not automatically executed by documentation or this change.
+
 ## Additional Documentation
+
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
 
 - Runtime and multi-instance schemas: [SCHEMA.md](SCHEMA.md)
 - Metrics: [METRICS.md](METRICS.md)

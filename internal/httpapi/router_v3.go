@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
-	"github.com/zxzharmlesszxz/puppet-forge/internal/httputil"
-	"github.com/zxzharmlesszxz/puppet-forge/internal/service"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
@@ -120,7 +118,12 @@ func (r *Router) serveLocalV3Modules(w http.ResponseWriter, req *http.Request) {
 				writeServiceError(w, getErr)
 				return
 			}
-			currentRelease = v3ReleaseResponse(req, release)
+			release, getErr = r.modules.EnsureReleaseMetadata(req.Context(), release)
+			if getErr != nil {
+				writeServiceError(w, getErr)
+				return
+			}
+			currentRelease = v3ReleaseResponse(release)
 		}
 		results = append(results, map[string]any{
 			"uri":             "/v3/modules/" + moduleSlug(module.Owner, module.Name),
@@ -141,6 +144,10 @@ func (r *Router) serveLocalV3Releases(w http.ResponseWriter, req *http.Request) 
 	}
 	moduleFilter := strings.ReplaceAll(strings.TrimSpace(req.URL.Query().Get("module")), "/", "-")
 	versionFilter := strings.TrimSpace(req.URL.Query().Get("version"))
+	if err := r.modules.EnsureUpstreamCatalog(req.Context(), moduleFilter); err != nil {
+		writeServiceError(w, err)
+		return
+	}
 	releases, total, err := r.modules.ListReleasesPageFiltered(req.Context(), moduleFilter, versionFilter, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -148,7 +155,12 @@ func (r *Router) serveLocalV3Releases(w http.ResponseWriter, req *http.Request) 
 	}
 	results := make([]map[string]any, 0, len(releases))
 	for _, release := range releases {
-		results = append(results, v3ReleaseResponse(req, release))
+		release, err = r.modules.EnsureReleaseMetadata(req.Context(), release)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		results = append(results, v3ReleaseResponse(release))
 	}
 	writeV3Collection(w, req, results, limit, offset, total)
 }
@@ -161,7 +173,7 @@ func v3OwnerResponse(owner string) map[string]any {
 	}
 }
 
-func v3ReleaseResponse(req *http.Request, release domain.Release) map[string]any {
+func v3ReleaseResponse(release domain.Release) map[string]any {
 	response := map[string]any{
 		"status":    release.Status,
 		"uri":       "/v3/releases/" + releaseSlug(release.Owner, release.Name, release.Version),
@@ -170,7 +182,7 @@ func v3ReleaseResponse(req *http.Request, release domain.Release) map[string]any
 		"version":   release.Version,
 		"metadata":  release.Metadata,
 		"tags":      v3MetadataStrings(release.Metadata, "tags"),
-		"file_uri":  releaseV3FileURI(req, release),
+		"file_uri":  releaseV3FileURI(release),
 		"file_name": releaseV3FileName(release),
 		"file_size": release.SizeBytes,
 	}
@@ -234,7 +246,7 @@ func v3PaginationResponse(req *http.Request, limit, offset, total int) map[strin
 		query := req.URL.Query()
 		query.Set("limit", strconv.Itoa(limit))
 		query.Set("offset", strconv.Itoa(target))
-		return httputil.ExternalBaseURL(req, "") + req.URL.Path + "?" + query.Encode()
+		return req.URL.Path + "?" + query.Encode()
 	}
 	lastOffset := 0
 	if total > 0 {
@@ -260,13 +272,18 @@ func v3PaginationResponse(req *http.Request, limit, offset, total int) map[strin
 }
 
 func (r *Router) serveLocalV3Module(w http.ResponseWriter, req *http.Request, slug string) bool {
+	if err := r.modules.EnsureUpstreamCatalog(req.Context(), slug); err != nil {
+		writeServiceError(w, err)
+		return true
+	}
 	module, ok, err := r.findModuleBySlug(req.Context(), slug)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return true
 	}
 	if !ok {
-		return false
+		writeServiceError(w, store.ErrNotFound)
+		return true
 	}
 
 	versions, err := r.modules.ListReleases(req.Context(), module.Owner, module.Name)
@@ -316,20 +333,20 @@ func (r *Router) serveLocalV3Release(w http.ResponseWriter, req *http.Request, s
 		return true
 	}
 	if !ok {
-		return false
+		writeServiceError(w, store.ErrNotFound)
+		return true
+	}
+	release, err = r.modules.EnsureReleaseMetadata(req.Context(), release)
+	if err != nil {
+		writeServiceError(w, err)
+		return true
 	}
 	r.markReleaseUsed(req.Context(), release.Owner, release.Name, release.Version)
 	verifiedRelease, err := r.modules.EnsureReleaseChecksums(req.Context(), release)
 	if err != nil {
 		if release.Source == "upstream" {
-			if errors.Is(err, service.ErrUnavailable) {
-				writeServiceError(w, err)
-				return true
-			}
-			// A successful local v3 response must include checksums from the exact
-			// artifact that its file_uri serves. Let the Forge proxy return the
-			// authoritative upstream response when local materialization is incomplete.
-			return false
+			writeServiceError(w, err)
+			return true
 		}
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, err)
@@ -344,7 +361,7 @@ func (r *Router) serveLocalV3Release(w http.ResponseWriter, req *http.Request, s
 		"slug":        releaseSlug(release.Owner, release.Name, release.Version),
 		"status":      release.Status,
 		"version":     release.Version,
-		"file_uri":    releaseV3FileURI(req, release),
+		"file_uri":    releaseV3FileURI(release),
 		"file_name":   releaseV3FileName(release),
 		"file_size":   release.SizeBytes,
 		"readme":      release.Readme,
@@ -399,9 +416,6 @@ func (r *Router) findReleaseBySlug(ctx context.Context, slug string) (domain.Rel
 	if errors.Is(err, store.ErrNotFound) {
 		return domain.Release{}, false, nil
 	}
-	if errors.Is(err, service.ErrUpstreamHydration) && !errors.Is(err, service.ErrUpstreamRestore) {
-		return domain.Release{}, false, nil
-	}
 	return release, err == nil, err
 }
 
@@ -412,8 +426,8 @@ func (r *Router) findReleaseByFileName(ctx context.Context, filename string) (do
 	return r.findReleaseBySlug(ctx, strings.TrimSuffix(filename, ".tar.gz"))
 }
 
-func releaseV3FileURI(req *http.Request, release domain.Release) string {
-	return httputil.ExternalBaseURL(req, "") + "/v3/files/" + releaseV3FileName(release)
+func releaseV3FileURI(release domain.Release) string {
+	return "/v3/files/" + releaseV3FileName(release)
 }
 
 func releaseV3FileName(release domain.Release) string {

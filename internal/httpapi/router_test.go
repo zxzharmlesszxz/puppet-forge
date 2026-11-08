@@ -1572,20 +1572,16 @@ func TestReleaseDownloadHTTPRangeAndConditionalSemantics(t *testing.T) {
 	}
 }
 
-func TestReleaseV3FileURIUsesForwardedHost(t *testing.T) {
+func TestReleaseV3FileURIIsRelative(t *testing.T) {
 	t.Parallel()
 
-	req := httptest.NewRequest(http.MethodGet, "http://internal/v3/releases/puppetlabs-concat-9.1.0", nil)
-	req.Header.Set("X-Forwarded-Proto", "https")
-	req.Header.Set("X-Forwarded-Host", "forge.example.com")
-
-	got := releaseV3FileURI(req, domain.Release{
+	got := releaseV3FileURI(domain.Release{
 		Owner:   "puppetlabs",
 		Name:    "concat",
 		Version: "9.1.0",
 	})
 
-	if got != "https://forge.example.com/v3/files/puppetlabs-concat-9.1.0.tar.gz" {
+	if got != "/v3/files/puppetlabs-concat-9.1.0.tar.gz" {
 		t.Fatalf("releaseV3FileURI() = %q", got)
 	}
 }
@@ -1779,8 +1775,8 @@ func TestIncompleteUpstreamV3ReleaseDoesNotReturnMalformedSuccess(t *testing.T) 
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("GET /v3/releases returned malformed success: %s", body)
 	}
-	if upstreamCalls.Load() < 2 {
-		t.Fatalf("upstream calls = %d, want hydration attempt and proxy fallback", upstreamCalls.Load())
+	if resp.StatusCode != http.StatusBadGateway || upstreamCalls.Load() != 1 {
+		t.Fatalf("upstream failure status=%d calls=%d, want 502 and one hydration attempt", resp.StatusCode, upstreamCalls.Load())
 	}
 }
 
@@ -1912,6 +1908,7 @@ func TestUpstreamV3ReleaseUsesLocalFileURIAndMarksSelectedVersionActive(t *testi
 			_, _ = w.Write([]byte(`{
 				"slug":"puppetlabs-concat-9.1.0",
 				"version":"9.1.0",
+				"metadata":{"name":"puppetlabs-concat","version":"9.1.0","dependencies":[],"requirements":[]},
 				"file_uri":"https://forgeapi.puppetlabs.com/v3/files/puppetlabs-concat-9.1.0.tar.gz",
 				"file_name":"puppetlabs-concat-9.1.0.tar.gz",
 				"file_sha256":"9f844ff2df372c25823534f525bb2b31e853c5a7c6b8b8641a67ef03e83a460d"
@@ -1981,8 +1978,8 @@ func TestUpstreamV3ReleaseUsesLocalFileURIAndMarksSelectedVersionActive(t *testi
 	if !ok {
 		t.Fatalf("file_uri missing from release JSON: %#v", releaseJSON)
 	}
-	if !strings.HasPrefix(fileURI, server.URL+"/v3/files/") {
-		t.Fatalf("file_uri = %q, want local server URL %q", fileURI, server.URL)
+	if !strings.HasPrefix(fileURI, "/v3/files/") {
+		t.Fatalf("file_uri = %q, want relative file path", fileURI)
 	}
 	archiveBody := []byte("upstream archive")
 	md5Sum := md5.Sum(archiveBody)
@@ -1994,7 +1991,7 @@ func TestUpstreamV3ReleaseUsesLocalFileURIAndMarksSelectedVersionActive(t *testi
 		t.Fatalf("file_sha256 = %q, want checksum of served archive", releaseJSON["file_sha256"])
 	}
 
-	resp, err = server.Client().Get(fileURI)
+	resp, err = server.Client().Get(server.URL + fileURI)
 	if err != nil {
 		t.Fatalf("GET local file_uri error = %v", err)
 	}
@@ -2045,7 +2042,7 @@ func TestV3ReleaseRequestMarksSelectedVersionActive(t *testing.T) {
 			SHA256:          "9f844ff2df372c25823534f525bb2b31e853c5a7c6b8b8641a67ef03e83a460d",
 			StoragePath:     "upstream-cache/v3/files/puppetlabs-concat-9.1.0.tar.gz",
 			UpstreamFileURI: "https://forgeapi.puppetlabs.com/v3/files/puppetlabs-concat-9.1.0.tar.gz",
-			Metadata:        map[string]any{},
+			Metadata:        map[string]any{"name": "puppetlabs-concat", "version": "9.1.0"},
 		},
 		{
 			ID:          "release-10.0.0",
@@ -3663,13 +3660,26 @@ func TestPublicModuleAccessControlsV3Proxy(t *testing.T) {
 	st := newHTTPAPITestStore(t)
 
 	authorizer := newAdminAuthorizer(t)
-	forgeProxy := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"source": "proxy"})
-	})
-	moduleSvc := service.NewModuleService(st, testArtifactStorage{}, "modules", nil)
-	privateServer := httptest.NewServer(newTestRouter(moduleSvc, forgeProxy, "http://example.test", authorizer, nil, "admin-token", false, defaultActiveReleaseTTL))
+	var upstreamRequests atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamRequests.Add(1)
+		if req.URL.Path != "/v3/modules/puppetlabs-stdlib" {
+			t.Errorf("unexpected upstream request: %s", req.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"slug": "puppetlabs-stdlib", "owner": "puppetlabs", "name": "stdlib",
+			"releases": []map[string]string{{"slug": "puppetlabs-stdlib-1.0.0", "version": "1.0.0"}},
+		})
+	}))
+	t.Cleanup(upstream.Close)
+	forgeProxy, err := proxy.NewForgeProxy(upstream.URL, time.Minute, 1024, testArtifactStorage{}, "upstream-cache", proxy.WithHTTPClient(upstream.Client()), proxy.WithPrivateNetworks())
+	if err != nil {
+		t.Fatal(err)
+	}
+	moduleSvc := service.NewModuleService(st, testArtifactStorage{}, "modules", forgeProxy)
+	privateServer := httptest.NewServer(newTestRouter(moduleSvc, forgeProxy.Handler(), "http://example.test", authorizer, nil, "admin-token", false, defaultActiveReleaseTTL))
 	t.Cleanup(privateServer.Close)
-	publicServer := httptest.NewServer(newTestRouter(moduleSvc, forgeProxy, "http://example.test", authorizer, nil, "admin-token", true, defaultActiveReleaseTTL))
+	publicServer := httptest.NewServer(newTestRouter(moduleSvc, forgeProxy.Handler(), "http://example.test", authorizer, nil, "admin-token", true, defaultActiveReleaseTTL))
 	t.Cleanup(publicServer.Close)
 
 	resp, err := privateServer.Client().Get(privateServer.URL + "/v3/modules/puppetlabs-stdlib")
@@ -3682,6 +3692,9 @@ func TestPublicModuleAccessControlsV3Proxy(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected private /v3 without token to get 401, got %d", resp.StatusCode)
 	}
+	if upstreamRequests.Load() != 0 {
+		t.Fatal("unauthorized request reached upstream")
+	}
 
 	resp, err = publicServer.Client().Get(publicServer.URL + "/v3/modules/puppetlabs-stdlib")
 	if err != nil {
@@ -3692,6 +3705,12 @@ func TestPublicModuleAccessControlsV3Proxy(t *testing.T) {
 	}()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected public /v3 without token to get 200, got %d", resp.StatusCode)
+	}
+	if upstreamRequests.Load() != 1 {
+		t.Fatalf("public module lookup made %d upstream requests", upstreamRequests.Load())
+	}
+	if _, err := st.GetRelease(t.Context(), "puppetlabs", "stdlib", "1.0.0"); err != nil {
+		t.Fatalf("public module lookup did not index catalog: %v", err)
 	}
 }
 

@@ -556,10 +556,22 @@ erDiagram
     SCHEMA_METADATA {
         int version
     }
+    UPSTREAM_CATALOGS {
+        string owner PK
+        string name PK
+        string indexed_at
+    }
+    MODULE_ORIGINS {
+        string owner PK
+        string name PK
+        string source PK
+    }
 ```
 
 PostgreSQL schema bootstrap серіалізований global advisory lock. Binary не
 працює зі schema version, новішою за підтримувану.
+
+Схема 10 додає upstream_catalogs і module_origins. Позначка завершення та версії каталогу фіксуються атомарно. SQL-lease перевіряється перед commit; HTTP працює поза транзакцією, а lifecycle повторно перевіряється під module lock. Походження захищає локальні модулі від підміни upstream. Помилка чи 404 не створює позначки завершення.
 
 ## Власність стану та consistency
 

@@ -32,7 +32,7 @@ func (s *pausedModuleLockStore) LockModule(ctx context.Context, owner, name stri
 }
 
 func TestReleaseEnrichmentPreservesConcurrentMutation(t *testing.T) {
-	for _, operation := range []string{"hydrate", "checksum"} {
+	for _, operation := range []string{"hydrate", "metadata", "checksum"} {
 		for _, mutation := range []string{"replace", "delete"} {
 			t.Run(operation+"/"+mutation, func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -46,10 +46,14 @@ func TestReleaseEnrichmentPreservesConcurrentMutation(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				old, err := st.CreateRelease(ctx, domain.Release{
+				initial := domain.Release{
 					ID: "old", ModuleID: module.ID, Owner: module.Owner, Name: module.Name,
 					Version: "1.0.0", Source: "upstream", FileName: "archive.tar.gz", ContentType: "application/gzip", StoragePath: "upstream-cache/old.tar.gz",
-				})
+				}
+				if operation == "metadata" {
+					initial.UpstreamFileURI = "/v3/files/puppetlabs-stdlib-1.0.0.tar.gz"
+				}
+				old, err := st.CreateRelease(ctx, initial)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -62,7 +66,7 @@ func TestReleaseEnrichmentPreservesConcurrentMutation(t *testing.T) {
 					t.Fatal(err)
 				}
 				svc := newUpstreamModuleService(t, paused, artifacts, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					_, _ = io.WriteString(w, `{"version":"1.0.0","file_uri":"/v3/files/puppetlabs-stdlib-1.0.0.tar.gz"}`)
+					_, _ = io.WriteString(w, `{"version":"1.0.0","metadata":{"name":"puppetlabs-stdlib","version":"1.0.0"},"file_uri":"/v3/files/puppetlabs-stdlib-1.0.0.tar.gz"}`)
 				}))
 				type outcome struct {
 					release domain.Release
@@ -71,7 +75,7 @@ func TestReleaseEnrichmentPreservesConcurrentMutation(t *testing.T) {
 				done := make(chan outcome, 1)
 				go func() {
 					var result outcome
-					if operation == "hydrate" {
+					if operation == "hydrate" || operation == "metadata" {
 						result.release, result.err = svc.GetRelease(ctx, old.Owner, old.Name, old.Version)
 					} else {
 						result.release, result.err = svc.calculateReleaseChecksums(ctx, old)

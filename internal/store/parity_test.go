@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/testutil"
 )
 
 type parityStore interface {
@@ -1750,27 +1750,7 @@ func parityStoreCases(t *testing.T) []parityStoreCase {
 
 func isolatedPostgresTestDSN(t *testing.T, dsn string) string {
 	t.Helper()
-	ctx := context.Background()
-	adminPool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatalf("open PostgreSQL test administration connection error = %v", err)
-	}
-	schema := "parity_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	if _, err := adminPool.Exec(ctx, "create schema "+schema); err != nil {
-		adminPool.Close()
-		t.Fatalf("create PostgreSQL test schema error = %v", err)
-	}
-	t.Cleanup(func() {
-		if _, err := adminPool.Exec(context.Background(), "drop schema "+schema+" cascade"); err != nil {
-			t.Errorf("drop PostgreSQL test schema error = %v", err)
-		}
-		adminPool.Close()
-	})
-	separator := "?"
-	if strings.Contains(dsn, "?") {
-		separator = "&"
-	}
-	return fmt.Sprintf("%s%ssearch_path=%s", dsn, separator, schema)
+	return testutil.IsolatedPostgresDSN(t, dsn)
 }
 
 func moduleVersions(versions []domain.ModuleVersion) []string {

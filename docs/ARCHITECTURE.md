@@ -19,6 +19,21 @@ version ordering through an indexed `version_order` key. Schema migration
 backfills existing keys in bounded batches; a page does not load the entire
 release catalog or issue one metadata query per result.
 
+An authorized exact module filter first ensures an upstream catalog exists.
+SQL schema 10 stores its completion in `upstream_catalogs`, atomically with all
+new version references and latest selection. A module row alone does not prove
+completion. Local-only modules are untouched, and requests without an exact
+filter never enumerate upstream. Incomplete legacy upstream catalogs are
+repaired once; metadata hydration remains limited to the returned page.
+
+The fetch leader holds an `upstream-catalog-<sha256>` SQL lease, not a database
+transaction or reserved connection. The request budget is 20 seconds; the lease
+lasts one minute. Commit under the ordinary module lock fences the lease and
+checks lifecycle again. Unavailable modules and releases cannot
+be resurrected by a concurrent response. Rollback removes both partial catalog
+rows and the completion marker. Empty completed catalogs retain background
+refresh; completion markers are independent of module rows.
+
 Administrative release publication/replacement, module/release deletion, and
 team/access-token/access-configuration changes commit their success audit event
 in the same SQL transaction as the mutation. Audit insertion failure rolls back

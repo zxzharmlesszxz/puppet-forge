@@ -29,12 +29,35 @@ import (
 )
 
 type testModuleStore struct {
+	catalogs   map[string]bool
 	statusMu   sync.Mutex
 	statuses   map[string]domain.ResourceStatus
 	moduleLock sync.Mutex
 	lockCalls  atomic.Int32
 	module     domain.Module
 	release    domain.Release
+}
+
+func (s *testModuleStore) HasUpstreamCatalog(_ context.Context, owner, name string) (bool, error) {
+	return s.catalogs[owner+"/"+name], nil
+}
+
+func (s *testModuleStore) SaveUpstreamCatalog(ctx context.Context, owner, name string, versions []string, _ store.CatalogLease) error {
+	module, err := s.UpsertModule(ctx, owner, name)
+	if err != nil {
+		return err
+	}
+	for _, version := range versions {
+		release := upstreamDomainRelease(module, proxy.UpstreamRelease{Version: version})
+		if _, err := s.CreateReleaseIfAbsent(ctx, release); err != nil && !errors.Is(err, store.ErrConflict) {
+			return err
+		}
+	}
+	if s.catalogs == nil {
+		s.catalogs = make(map[string]bool)
+	}
+	s.catalogs[owner+"/"+name] = true
+	return nil
 }
 
 func (s *testModuleStore) GetResourceStatus(_ context.Context, owner, name, version string) (domain.ResourceStatus, error) {
@@ -1460,6 +1483,7 @@ func TestGetReleaseKeepsHydratedReleaseWhenSubsequentReadWouldFail(t *testing.T)
 		_, _ = io.WriteString(w, `{
 			"slug":"puppetlabs-stdlib-1.0.0",
 			"version":"1.0.0",
+			"metadata":{"name":"puppetlabs-stdlib","version":"1.0.0","dependencies":[],"requirements":[]},
 			"file_uri":"https://forge.example/v3/files/puppetlabs-stdlib-1.0.0.tar.gz",
 			"file_name":"puppetlabs-stdlib-1.0.0.tar.gz"
 		}`)
@@ -1545,7 +1569,10 @@ func TestGetReleaseRestoresFromArtifactWhenMetadataIsMissing(t *testing.T) {
 	}
 	t.Cleanup(st.Close)
 
-	archive := []byte("ntp release archive")
+	archive, err := testutil.BuildTarGz(map[string]string{"puppetlabs-ntp-11.1.1/metadata.json": `{"name":"puppetlabs-ntp","version":"11.1.1","dependencies":[],"requirements":[]}`})
+	if err != nil {
+		t.Fatal(err)
+	}
 	artifacts := &testArtifactStorage{}
 	moduleService := newUpstreamModuleService(t, st, artifacts, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
@@ -1598,6 +1625,7 @@ func TestEnsureReleaseChecksumsMaterializesColdUpstreamRelease(t *testing.T) {
 			_, _ = fmt.Fprintf(w, `{
 				"slug":"puppetlabs-stdlib-1.0.0",
 				"version":"1.0.0",
+				"metadata":{"name":"puppetlabs-stdlib","version":"1.0.0","dependencies":[],"requirements":[]},
 				"description":"stdlib release",
 				"readme":"# stdlib",
 				"file_uri":"https://forge.example/v3/files/puppetlabs-stdlib-1.0.0.tar.gz",
@@ -1756,6 +1784,7 @@ func TestReadReleaseFileMaterializesColdUpstreamArchive(t *testing.T) {
 			_, _ = w.Write([]byte(`{
 				"slug":"puppetlabs-stdlib-1.0.0",
 				"version":"1.0.0",
+				"metadata":{"name":"puppetlabs-stdlib","version":"1.0.0","dependencies":[],"requirements":[]},
 				"file_uri":"https://forge.example/v3/files/puppetlabs-stdlib-1.0.0.tar.gz"
 			}`))
 		case "/v3/files/puppetlabs-stdlib-1.0.0.tar.gz":
@@ -1803,7 +1832,7 @@ func TestReadReleaseFileMaterializesColdUpstreamArchive(t *testing.T) {
 	}
 }
 
-func TestGetReleaseDoesNotRefetchHydratedEmptyMetadata(t *testing.T) {
+func TestGetReleaseDoesNotRefetchHydratedMetadata(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1824,6 +1853,7 @@ func TestGetReleaseDoesNotRefetchHydratedEmptyMetadata(t *testing.T) {
 		_, _ = w.Write([]byte(`{
 			"slug":"puppetlabs-stdlib-1.0.0",
 			"version":"1.0.0",
+			"metadata":{"name":"puppetlabs-stdlib","version":"1.0.0","dependencies":[],"requirements":[]},
 			"description":"",
 			"readme":"",
 			"file_uri":"https://forge.example/v3/files/puppetlabs-stdlib-1.0.0.tar.gz"

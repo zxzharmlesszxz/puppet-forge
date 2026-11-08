@@ -264,7 +264,60 @@ helm repo update puppet-forge
 helm search repo puppet-forge/puppet-forge --versions
 ```
 
+## Тести Installer OpenVox 8
+
+Оберіть [офіційний образ агента OpenVox](https://github.com/OpenVoxProject/container-openvoxagent)
+версії 8, бажано зафіксований digest; образ не обирається неявно. Opt-in тест
+підіймає тимчасовий авторизований Forge та upstream JSON fixture і запускає
+незмінений installer у Docker:
+
+```bash
+make test-openvox OPENVOX_TEST_IMAGE=ghcr.io/openvoxproject/openvoxagent:8.28.1
+```
+
+Fixture містить валідні синтетичні архіви Common 1.0.0, apt 11.4.0 та stdlib
+10.1.0 із залежностями. Upstream-модулі початково відсутні в SQL, а їхні архіви —
+в об'єктному сховищі. Fixture відхиляє анонімний V3-доступ і перевіряє індексування
+за першим запитом, завантаження архівів та встановлення з теплого кешу в нові каталоги.
+Контейнери, listener і SQL fixture прибираються після тесту. Це перевірка
+протоколу, а не вмісту справжніх upstream-модулів чи приватного Common.
+Звичайні Go-перевірки пропускають цей тест без
+`PUPPET_FORGE_TEST_OPENVOX_IMAGE`. Docker Desktop має дозволяти доступ до
+`host.docker.internal`; тимчасовий fixture слухає випадковий порт хоста й
+вимагає випадковий токен.
+
+Для справжніх модулів через уже запущений локальний Forge із
+`PUBLIC_MODULE_ACCESS=false`:
+
+```bash
+export OPENVOX_READ_TOKEN='<read-token>'
+export OPENVOX_COMMON_MODULE='<owner-common>'
+make openvox-smoke OPENVOX_TEST_IMAGE=ghcr.io/openvoxproject/openvoxagent:8.28.1
+```
+
+`OPENVOX_FORGE_URL` у контейнері типово дорівнює
+`http://host.docker.internal:8080`; можна задати інший доступний origin Forge.
+`OPENVOX_COMMON_VERSION` змінює типову версію 1.0.0. Без Common скрипт явно
+повідомляє про пропущений приймальний сценарій приватного модуля.
+Використовується штатний `forge_authorization`, перевіряється встановлена
+metadata, не вимикаються залежності чи checksum і не підміняється Ruby-код.
+Облікові дані зберігаються лише в тимчасовому приватному конфігураційному файлі.
+
+Повний check sshd із порогом 100% resource coverage залишається окремою
+перевіркою в репозиторії відповідного модуля. Fixture і smoke не підтверджують
+цей результат. Періодичні `503` досліджуйте окремо за request ID та серверними
+логами, без приховування повторними спробами чи непідтверджених висновків.
+
+Регресії каталогів працюють на SQLite та, із `PUPPET_FORGE_TEST_POSTGRES_DSN`,
+в ізольованих PostgreSQL-схемах із незалежними пулами двох реплік.
+`make test-postgres` і PostgreSQL integration coverage включають ці HTTP-сценарії
+та store parity: rollback до позначки завершення, прострочену або замінену lease,
+конкурентну модерацію під час HTTP-запиту, фільтри версії та offset, повторні
+спроби й збереження локальних релізів. Додавання тестів не означає їх виконання.
+
 ## Додаткова документація
+
+- Журнал змін: [CHANGELOG.uk.md](CHANGELOG.uk.md)
 
 - Схеми роботи одного та кількох екземплярів: [SCHEMA.uk.md](SCHEMA.uk.md)
 - Метрики: [METRICS.uk.md](METRICS.uk.md)

@@ -24,7 +24,6 @@ import (
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
-	"github.com/zxzharmlesszxz/puppet-forge/internal/httputil"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/proxy"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/storage"
@@ -50,6 +49,7 @@ const (
 
 var ErrProtectedDelete = errors.New("protected delete")
 var ErrUpstreamHydration = errors.New("upstream release hydration failed")
+var ErrUpstreamMetadata = errors.New("upstream release metadata is unavailable or invalid")
 var ErrUpstreamRestore = errors.New("upstream release restore failed")
 var ErrValidation = errors.New("validation error")
 
@@ -848,16 +848,11 @@ func (s *ModuleService) GetReleaseBySlug(ctx context.Context, slug string) (doma
 	if !errors.Is(err, store.ErrNotFound) || s.upstream == nil {
 		return release, err
 	}
-	module, err := slugStore.GetModuleForReleaseSlug(ctx, slug)
-	if err != nil {
-		return domain.Release{}, err
-	}
-	prefix := module.Owner + "-" + module.Name + "-"
-	version := strings.TrimPrefix(slug, prefix)
-	if version == "" || version == slug {
+	parts := strings.SplitN(slug, "-", 3)
+	if len(parts) != 3 || !domain.ValidModuleOwner(parts[0]) || !domain.ValidModuleName(parts[1]) || !domain.ValidModuleVersion(parts[2]) {
 		return domain.Release{}, store.ErrNotFound
 	}
-	return s.restoreUpstreamRelease(ctx, module.Owner, module.Name, version)
+	return s.GetRelease(ctx, parts[0], parts[1], parts[2])
 }
 
 func (s *ModuleService) GetRelease(ctx context.Context, owner, name, version string) (domain.Release, error) {
@@ -875,8 +870,8 @@ func (s *ModuleService) GetRelease(ctx context.Context, owner, name, version str
 		}
 	}
 
-	if release.Source == "upstream" && s.upstream != nil && release.UpstreamFileURI == "" {
-		release, err = s.hydrateUpstreamRelease(ctx, release)
+	if release.Source == "upstream" && s.upstream != nil && (release.UpstreamFileURI == "" || !releaseMetadataMatches(release)) {
+		release, err = s.EnsureReleaseMetadata(ctx, release)
 		if err != nil {
 			return domain.Release{}, err
 		}
@@ -886,12 +881,34 @@ func (s *ModuleService) GetRelease(ctx context.Context, owner, name, version str
 	return release, err
 }
 
-func (s *ModuleService) hydrateUpstreamRelease(ctx context.Context, snapshot domain.Release) (domain.Release, error) {
-	slug := fallbackString(snapshot.UpstreamSlug, snapshot.Owner+"-"+snapshot.Name+"-"+snapshot.Version)
-	upstreamRelease, err := s.upstream.FetchRelease(ctx, slug)
-	if err != nil {
-		return domain.Release{}, fmt.Errorf("%w for %s: %w", ErrUpstreamHydration, slug, err)
+func releaseMetadataMatches(release domain.Release) bool {
+	name, nameOK := release.Metadata["name"].(string)
+	version, versionOK := release.Metadata["version"].(string)
+	return nameOK && versionOK && name == release.Owner+"-"+release.Name && version == release.Version
+}
+
+// EnsureReleaseMetadata repairs one upstream record without reading its archive.
+func (s *ModuleService) EnsureReleaseMetadata(ctx context.Context, release domain.Release) (domain.Release, error) {
+	if release.Source != "upstream" || releaseMetadataMatches(release) && release.UpstreamFileURI != "" {
+		return release, nil
 	}
+	if s.upstream == nil {
+		return domain.Release{}, fmt.Errorf("%w: %w", ErrUpstreamHydration, ErrUpstreamMetadata)
+	}
+	hydrated, err := s.hydrateUpstreamRelease(ctx, release)
+	if err != nil {
+		return domain.Release{}, err
+	}
+	if hydrated.Source == "upstream" && (!releaseMetadataMatches(hydrated) || hydrated.UpstreamFileURI == "") {
+		return domain.Release{}, fmt.Errorf("%w: %w", ErrUpstreamHydration, ErrUpstreamMetadata)
+	}
+	if err := s.RequireAvailable(ctx, hydrated.Owner, hydrated.Name, hydrated.Version); err != nil {
+		return domain.Release{}, err
+	}
+	return hydrated, nil
+}
+
+func (s *ModuleService) hydrateUpstreamRelease(ctx context.Context, snapshot domain.Release) (domain.Release, error) {
 	unlock, err := s.modules.LockModule(ctx, snapshot.Owner, snapshot.Name)
 	if err != nil {
 		return domain.Release{}, err
@@ -901,25 +918,33 @@ func (s *ModuleService) hydrateUpstreamRelease(ctx context.Context, snapshot dom
 	if err != nil {
 		return domain.Release{}, err
 	}
-	if !sameReleaseArtifact(snapshot, release) || release.UpstreamFileURI != "" {
+	if !sameReleaseArtifact(snapshot, release) || release.UpstreamFileURI != "" && releaseMetadataMatches(release) {
 		return release, nil
 	}
+	if err := s.RequireAvailable(ctx, release.Owner, release.Name, release.Version); err != nil {
+		return domain.Release{}, err
+	}
+	slug := release.Owner + "-" + release.Name + "-" + release.Version
+	upstreamRelease, err := s.upstream.FetchRelease(ctx, slug)
+	if err != nil {
+		return domain.Release{}, fmt.Errorf("%w: %w for %s: %w", ErrUpstreamHydration, ErrUpstreamMetadata, slug, err)
+	}
+	release.Metadata = upstreamRelease.Metadata
 	release.Description = fallbackString(upstreamRelease.Description, release.Description)
 	release.Readme = fallbackString(upstreamRelease.Readme, release.Readme)
 	release.UpstreamSlug = fallbackString(upstreamRelease.Slug, release.UpstreamSlug)
-	release.UpstreamFileURI = fallbackString(upstreamRelease.FileURI, release.UpstreamFileURI)
-	release.FileName = fallbackString(upstreamRelease.FileName, release.FileName)
-	if upstreamRelease.FileSize > 0 {
+	release.UpstreamFileURI = fallbackString(release.UpstreamFileURI, upstreamRelease.FileURI)
+	release.FileName = fallbackString(release.FileName, upstreamRelease.FileName)
+	if release.SizeBytes <= 0 && upstreamRelease.FileSize > 0 {
 		release.SizeBytes = upstreamRelease.FileSize
 	}
-	release.MD5 = fallbackString(upstreamRelease.FileMD5, release.MD5)
-	release.SHA256 = fallbackString(upstreamRelease.FileSHA256, release.SHA256)
-	if saved, err := s.modules.CreateRelease(ctx, release); err == nil {
-		return saved, nil
-	} else {
-		slog.Warn("persist hydrated upstream release failed", "owner", release.Owner, "name", release.Name, "version", release.Version, "err", err)
+	release.MD5 = fallbackString(release.MD5, upstreamRelease.FileMD5)
+	release.SHA256 = fallbackString(release.SHA256, upstreamRelease.FileSHA256)
+	saved, err := s.modules.CreateRelease(ctx, release)
+	if err != nil {
+		return domain.Release{}, fmt.Errorf("%w: %w: persist metadata: %w", ErrUpstreamHydration, ErrUpstreamMetadata, err)
 	}
-	return release, nil
+	return saved, nil
 }
 
 func sameReleaseArtifact(left, right domain.Release) bool {
@@ -929,6 +954,9 @@ func sameReleaseArtifact(left, right domain.Release) bool {
 }
 
 func (s *ModuleService) restoreUpstreamRelease(ctx context.Context, owner, name, version string) (domain.Release, error) {
+	if err := s.requireUpstreamOrigin(ctx, owner, name); err != nil {
+		return domain.Release{}, err
+	}
 	if err := s.RequireAvailable(ctx, owner, name, version); err != nil {
 		return domain.Release{}, err
 	}
@@ -936,7 +964,7 @@ func (s *ModuleService) restoreUpstreamRelease(ctx context.Context, owner, name,
 	upstreamRelease, err := s.upstream.FetchRelease(ctx, slug)
 	if err != nil {
 		if !errors.Is(err, proxy.ErrUpstreamNotFound) {
-			return domain.Release{}, fmt.Errorf("%w: %w for %s: %w", ErrUpstreamHydration, ErrUpstreamRestore, slug, err)
+			return domain.Release{}, fmt.Errorf("%w: %w: %w for %s: %w", ErrUpstreamHydration, ErrUpstreamRestore, ErrUpstreamMetadata, slug, err)
 		}
 		fileName := slug + ".tar.gz"
 		fileURI := "/v3/files/" + fileName
@@ -952,6 +980,20 @@ func (s *ModuleService) restoreUpstreamRelease(ctx context.Context, owner, name,
 			FileURI:  fileURI,
 			FileName: fileName,
 		}
+		object, err := s.artifacts.Open(ctx, cachedUpstreamArtifactPath(fileURI))
+		if err != nil {
+			return domain.Release{}, fmt.Errorf("%w: %w: %w", ErrUpstreamHydration, ErrUpstreamMetadata, err)
+		}
+		body, _, readErr := extractArchiveFile(ctx, object.Body, "metadata.json")
+		closeErr := object.Body.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			return domain.Release{}, fmt.Errorf("%w: %w: %w", ErrUpstreamHydration, ErrUpstreamMetadata, err)
+		}
+		metadata, err := parseArchiveMetadata(body)
+		if err != nil || metadata.Owner() != owner || metadata.ModuleName() != name || metadata.Version != version {
+			return domain.Release{}, fmt.Errorf("%w: %w: archive metadata does not match %s", ErrUpstreamHydration, ErrUpstreamMetadata, slug)
+		}
+		upstreamRelease.Metadata = metadata.Metadata
 	}
 	if upstreamRelease.Version == "" {
 		upstreamRelease.Version = version
@@ -969,6 +1011,9 @@ func (s *ModuleService) restoreUpstreamRelease(ctx context.Context, owner, name,
 	}
 	defer releaseModuleLock(unlock, owner, name)
 	if err := s.RequireAvailable(ctx, owner, name, version); err != nil {
+		return domain.Release{}, err
+	}
+	if err := s.requireUpstreamOrigin(ctx, owner, name); err != nil {
 		return domain.Release{}, err
 	}
 	module, err := s.modules.UpsertModule(ctx, owner, name)
@@ -1433,81 +1478,24 @@ func (s *ModuleService) RefreshCachedUpstreamModules(ctx context.Context, limit,
 }
 
 func (s *ModuleService) IndexUpstreamModule(ctx context.Context, upstreamModule proxy.UpstreamModule) error {
-	owner := upstreamModule.Owner
-	name := upstreamModule.Name
-	if !domain.ValidModuleOwner(owner) {
-		return errors.New("invalid upstream module owner")
-	}
-	if !domain.ValidModuleName(name) {
-		return errors.New("invalid upstream module name")
-	}
-	unlock, err := s.modules.LockModule(ctx, owner, name)
-	if err != nil {
-		return err
-	}
-	defer releaseModuleLock(unlock, owner, name)
-
-	module, err := s.modules.UpsertModule(ctx, owner, name)
-	if err != nil {
-		return err
-	}
-
-	currentVersion := upstreamModule.CurrentRelease.Version
-	if currentVersion == "" {
-		currentVersion = httputil.ReleaseVersionFromSlug(upstreamModule.Slug, upstreamModule.CurrentRelease.Slug)
-	}
-
-	for _, ref := range upstreamModule.Releases {
-		if ref.Version == "" {
-			ref.Version = httputil.ReleaseVersionFromSlug(upstreamModule.Slug, ref.Slug)
-		}
-		if ref.Version == "" {
-			continue
-		}
-		deleted, err := s.isDeletedUpstreamRelease(ctx, owner, name, ref.Version)
-		if err != nil {
-			return err
-		}
-		if deleted {
-			continue
-		}
-
-		release := upstreamDomainRelease(module, proxy.UpstreamRelease{
-			Slug:    fallbackString(ref.Slug, owner+"-"+name+"-"+ref.Version),
-			Version: ref.Version,
-		})
-
-		if err := s.createUpstreamReleaseIfAbsent(ctx, release); err != nil {
-			return err
-		}
-	}
-
-	if currentVersion != "" {
-		deleted, err := s.isDeletedUpstreamRelease(ctx, owner, name, currentVersion)
-		if err != nil {
-			return err
-		}
-		if deleted {
-			return nil
-		}
-		release := upstreamDomainRelease(module, proxy.UpstreamRelease{
-			Slug:    fallbackString(upstreamModule.CurrentRelease.Slug, owner+"-"+name+"-"+currentVersion),
-			Version: currentVersion,
-		})
-		if err := s.createUpstreamReleaseIfAbsent(ctx, release); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return s.indexUpstreamCatalog(ctx, upstreamModule, store.CatalogLease{})
 }
 
-func (s *ModuleService) createUpstreamReleaseIfAbsent(ctx context.Context, release domain.Release) error {
-	_, err := s.modules.CreateReleaseIfAbsent(ctx, release)
-	if errors.Is(err, store.ErrConflict) {
-		return nil
+func (s *ModuleService) indexUpstreamCatalog(ctx context.Context, upstreamModule proxy.UpstreamModule, lease store.CatalogLease) error {
+	versions, err := upstreamCatalogVersions(upstreamModule)
+	if err != nil {
+		return err
 	}
-	return err
+	backend, ok := s.modules.(store.UpstreamCatalogStore)
+	if !ok {
+		return errors.New("upstream catalog store is not available")
+	}
+	unlock, err := s.modules.LockModule(ctx, upstreamModule.Owner, upstreamModule.Name)
+	if err != nil {
+		return err
+	}
+	defer releaseModuleLock(unlock, upstreamModule.Owner, upstreamModule.Name)
+	return backend.SaveUpstreamCatalog(ctx, upstreamModule.Owner, upstreamModule.Name, versions, lease)
 }
 
 func upstreamDomainRelease(module domain.Module, upstreamRelease proxy.UpstreamRelease) domain.Release {
@@ -1529,22 +1517,8 @@ func upstreamDomainRelease(module domain.Module, upstreamRelease proxy.UpstreamR
 		StoragePath:     "",
 		UpstreamSlug:    fallbackString(upstreamRelease.Slug, module.Owner+"-"+module.Name+"-"+upstreamRelease.Version),
 		UpstreamFileURI: upstreamRelease.FileURI,
-		Metadata:        map[string]any{},
+		Metadata:        upstreamRelease.Metadata,
 	}
-}
-
-func (s *ModuleService) isDeletedUpstreamRelease(ctx context.Context, owner, name, version string) (bool, error) {
-	if err := s.RequireAvailable(ctx, owner, name, version); err != nil {
-		if errors.Is(err, ErrUnavailable) {
-			return true, nil
-		}
-		return false, err
-	}
-	deletedStore, ok := s.modules.(store.DeletedReleaseStore)
-	if !ok {
-		return false, nil
-	}
-	return deletedStore.IsReleaseDeleted(ctx, owner, name, version, "upstream")
 }
 
 type inspectedModuleArchive struct {

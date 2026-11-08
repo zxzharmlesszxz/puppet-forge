@@ -162,9 +162,9 @@ trivy-image: docker-smoke ## Scan the locally built Docker image with Trivy.
 test: ## Run Go tests.
 	$(GO) test -buildvcs=false ./...
 
-test-postgres: ## Run store parity and concurrent schema tests against PostgreSQL. Override PUPPET_FORGE_TEST_POSTGRES_DSN if needed.
+test-postgres: ## Run store parity, concurrent schema and V3 catalog tests against PostgreSQL.
 	@test -n "$(PUPPET_FORGE_TEST_POSTGRES_DSN)" || (echo "PUPPET_FORGE_TEST_POSTGRES_DSN is required"; exit 1)
-	PUPPET_FORGE_TEST_POSTGRES_DSN="$(PUPPET_FORGE_TEST_POSTGRES_DSN)" $(GO) test -buildvcs=false ./internal/store -run 'TestStoreParity|TestPostgresStoreConcurrentSchemaSetup'
+	PUPPET_FORGE_TEST_POSTGRES_DSN="$(PUPPET_FORGE_TEST_POSTGRES_DSN)" $(GO) test -buildvcs=false ./internal/store ./internal/httpapi -run 'TestStoreParity|TestPostgresStoreConcurrentSchemaSetup|TestV3.*Catalog'
 
 test-s3-storage: ## Run S3 lifecycle integration tests against an S3-compatible endpoint.
 	@test -n "$(PUPPET_FORGE_TEST_S3_ENDPOINT)" || (echo "PUPPET_FORGE_TEST_S3_ENDPOINT is required"; exit 1)
@@ -186,12 +186,20 @@ test-race: ## Run Go tests with the race detector.
 test-browser: ## Run browser interaction regressions with Playwright.
 	PLAYWRIGHT_IMAGE="$(PLAYWRIGHT_IMAGE)" DOCKER="$(DOCKER)" GO="$(GO)" CURL="$(CURL)" bash scripts/browser-tests.sh
 
+.PHONY: test-openvox openvox-smoke
+test-openvox: ## Run the standard OpenVox 8 installer against an isolated authenticated Forge fixture. Set OPENVOX_TEST_IMAGE.
+	@test -n "$(OPENVOX_TEST_IMAGE)" || (echo "OPENVOX_TEST_IMAGE is required"; exit 1)
+	PUPPET_FORGE_TEST_OPENVOX_IMAGE="$(OPENVOX_TEST_IMAGE)" DOCKER="$(DOCKER)" $(GO) test -buildvcs=false ./internal/httpapi -run '^TestOpenVox8Installer$$' -count=1 -timeout=6m -v
+
+openvox-smoke: ## Install pinned modules through an already running private Forge. Set OPENVOX_TEST_IMAGE and OPENVOX_READ_TOKEN.
+	OPENVOX_TEST_IMAGE="$(OPENVOX_TEST_IMAGE)" DOCKER="$(DOCKER)" bash scripts/openvox-smoke.sh
+
 coverage-unit: ## Run unit tests and write their coverage profile.
 	$(GO) test -buildvcs=false -ldflags "$(LDFLAGS)" -covermode=atomic -coverprofile=$(COVERAGE_UNIT_PROFILE) ./...
 
 coverage-postgres: ## Run PostgreSQL integration tests and write their coverage profile.
 	@test -n "$(PUPPET_FORGE_TEST_POSTGRES_DSN)" || (echo "PUPPET_FORGE_TEST_POSTGRES_DSN is required"; exit 1)
-	PUPPET_FORGE_TEST_POSTGRES_DSN="$(PUPPET_FORGE_TEST_POSTGRES_DSN)" $(GO) test -buildvcs=false -covermode=atomic -coverprofile=$(COVERAGE_POSTGRES_PROFILE) ./internal/store -run 'TestStoreParity|TestPostgresStoreConcurrentSchemaSetup'
+	PUPPET_FORGE_TEST_POSTGRES_DSN="$(PUPPET_FORGE_TEST_POSTGRES_DSN)" $(GO) test -buildvcs=false -covermode=atomic -coverprofile=$(COVERAGE_POSTGRES_PROFILE) ./internal/store ./internal/httpapi -run 'TestStoreParity|TestPostgresStoreConcurrentSchemaSetup|TestV3.*Catalog'
 
 coverage-s3: ## Run S3 integration tests and write their coverage profile.
 	@test -n "$(PUPPET_FORGE_TEST_S3_ENDPOINT)" || (echo "PUPPET_FORGE_TEST_S3_ENDPOINT is required"; exit 1)

@@ -613,10 +613,22 @@ erDiagram
     SCHEMA_METADATA {
         int version
     }
+    UPSTREAM_CATALOGS {
+        string owner PK
+        string name PK
+        string indexed_at
+    }
+    MODULE_ORIGINS {
+        string owner PK
+        string name PK
+        string source PK
+    }
 ```
 
 Schema bootstrap is serialized in PostgreSQL with a global advisory lock. A
 binary refuses to run against a schema version newer than it understands.
+
+Schema 10 adds upstream_catalogs and module_origins. Catalog completion commits atomically with version references. A fenced SQL lease coordinates fetches; HTTP runs outside transactions and lifecycle is rechecked under the module lock. Source provenance prevents upstream substitution of local modules. Failed imports and 404 responses do not mark completion.
 
 ## State Ownership and Consistency
 

@@ -94,6 +94,9 @@ func TestV3ReleaseCollectionFiltersAndPaginatesLocalReleases(t *testing.T) {
 	if first.Pagination.Total != 2 || first.Pagination.Offset != 0 || first.Pagination.Next == nil || len(first.Results) != 1 || first.Results[0].Version != "2.0.0" {
 		t.Fatalf("first release page = %#v", first)
 	}
+	if !strings.HasPrefix(*first.Pagination.Next, "/v3/releases?") || first.Results[0].FileURI != "/v3/files/teamname-apache-2.0.0.tar.gz" {
+		t.Fatalf("local collection URIs must be relative: %#v", first)
+	}
 	second := getV3ReleaseCollection(t, server, *first.Pagination.Next)
 	if second.Pagination.Total != 2 || second.Pagination.Offset != 1 || second.Pagination.Next != nil || len(second.Results) != 1 || second.Results[0].Version != "1.0.0" {
 		t.Fatalf("second release page = %#v", second)

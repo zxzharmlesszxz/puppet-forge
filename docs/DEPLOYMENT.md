@@ -776,6 +776,75 @@ The UI includes:
 - module version selector;
 - ready-to-copy install snippets for Puppet and r10k.
 
+## Forge V3 Installer Compatibility
+
+A valid exact filter such as `GET /v3/releases?module=puppetlabs-stdlib` indexes
+an unknown upstream catalog on demand after read authorization. The decision is
+independent of `version`, `limit`, `offset`, or the number of readable results;
+the original local query is executed after indexing. Unfiltered collections and
+invalid/non-exact module filters never scan or import all of upstream.
+
+`upstream_catalogs` records successful catalog completion separately from module
+rows. Catalog versions and the marker commit in one SQL transaction. Existing
+local-only modules are not imported. Legacy upstream records without a marker
+receive one full catalog refresh on their first exact query; row existence alone
+is not proof of a completed import. A completed empty catalog remains eligible
+for background refresh.
+
+Across replicas, a per-module SQL lease coordinates the fetch. Waiting, fetching,
+and committing have a 20-second request budget; the lease lasts one minute and
+its ownership/expiry are checked inside the write transaction. No transaction
+or SQL connection is held during the catalog HTTP request. The normal module
+lock protects the final commit, which rechecks module state and excludes
+unavailable versions. Concurrent moderation wins.
+
+Upstream 404 returns an empty collection without a completion marker, allowing
+a later retry if the module appears. Failed or malformed imports roll back and
+remain retryable. Transport/data failures use the existing HTTP error mapper;
+deadline or lease loss returns `503`. Catalog indexing transfers JSON only,
+validates all references before writing, and accepts at most 10,000 versions.
+Client read tokens and cookies are not forwarded to upstream.
+
+OpenVox 8 uses the standard `puppet module install` client. Forge returns
+origin-relative `file_uri` values such as `/v3/files/puppetlabs-apt-11.4.0.tar.gz`
+and origin-relative V3 pagination links. Pagination retains filters and other
+query parameters; unavailable previous/next pages remain JSON `null`.
+
+Upstream metadata retains dependencies, requirements, checksums, and additional
+fields. There is one compatibility normalization: official Forge can return a
+different namespace in `metadata.name`. For example, apt `0.0.1` and `0.0.2`
+return `puppet-apt`, while the release slug is `puppetlabs-apt-<version>`;
+apt `10.0.0` already returns `puppetlabs-apt`.
+
+A namespace difference is accepted only when the response explicitly supplies
+the exact requested release slug, the top-level and metadata versions match the
+requested version, and the module-name component is unchanged. Both namespace
+components must be valid. Forge then stores and returns the canonical
+`metadata.name` from that slug; no module/version exception list is required.
+A different module name, mismatching version or slug, missing identity, or a
+namespace discrepancy without an explicit matching slug still fails validation.
+This trusts the configured upstream's release identity, not arbitrary metadata
+claims. It does not verify ownership history or rewrite archive bytes, file
+checksums, dependencies, or local publication metadata. The archive can therefore
+retain its original metadata name even though the API exposes the canonical one.
+
+Both collections and single-release responses use the normalized data. Records
+with a file URI but missing metadata or a noncanonical name are repaired lazily
+under the module lock and persisted in SQL; subsequent reads reuse the repaired
+record across replicas. Explicit blocks remain in force: metadata compatibility does not bypass moderation.
+
+Collection repair fetches JSON only for incomplete releases on the bounded
+page, without downloading every module archive. Invalid or unavailable required
+metadata produces a controlled `502`, not an incomplete success or raw proxy
+fallback. Individual release checksum verification and archive authorization
+remain in force. If a missing release's JSON returns 404, the existing restore
+path may read validated `metadata.json` from that one cached archive; collection
+repair does not use this fallback.
+
+See [installer tests](DEVELOPMENT.md#openvox-8-installer-tests). Investigate
+periodic `503` separately by correlating request IDs with server logs; metadata,
+authorization, SQL, and upstream timeouts are not interchangeable diagnoses.
+
 ## Active Releases and Deletion
 
 - Releases requested by r10k or `puppet module install` within `ACTIVE_RELEASE_TTL` are marked as `in use`.

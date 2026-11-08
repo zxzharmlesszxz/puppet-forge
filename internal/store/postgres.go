@@ -460,6 +460,12 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) (returnErr 
 	if _, err := conn.Exec(ctx, lifecycleSchema); err != nil {
 		return fmt.Errorf("create lifecycle schema: %w", err)
 	}
+	if _, err := conn.Exec(ctx, upstreamCatalogSchema); err != nil {
+		return fmt.Errorf("create upstream catalog schema: %w", err)
+	}
+	if _, err := conn.Exec(ctx, moduleOriginSchema); err != nil {
+		return fmt.Errorf("migrate module origins: %w", err)
+	}
 	if err := migratePostgresCanonicalSlugs(ctx, conn); err != nil {
 		return err
 	}
@@ -1232,6 +1238,13 @@ func (s *PostgresStore) createRelease(ctx context.Context, release domain.Releas
 	if err := initializePostgresStatus(ctx, tx, release); err != nil {
 		return domain.Release{}, err
 	}
+	source := release.Source
+	if source == "" {
+		source = "local"
+	}
+	if _, err := tx.Exec(ctx, `insert into module_origins(owner,name,source) values($1,$2,$3) on conflict(owner,name,source) do nothing`, release.Owner, release.Name, source); err != nil {
+		return domain.Release{}, err
+	}
 	if err := finishReleaseMutation(release, postgresMutationWriter{ctx: ctx, tx: tx}); err != nil {
 		return domain.Release{}, err
 	}
@@ -1415,7 +1428,7 @@ func (s *PostgresStore) ListUpstreamModules(ctx context.Context, limit int) ([]d
 	const query = `
 		select m.id, m.owner, m.name, coalesce(m.latest_version, ''), m.created_at, m.updated_at
 		from modules m
-		where exists (
+		where exists(select 1 from upstream_catalogs c where c.owner=m.owner and c.name=m.name) or exists (
 			select 1 from releases r
 			where r.module_id = m.id and coalesce(r.source, 'local') = 'upstream'
 		)

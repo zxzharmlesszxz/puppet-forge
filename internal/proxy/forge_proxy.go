@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/httputil"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 	artifactstorage "github.com/zxzharmlesszxz/puppet-forge/internal/storage"
@@ -61,15 +62,16 @@ type UpstreamReleaseRef struct {
 }
 
 type UpstreamRelease struct {
-	Slug        string `json:"slug"`
-	Version     string `json:"version"`
-	Readme      string `json:"readme"`
-	FileURI     string `json:"file_uri"`
-	FileName    string `json:"file_name"`
-	FileSize    int64  `json:"file_size"`
-	FileMD5     string `json:"file_md5"`
-	FileSHA256  string `json:"file_sha256"`
-	Description string `json:"description"`
+	Slug        string         `json:"slug"`
+	Version     string         `json:"version"`
+	Readme      string         `json:"readme"`
+	FileURI     string         `json:"file_uri"`
+	FileName    string         `json:"file_name"`
+	FileSize    int64          `json:"file_size"`
+	FileMD5     string         `json:"file_md5"`
+	FileSHA256  string         `json:"file_sha256"`
+	Description string         `json:"description"`
+	Metadata    map[string]any `json:"metadata"`
 }
 
 const defaultUpstreamArtifactMaxBytes = 128 << 20
@@ -168,13 +170,37 @@ func (p *ForgeProxy) FetchModule(ctx context.Context, slug string) (UpstreamModu
 	if err != nil {
 		return UpstreamModule{}, err
 	}
-	return parseUpstreamModule(body)
+	module, err := parseUpstreamModule(body)
+	if err != nil {
+		return UpstreamModule{}, err
+	}
+	if module.Owner+"-"+module.Name != slug || module.Slug != slug {
+		return UpstreamModule{}, errors.New("upstream module identity does not match requested catalog")
+	}
+	return module, nil
 }
 
 func (p *ForgeProxy) FetchRelease(ctx context.Context, slug string) (UpstreamRelease, error) {
 	var release UpstreamRelease
 	if err := p.fetchJSON(ctx, "/v3/releases/"+slug, &release); err != nil {
 		return UpstreamRelease{}, err
+	}
+	name, nameOK := release.Metadata["name"].(string)
+	version, versionOK := release.Metadata["version"].(string)
+	if !nameOK || !versionOK || name == "" || version == "" || release.Version != version || release.Slug != "" && release.Slug != slug {
+		return UpstreamRelease{}, errors.New("upstream release metadata does not match requested identity")
+	}
+	if name+"-"+version != slug {
+		identity := strings.SplitN(slug, "-", 3)
+		legacyName := strings.SplitN(name, "-", 2)
+		// Official Forge can expose a metadata namespace different from its release slug.
+		// Accept only namespace differences backed by an explicit, matching envelope.
+		if release.Slug != slug || len(identity) != 3 || len(legacyName) != 2 ||
+			!domain.ValidModuleOwner(identity[0]) || !domain.ValidModuleName(identity[1]) ||
+			!domain.ValidModuleOwner(legacyName[0]) || legacyName[1] != identity[1] || identity[2] != version {
+			return UpstreamRelease{}, errors.New("upstream release metadata does not match requested identity")
+		}
+		release.Metadata["name"] = identity[0] + "-" + identity[1]
 	}
 	return release, nil
 }
@@ -497,6 +523,9 @@ func parseUpstreamModule(body []byte) (UpstreamModule, error) {
 		Owner: upstreamOwner(raw["owner"]),
 		Name:  stringValue(raw["name"]),
 	}
+	if module.Slug == "" && module.Owner != "" && module.Name != "" {
+		module.Slug = module.Owner + "-" + module.Name
+	}
 
 	switch current := raw["current_release"].(type) {
 	case map[string]any:
@@ -507,34 +536,47 @@ func parseUpstreamModule(body []byte) (UpstreamModule, error) {
 		module.CurrentRelease = normalizeReleaseRef(module.Slug, module.CurrentRelease)
 	case string:
 		module.CurrentRelease = normalizeReleaseRef(module.Slug, UpstreamReleaseRef{Slug: current})
+	case nil:
+	default:
+		return UpstreamModule{}, errors.New("invalid upstream current release")
 	}
 
+	var refs []any
 	switch releases := raw["releases"].(type) {
 	case []any:
-		for _, item := range releases {
-			switch typed := item.(type) {
-			case map[string]any:
-				module.Releases = append(module.Releases, UpstreamReleaseRef{
-					Slug:    stringValue(typed["slug"]),
-					Version: stringValue(typed["version"]),
-				})
-				module.Releases[len(module.Releases)-1] = normalizeReleaseRef(module.Slug, module.Releases[len(module.Releases)-1])
-			case string:
-				module.Releases = append(module.Releases, normalizeReleaseRef(module.Slug, UpstreamReleaseRef{Slug: typed}))
-			}
-		}
+		refs = releases
 	case map[string]any:
-		if results, ok := releases["results"].([]any); ok {
-			for _, item := range results {
-				if typed, ok := item.(map[string]any); ok {
-					module.Releases = append(module.Releases, UpstreamReleaseRef{
-						Slug:    stringValue(typed["slug"]),
-						Version: stringValue(typed["version"]),
-					})
-					module.Releases[len(module.Releases)-1] = normalizeReleaseRef(module.Slug, module.Releases[len(module.Releases)-1])
-				}
+		var ok bool
+		refs, ok = releases["results"].([]any)
+		if !ok {
+			return UpstreamModule{}, errors.New("invalid upstream release catalog")
+		}
+		if pagination, ok := releases["pagination"].(map[string]any); ok {
+			if next := pagination["next"]; next != nil && next != "" {
+				return UpstreamModule{}, errors.New("incomplete upstream release catalog")
+			}
+			if total, ok := pagination["total"].(float64); ok && total > float64(len(refs)) {
+				return UpstreamModule{}, errors.New("incomplete upstream release catalog")
 			}
 		}
+	case nil:
+		if module.CurrentRelease.Version == "" && module.CurrentRelease.Slug == "" {
+			return UpstreamModule{}, errors.New("missing upstream release catalog")
+		}
+	default:
+		return UpstreamModule{}, errors.New("invalid upstream release catalog")
+	}
+	for _, item := range refs {
+		var ref UpstreamReleaseRef
+		switch typed := item.(type) {
+		case map[string]any:
+			ref = UpstreamReleaseRef{Slug: stringValue(typed["slug"]), Version: stringValue(typed["version"])}
+		case string:
+			ref.Slug = typed
+		default:
+			return UpstreamModule{}, errors.New("invalid upstream release reference")
+		}
+		module.Releases = append(module.Releases, normalizeReleaseRef(module.Slug, ref))
 	}
 
 	return module, nil

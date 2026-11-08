@@ -20,7 +20,7 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
 
-const currentSchemaVersion = 9
+const currentSchemaVersion = 10
 
 type sqliteQueryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -397,6 +397,12 @@ func migrateSQLiteSchema(db *sql.DB, tokenHasher *auth.TokenHasher) error {
 	}()
 	if _, err := tx.Exec(lifecycleSchema); err != nil {
 		return fmt.Errorf("create lifecycle schema: %w", err)
+	}
+	if _, err := tx.Exec(upstreamCatalogSchema); err != nil {
+		return fmt.Errorf("create upstream catalog schema: %w", err)
+	}
+	if _, err := tx.Exec(moduleOriginSchema); err != nil {
+		return fmt.Errorf("migrate module origins: %w", err)
 	}
 
 	if err := sqliteEnsureReleaseMD5Column(tx); err != nil {
@@ -1282,6 +1288,13 @@ func (s *SQLiteStore) createRelease(ctx context.Context, release domain.Release,
 	if err := initializeSQLiteStatus(ctx, tx, release); err != nil {
 		return domain.Release{}, err
 	}
+	source := release.Source
+	if source == "" {
+		source = "local"
+	}
+	if _, err := tx.ExecContext(ctx, `insert into module_origins(owner,name,source) values(?,?,?) on conflict(owner,name,source) do nothing`, release.Owner, release.Name, source); err != nil {
+		return domain.Release{}, err
+	}
 	if err := finishReleaseMutation(release, sqliteMutationWriter{ctx: ctx, tx: tx}); err != nil {
 		return domain.Release{}, err
 	}
@@ -1842,7 +1855,7 @@ func (s *SQLiteStore) ListUpstreamModules(ctx context.Context, limit int) ([]dom
 	rows, err := s.db.QueryContext(ctx, `
 		select m.id, m.owner, m.name, coalesce(m.latest_version, ''), m.created_at, m.updated_at
 		from modules m
-		where exists (
+		where exists(select 1 from upstream_catalogs c where c.owner=m.owner and c.name=m.name) or exists (
 			select 1 from releases r
 			where r.module_id = m.id and coalesce(r.source, 'local') = 'upstream'
 		)
