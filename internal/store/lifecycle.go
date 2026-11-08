@@ -19,6 +19,16 @@ const lifecycleSchema = `create table if not exists resource_states (
  primary key (owner,name,version)
 );`
 
+// Schema 11 retires implicit deletion bans but never removes explicit blocks.
+const deleteIsNotBlockMigration = `
+delete from upstream_catalogs where (select version from schema_metadata where id=1)<11
+ and (exists(select 1 from resource_states s where s.owner=upstream_catalogs.owner and s.name=upstream_catalogs.name and s.state='deleted')
+ or exists(select 1 from deleted_releases d where d.owner=upstream_catalogs.owner and d.name=upstream_catalogs.name));
+delete from resource_states where state='deleted' and (select version from schema_metadata where id=1)<11;
+update resource_states set previous_state='available' where state='blocked' and previous_state='deleted' and (select version from schema_metadata where id=1)<11;
+delete from deleted_releases where (select version from schema_metadata where id=1)<11;
+`
+
 type readableCatalogKey struct{}
 
 func ReadableCatalogContext(ctx context.Context) context.Context {
@@ -44,6 +54,13 @@ func initialResourceStatus(release domain.Release) domain.ResourceStatus {
 }
 
 func initializeSQLiteStatus(ctx context.Context, tx *sql.Tx, release domain.Release) error {
+	current, err := scanResourceStatus(tx.QueryRowContext(ctx, `select state,previous_state,reason,replacement,sha256,changed_at from resource_states where owner=? and name=? and version=?`, release.Owner, release.Name, release.Version))
+	if err != nil {
+		return err
+	}
+	if current.State == domain.StateBlocked {
+		return fmt.Errorf("%w: blocked release must be unblocked before publication", ErrConflict)
+	}
 	if release.InitialState == "" {
 		return nil
 	}
@@ -51,13 +68,20 @@ func initializeSQLiteStatus(ctx context.Context, tx *sql.Tx, release domain.Rele
 	if err := writeSQLiteStatus(ctx, tx, release.Owner, release.Name, release.Version, status); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `insert into resource_states(owner,name,version,state,changed_at)
+	_, err = tx.ExecContext(ctx, `insert into resource_states(owner,name,version,state,changed_at)
 	select ?,?,'',?,? where (select count(*) from releases where module_id=?)=1
 	on conflict(owner,name,version) do update set state=excluded.state,changed_at=excluded.changed_at where resource_states.state='deleted'`, release.Owner, release.Name, release.InitialState, status.ChangedAt.Format(time.RFC3339Nano), release.ModuleID)
 	return err
 }
 
 func initializePostgresStatus(ctx context.Context, tx pgx.Tx, release domain.Release) error {
+	current, err := scanResourceStatus(tx.QueryRow(ctx, `select state,previous_state,reason,replacement,sha256,changed_at from resource_states where owner=$1 and name=$2 and version=$3`, release.Owner, release.Name, release.Version))
+	if err != nil {
+		return err
+	}
+	if current.State == domain.StateBlocked {
+		return fmt.Errorf("%w: blocked release must be unblocked before publication", ErrConflict)
+	}
 	if release.InitialState == "" {
 		return nil
 	}
@@ -65,7 +89,7 @@ func initializePostgresStatus(ctx context.Context, tx pgx.Tx, release domain.Rel
 	if err := writePostgresStatus(ctx, tx, release.Owner, release.Name, release.Version, status); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `insert into resource_states(owner,name,version,state,changed_at)
+	_, err = tx.Exec(ctx, `insert into resource_states(owner,name,version,state,changed_at)
 	select $1,$2,'',$3,$4 where (select count(*) from releases where module_id=$5)=1
 	on conflict(owner,name,version) do update set state=excluded.state,changed_at=excluded.changed_at where resource_states.state='deleted'`, release.Owner, release.Name, release.InitialState, status.ChangedAt.Format(time.RFC3339Nano), release.ModuleID)
 	return err
@@ -153,6 +177,9 @@ func finishResourceStatusMutation(owner, name, version string, status domain.Res
 		return err
 	}
 	moduleID, err := writer.moduleID(owner, name)
+	if errors.Is(err, ErrNotFound) && status.State == domain.StateAvailable {
+		return writer.commit()
+	}
 	if err != nil {
 		return err
 	}

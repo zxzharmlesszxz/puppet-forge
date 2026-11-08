@@ -152,8 +152,8 @@ func TestStoreParityReleaseLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			status, err = states.GetResourceStatus(t.Context(), "reviewteam", "demo", "2.0.0")
-			if err != nil || status.State != domain.StateDeleted {
-				t.Fatalf("deleted state = %#v %v", status, err)
+			if err != nil || status.State != domain.StateBlocked {
+				t.Fatalf("delete removed the explicit block = %#v %v", status, err)
 			}
 		})
 	}

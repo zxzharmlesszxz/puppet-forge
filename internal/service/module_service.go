@@ -214,6 +214,17 @@ func (s *ModuleService) publish(ctx context.Context, input domain.PublishModuleI
 		return domain.Release{}, err
 	}
 	defer releaseModuleLock(unlock, input.Owner, input.Name)
+	if _, ok := s.modules.(store.LifecycleStore); ok {
+		for _, version := range []string{"", input.Version} {
+			status, err := s.ResourceStatus(ctx, input.Owner, input.Name, version)
+			if err != nil {
+				return domain.Release{}, err
+			}
+			if status.State == domain.StateBlocked {
+				return domain.Release{}, fmt.Errorf("%w: unblock resource before publication", ErrUnavailable)
+			}
+		}
+	}
 
 	existing, err := s.modules.GetRelease(ctx, input.Owner, input.Name, input.Version)
 	if err == nil {
@@ -589,6 +600,19 @@ func (s *ModuleService) ProcessArtifactDeletions(ctx context.Context, limit int)
 }
 
 func (s *ModuleService) processArtifactDeletion(ctx context.Context, deletionStore store.ArtifactDeletionStore, deletion store.ArtifactDeletion) (bool, error) {
+	if s.upstream != nil && strings.HasPrefix(deletion.StoragePath, upstreamArtifactCachePrefix) {
+		var referenced bool
+		err := s.upstream.WithCachedArtifactLease(ctx, deletion.StoragePath, func(leaseCtx context.Context) error {
+			var err error
+			referenced, err = s.processArtifactDeletionUnderModuleLock(leaseCtx, deletionStore, deletion)
+			return err
+		})
+		return referenced, err
+	}
+	return s.processArtifactDeletionUnderModuleLock(ctx, deletionStore, deletion)
+}
+
+func (s *ModuleService) processArtifactDeletionUnderModuleLock(ctx context.Context, deletionStore store.ArtifactDeletionStore, deletion store.ArtifactDeletion) (bool, error) {
 	unlock, err := s.modules.LockModule(ctx, deletion.Owner, deletion.Name)
 	if err != nil {
 		return false, fmt.Errorf("lock module for artifact deletion %q: %w", deletion.StoragePath, err)

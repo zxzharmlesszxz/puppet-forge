@@ -71,7 +71,7 @@ puppet-forge \
 ## Environment Variables
 
 | Variable                         | Default                          | Required                       | Description                                                                                                                                                                                                                                                                                          |
-|----------------------------------|----------------------------------|--------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| -------------------------------- | -------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `APP_ENV`                        | `dev`                            | no                             | Runtime environment name for logs and diagnostics.                                                                                                                                                                                                                                                   |
 | `LOG_LEVEL`                      | `info`                           | no                             | Minimum structured log level: `debug`, `info`, `warn`, or `error`. At `debug`, the service emits request-start, authorization/session/CSRF, OIDC flow, upstream request/cache, and refresh-lease diagnostics without logging credentials or session secrets. Command-line equivalent: `--log-level`. |
 | `HTTP_ADDR`                      | `:8080`                          | no                             | HTTP listen address inside the process or container.                                                                                                                                                                                                                                                 |
@@ -91,7 +91,7 @@ puppet-forge \
 | `ADMIN_TOKEN`                    | empty                            | when DB access config is empty | Runtime bootstrap/break-glass admin token of at least 32 bytes when set. It is not stored in the database and is used to bootstrap access through `/manage/teams` and `/manage/admin/access`. Generate an independent random value; do not reuse either server-side secret.                          |
 | `ACCESS_TOKEN_PEPPER`            | empty                            | yes                            | Shared secret of at least 32 bytes used for HMAC-SHA256 hashing of persisted tokens with `read` or `publish` roles. Keep it stable across all replicas and include it in backup/restore procedures; losing it invalidates stored tokens.                                                             |
 | `ACCESS_TOKEN_HISTORY_TTL`       | `2160h`                          | no                             | Retention period for metadata of expired and revoked access tokens. Cleanup runs asynchronously under a cross-replica SQL lease immediately after startup and daily; `0` keeps inactive token history indefinitely. Active tokens are never removed by this cleanup.                                 |
-| `DELETED_RELEASE_TTL`            | `2160h`                          | no                             | Retention period for deleted upstream-release tombstones. Cleanup runs asynchronously under a cross-replica SQL lease immediately after startup and daily; after expiry, refresh may restore the release. `0` retains tombstones indefinitely.                                                       |
+| `DELETED_RELEASE_TTL`            | `2160h`                          | no                             | Legacy compatibility setting for historical tombstone cleanup. Schema 11 removes old deletion bans; new deletes create no tombstones and do not depend on this TTL.                                                                                                                                  |
 | `MANAGE_SESSION_SECRET`          | empty                            | yes                            | Independent shared secret of at least 32 bytes for HMAC-hashing opaque server-side `/manage` session IDs. Keep it stable and identical on every replica. It must differ from `ACCESS_TOKEN_PEPPER`; rotating either secret invalidates only its own credential class.                                |
 | `ARTIFACT_BACKEND`               | `gcs`                            | no                             | Artifact backend for module tarballs: `gcs` or `s3`.                                                                                                                                                                                                                                                 |
 | `ARTIFACT_ENDPOINT`              | `https://storage.googleapis.com` | for `s3`; optional for `gcs`   | Object storage endpoint. For `gcs`, this may point to an emulator/custom host. For `s3`, this is the S3-compatible endpoint.                                                                                                                                                                         |
@@ -302,8 +302,14 @@ letter case, including conflicts between existing teams and legacy assignments.
 The error names the conflict; the legacy table and access configuration remain
 unchanged. Resolve the conflicting assignments explicitly and retry. Do not
 blindly lowercase namespaces: module identities retain their original case.
-Schema version 9 is incompatible with older binaries: stop older replicas before
-the migration and use a database backup if a rollback is required.
+The current schema version is 11, including catalog completion and durable source
+provenance. Migration removes legacy Deleted states and tombstones, invalidates
+related catalog completion, and preserves explicit Blocked states and audit events.
+Source provenance is backfilled from surviving releases and catalog records;
+it cannot infer the source of data completely erased before this upgrade.
+Use audit history or a backup to identify such historical local modules before
+allowing an identically named upstream import. Stop older replicas before the
+migration and use a database backup if a rollback is required.
 
 Important rules:
 
@@ -789,14 +795,16 @@ rows. Catalog versions and the marker commit in one SQL transaction. Existing
 local-only modules are not imported. Legacy upstream records without a marker
 receive one full catalog refresh on their first exact query; row existence alone
 is not proof of a completed import. A completed empty catalog remains eligible
-for background refresh.
+for background refresh. Delete invalidates its completion marker.
 
 Across replicas, a per-module SQL lease coordinates the fetch. Waiting, fetching,
 and committing have a 20-second request budget; the lease lasts one minute and
 its ownership/expiry are checked inside the write transaction. No transaction
 or SQL connection is held during the catalog HTTP request. The normal module
 lock protects the final commit, which rechecks module state and excludes
-unavailable versions. Concurrent moderation wins.
+explicitly blocked versions. Concurrent blocking wins; Delete itself is not a
+ban, including deletion of the final release. The next exact collection or
+module request can reindex upstream; an exact release request can restore it.
 
 Upstream 404 returns an empty collection without a completion marker, allowing
 a later retry if the module appears. Failed or malformed imports roll back and
@@ -832,6 +840,7 @@ Both collections and single-release responses use the normalized data. Records
 with a file URI but missing metadata or a noncanonical name are repaired lazily
 under the module lock and persisted in SQL; subsequent reads reuse the repaired
 record across replicas. Explicit blocks remain in force: metadata compatibility does not bypass moderation.
+Deletion itself does not create a ban; subsequent upstream requests can restore data.
 
 Collection repair fetches JSON only for incomplete releases on the bounded
 page, without downloading every module archive. Invalid or unavailable required
@@ -848,18 +857,19 @@ authorization, SQL, and upstream timeouts are not interchangeable diagnoses.
 ## Active Releases and Deletion
 
 - Releases requested by r10k or `puppet module install` within `ACTIVE_RELEASE_TTL` are marked as `in use`.
-- Normal deletion rejects latest and active releases. A dedicated confirmation page lets an owning team administrator or global administrator force-delete one after supplying a reason and typing the exact `owner/name@version` identity; this permits a corrected archive with the same version to be published again by CI.
-- Only a global administrator can force-delete an entire module. Its dedicated confirmation page requires a reason and exact `owner/name` confirmation.
+- Normal deletion rejects releases with observed usage inside the active window; `latest` alone is not protected. A dedicated confirmation page lets an owning team administrator or global administrator force-delete a protected local release after supplying a reason and typing the exact `owner/name@version` identity. CI can then submit a corrected archive of the same version as Pending for approval.
+- An owning team administrator or global administrator can force-delete an entire local module with a reason and exact `owner/name` confirmation. Upstream and mixed-origin modules require global administration, even when their namespace matches a team name.
 - The HTTP API accepts the same explicit override through `X-Puppet-Forge-Force-Delete: true`, `X-Puppet-Forge-Delete-Reason`, and `X-Puppet-Forge-Delete-Confirmation` headers.
 - Administrative team, access, token, publishing-space, module, and release mutations emit structured `security_audit` events to application logs and the SQL-backed journal at `/manage/admin/audit`. The global-admin page exposes the complete journal. `/manage/teams/{team}/audit` exposes a backend-filtered view to that team's administrators and includes actions by global admins against the team or any of its publish spaces. Both views support filtering and pagination and preserve force-delete comments with the actor, source address, target, result, and request ID. Centralized logging should retain the duplicate log stream for independent operational correlation.
 - Deleting the latest release automatically promotes the highest remaining semantic version. If no releases remain, the module record is removed.
-- Delete buttons are hidden for protected releases in `/manage/modules`.
+- Protected releases expose a separate force-delete confirmation action rather than ordinary deletion.
 - `ACTIVE_RELEASE_TTL` defaults to `720h` / 30 days.
 - Release usage rows older than the active window are pruned by a daily lease-elected worker, including one asynchronous pass after startup.
-- Delete policy checks and SQL mutation run under the same module-scoped lock across replicas. The SQL transaction removes metadata and enqueues each local object in the durable `artifact_deletions` outbox. A singleton worker retries idempotent object deletion every minute; a storage error leaves only the object and outbox task, never metadata that points to a missing archive. Republish safety is checked under the same module lock before cleanup.
-- Deleting indexed upstream metadata does not enqueue a shared `upstream-cache/` object for immediate deletion. A daily lease-elected worker removes only unreferenced objects older than `UPSTREAM_ARTIFACT_ORPHAN_TTL`.
-- Deleted upstream releases are stored in the `deleted_releases` tombstone table so background synchronization does not immediately recreate them. A direct request for that exact release from r10k, Puppet, or another client deliberately restores it on demand; this keeps old environments deployable without repopulating every deleted version during refresh. `DELETED_RELEASE_TTL` controls background suppression when no client requests the release; after expiry, refresh may restore it as well.
-- Deleting the whole module clears tombstones and release usage for that module, so a later upstream sync can create it again with all available upstream releases.
+- Delete policy checks and SQL mutation use the module lock across replicas. Metadata is removed and registered object paths enter the durable `artifact_deletions` outbox. Cleanup rechecks references before deleting shared objects; upstream objects also use the artifact lease. A newly referenced object is retained. Unregistered orphan cache objects remain subject to `UPSTREAM_ARTIFACT_ORPHAN_TTL`.
+- Delete means data removal, not a permanent prohibition, for both sources. Upstream data returns on the next request or refresh. Local data requires a new upload and the normal approval flow. Minimal `module_origins` records survive deletion to prevent silent substitution of a known local module with an upstream namesake and to preserve source-based administrative permissions.
+- Explicit `Blocked` states survive deletion and block requests, import, and republication. Unblocking is an audited administrator decision, separate from Delete. An absent blocked resource can still be unblocked at `/manage/modules/{owner}/{name}/moderate?version={version}`; omit `version` for a module. It does not recreate local bytes.
+- Schema 11 removes old Deleted states and tombstones without deleting audit history or explicit blocks. `DELETED_RELEASE_TTL` is retained for compatibility only: new deletes create no exclusion records. Back up SQL and stop older replicas before upgrading; a rollback requires the pre-migration backup.
+- Clear cache is a separate future operation, not an alias for Delete. No operation described as cache cleanup may remove the only copy of a local archive.
 
 ## Observability
 

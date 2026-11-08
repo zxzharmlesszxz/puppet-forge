@@ -10,6 +10,32 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
+func TestModerationUnblocksDeletedResourcesWithoutRepublishing(t *testing.T) {
+	for _, version := range []string{"", "1.0.0"} {
+		t.Run("version="+version, func(t *testing.T) {
+			svc, st, release := newReviewService(t)
+			if err := svc.Moderate(t.Context(), reviewAdmin(), release.Owner, release.Name, version, "block", "broken", "", release.SHA256); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.DeleteModule(t.Context(), release.Owner, release.Name); err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.RequireAvailable(t.Context(), release.Owner, release.Name, version); !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("delete bypassed block: %v", err)
+			}
+			if err := svc.Moderate(t.Context(), reviewAdmin(), release.Owner, release.Name, version, "unblock", "fixed", "", ""); err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.RequireAvailable(t.Context(), release.Owner, release.Name, version); err != nil {
+				t.Fatalf("resource remained blocked: %v", err)
+			}
+			if _, err := st.GetRelease(t.Context(), release.Owner, release.Name, release.Version); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("unblock recreated archive metadata: %v", err)
+			}
+		})
+	}
+}
+
 func TestModerationRechecksOriginUnderLock(t *testing.T) {
 	for _, version := range []string{"", "1.0.0"} {
 		t.Run("version="+version, func(t *testing.T) {
@@ -29,6 +55,9 @@ func TestModerationRechecksOriginUnderLock(t *testing.T) {
 			_, count, err := st.ListAuditEvents(t.Context(), nil, "", 10, 0)
 			if err != nil || count != 0 {
 				t.Fatalf("denied mutation recorded success: %d %v", count, err)
+			}
+			if store.MutationAuditRecorded(ctx) {
+				t.Fatal("competing import consumed the denied moderation audit")
 			}
 			if err := svc.Moderate(t.Context(), auth.Principal{CanAdmin: true}, release.Owner, release.Name, version, "block", "broken", "", release.SHA256); err != nil {
 				t.Fatalf("global moderation = %v", err)

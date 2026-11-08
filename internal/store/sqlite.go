@@ -20,7 +20,7 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
 
-const currentSchemaVersion = 10
+const currentSchemaVersion = 11
 
 type sqliteQueryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -403,6 +403,9 @@ func migrateSQLiteSchema(db *sql.DB, tokenHasher *auth.TokenHasher) error {
 	}
 	if _, err := tx.Exec(moduleOriginSchema); err != nil {
 		return fmt.Errorf("migrate module origins: %w", err)
+	}
+	if _, err := tx.Exec(deleteIsNotBlockMigration); err != nil {
+		return fmt.Errorf("migrate deletion lifecycle: %w", err)
 	}
 
 	if err := sqliteEnsureReleaseMD5Column(tx); err != nil {
@@ -1336,13 +1339,16 @@ func (s *SQLiteStore) DeleteModule(ctx context.Context, owner, name string) erro
 		select r.storage_path, m.owner, m.name
 		from releases r
 		join modules m on m.id = r.module_id
-		where m.owner = ? and m.name = ? and r.source = 'local' and r.storage_path <> ''
+		where m.owner = ? and m.name = ? and r.storage_path <> ''
 		on conflict(storage_path) do nothing
 	`, owner, name); err != nil {
 		return fmt.Errorf("queue module artifact deletions: %w", err)
 	}
 
-	if err := writeSQLiteStatus(ctx, tx, owner, name, "", domain.ResourceStatus{State: domain.StateDeleted, ChangedAt: time.Now().UTC()}); err != nil {
+	if _, err := tx.ExecContext(ctx, `delete from resource_states where owner=? and name=? and state<>'blocked'`, owner, name); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `delete from upstream_catalogs where owner=? and name=?`, owner, name); err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, `delete from modules where owner = ? and name = ?`, owner, name)
@@ -1386,20 +1392,20 @@ func (s *SQLiteStore) DeleteRelease(ctx context.Context, owner, name, version st
 		_ = tx.Rollback()
 	}()
 
-	var source, storagePath string
+	var storagePath string
 	const selectSource = `
-		select r.source, r.storage_path
+		select r.storage_path
 		from releases r
 		join modules m on m.id = r.module_id
 		where m.owner = ? and m.name = ? and r.version = ?
 	`
-	if err := tx.QueryRowContext(ctx, selectSource, owner, name, version).Scan(&source, &storagePath); err != nil {
+	if err := tx.QueryRowContext(ctx, selectSource, owner, name, version).Scan(&storagePath); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return fmt.Errorf("get release source: %w", err)
 	}
-	if source == "local" && storagePath != "" {
+	if storagePath != "" {
 		if _, err := tx.ExecContext(ctx, `
 			insert into artifact_deletions (storage_path, owner, name)
 			values (?, ?, ?)
@@ -1414,7 +1420,7 @@ func (s *SQLiteStore) DeleteRelease(ctx context.Context, owner, name, version st
 		where module_id = (select id from modules where owner = ? and name = ?)
 		  and version = ?
 	`
-	if err := writeSQLiteStatus(ctx, tx, owner, name, version, domain.ResourceStatus{State: domain.StateDeleted, ChangedAt: time.Now().UTC()}); err != nil {
+	if _, err := tx.ExecContext(ctx, `delete from resource_states where owner=? and name=? and version=? and state<>'blocked'`, owner, name, version); err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, deleteQuery, owner, name, version)
@@ -1425,15 +1431,11 @@ func (s *SQLiteStore) DeleteRelease(ctx context.Context, owner, name, version st
 	if rows == 0 {
 		return ErrNotFound
 	}
-	if source == "upstream" {
-		const insertTombstone = `
-			insert into deleted_releases (owner, name, version, source)
-			values (?, ?, ?, ?)
-			on conflict(owner, name, version, source) do update set deleted_at = current_timestamp
-		`
-		if _, err := tx.ExecContext(ctx, insertTombstone, owner, name, version, source); err != nil {
-			return fmt.Errorf("record deleted release: %w", err)
-		}
+	if _, err := tx.ExecContext(ctx, `delete from upstream_catalogs where owner=? and name=?`, owner, name); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `delete from deleted_releases where owner=? and name=? and version=?`, owner, name, version); err != nil {
+		return err
 	}
 
 	moduleID, err := sqliteModuleID(ctx, tx, owner, name)
@@ -1613,6 +1615,9 @@ func (s *SQLiteStore) PruneReleaseUsageBefore(ctx context.Context, before time.T
 func sqliteModuleID(ctx context.Context, tx *sql.Tx, owner, name string) (string, error) {
 	var moduleID string
 	err := tx.QueryRowContext(ctx, `select id from modules where owner = ? and name = ?`, owner, name).Scan(&moduleID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
 	if err != nil {
 		return "", fmt.Errorf("get module id: %w", err)
 	}

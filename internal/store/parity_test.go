@@ -830,8 +830,8 @@ func TestStoreParityTombstonesAndUsage(t *testing.T) {
 			if err != nil {
 				t.Fatalf("IsReleaseDeleted() error = %v", err)
 			}
-			if !deleted {
-				t.Fatal("expected upstream release tombstone")
+			if deleted {
+				t.Fatal("delete must not create an upstream release ban")
 			}
 
 			if err := st.DeleteModule(ctx, owner, name); err != nil {
@@ -855,7 +855,7 @@ func TestStoreParityTombstonesAndUsage(t *testing.T) {
 	}
 }
 
-func TestStoreParityPurgesDeletedReleaseTombstonesByAge(t *testing.T) {
+func TestStoreParityDeletionDoesNotLeaveRetentionBans(t *testing.T) {
 	for _, tc := range parityStoreCases(t) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -884,12 +884,16 @@ func TestStoreParityPurgesDeletedReleaseTombstonesByAge(t *testing.T) {
 				t.Fatalf("PurgeDeletedReleases(past) = %d, %v, want 0, nil", deleted, err)
 			}
 			deleted, err = st.PurgeDeletedReleases(ctx, time.Now().UTC().Add(time.Hour))
-			if err != nil || deleted != 1 {
-				t.Fatalf("PurgeDeletedReleases(future) = %d, %v, want 1, nil", deleted, err)
+			if err != nil || deleted != 0 {
+				t.Fatalf("PurgeDeletedReleases(future) = %d, %v, want 0, nil", deleted, err)
 			}
 			isDeleted, err := st.IsReleaseDeleted(ctx, owner, name, "1.0.0", "upstream")
 			if err != nil || isDeleted {
 				t.Fatalf("IsReleaseDeleted() = %v, %v, want false, nil", isDeleted, err)
+			}
+			status, err := st.(LifecycleStore).GetResourceStatus(ctx, owner, name, "1.0.0")
+			if err != nil || status.State != domain.StateAvailable {
+				t.Fatalf("delete left a lifecycle ban: %#v %v", status, err)
 			}
 		})
 	}

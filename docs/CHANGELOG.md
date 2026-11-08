@@ -6,6 +6,13 @@
 
 ### Fixed
 
+- Delete now removes data without a permanent ban for both sources: upstream
+  returns on demand; local requires republication and approval. Schema 11 removes
+  legacy Deleted/tombstone bans, preserves explicit blocks and audit history,
+  invalidates catalog completion on deletion, and records minimal source
+  provenance to prevent silent upstream replacement of deleted local modules.
+  Blocked resources remain blocked through deletion and republication; an
+  administrator can explicitly unblock them even when their data is absent.
 - Accept official Forge metadata namespace discrepancies backed by an explicit
   matching release slug and matching module name/version; normalize only the API
   metadata name, preserving archive checksums and other metadata fields. Cover
@@ -17,9 +24,11 @@
   waits fail closed.
 - Index unknown upstream modules on the first exact V3 release-collection query,
   independently of version filters, offsets, or an empty readable result.
-- Persist catalog completion atomically with versions in schema 10; use a
+- Persist catalog completion atomically with versions in schema 11; use a
   cross-replica, transaction-fenced fetch lease and recheck lifecycle at commit.
-
+- Preserve local-only provenance and explicit blocks. Delete invalidates catalog
+  completion so upstream data can return on demand. Failed imports remain
+  retryable; 404 stays an empty collection.
 
 - Preserve and validate full upstream metadata in V3 collections and individual
   releases, including dependencies, requirements, and additional fields.

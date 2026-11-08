@@ -466,6 +466,9 @@ func (s *PostgresStore) ensureOperationalTables(ctx context.Context) (returnErr 
 	if _, err := conn.Exec(ctx, moduleOriginSchema); err != nil {
 		return fmt.Errorf("migrate module origins: %w", err)
 	}
+	if _, err := conn.Exec(ctx, deleteIsNotBlockMigration); err != nil {
+		return fmt.Errorf("migrate deletion lifecycle: %w", err)
+	}
 	if err := migratePostgresCanonicalSlugs(ctx, conn); err != nil {
 		return err
 	}
@@ -1490,7 +1493,7 @@ func (s *PostgresStore) DeleteModule(ctx context.Context, owner, name string) er
 		select r.storage_path, m.owner, m.name
 		from releases r
 		join modules m on m.id = r.module_id
-		where m.owner = $1 and m.name = $2 and r.source = 'local' and r.storage_path <> ''
+		where m.owner = $1 and m.name = $2 and r.storage_path <> ''
 		on conflict(storage_path) do nothing
 	`, owner, name); err != nil {
 		return fmt.Errorf("queue module artifact deletions: %w", err)
@@ -1501,7 +1504,10 @@ func (s *PostgresStore) DeleteModule(ctx context.Context, owner, name string) er
 		where owner = $1 and name = $2
 	`
 
-	if err := writePostgresStatus(ctx, tx, owner, name, "", domain.ResourceStatus{State: domain.StateDeleted, ChangedAt: time.Now().UTC()}); err != nil {
+	if _, err := tx.Exec(ctx, `delete from resource_states where owner=$1 and name=$2 and state<>'blocked'`, owner, name); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `delete from upstream_catalogs where owner=$1 and name=$2`, owner, name); err != nil {
 		return err
 	}
 	tag, err := tx.Exec(ctx, query, owner, name)
@@ -1545,20 +1551,20 @@ func (s *PostgresStore) DeleteRelease(ctx context.Context, owner, name, version 
 		_ = tx.Rollback(ctx)
 	}()
 
-	var source, storagePath string
+	var storagePath string
 	const selectSource = `
-		select r.source, r.storage_path
+		select r.storage_path
 		from releases r
 		join modules m on m.id = r.module_id
 		where m.owner = $1 and m.name = $2 and r.version = $3
 	`
-	if err := tx.QueryRow(ctx, selectSource, owner, name, version).Scan(&source, &storagePath); err != nil {
+	if err := tx.QueryRow(ctx, selectSource, owner, name, version).Scan(&storagePath); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		return fmt.Errorf("get release source: %w", err)
 	}
-	if source == "local" && storagePath != "" {
+	if storagePath != "" {
 		if _, err := tx.Exec(ctx, `
 			insert into artifact_deletions (storage_path, owner, name)
 			values ($1, $2, $3)
@@ -1577,7 +1583,7 @@ func (s *PostgresStore) DeleteRelease(ctx context.Context, owner, name, version 
 		  and r.version = $3
 	`
 
-	if err := writePostgresStatus(ctx, tx, owner, name, version, domain.ResourceStatus{State: domain.StateDeleted, ChangedAt: time.Now().UTC()}); err != nil {
+	if _, err := tx.Exec(ctx, `delete from resource_states where owner=$1 and name=$2 and version=$3 and state<>'blocked'`, owner, name, version); err != nil {
 		return err
 	}
 	tag, err := tx.Exec(ctx, deleteQuery, owner, name, version)
@@ -1587,15 +1593,11 @@ func (s *PostgresStore) DeleteRelease(ctx context.Context, owner, name, version 
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	if source == "upstream" {
-		const insertTombstone = `
-			insert into deleted_releases (owner, name, version, source)
-			values ($1, $2, $3, $4)
-			on conflict(owner, name, version, source) do update set deleted_at = now()
-		`
-		if _, err := tx.Exec(ctx, insertTombstone, owner, name, version, source); err != nil {
-			return fmt.Errorf("record deleted release: %w", err)
-		}
+	if _, err := tx.Exec(ctx, `delete from upstream_catalogs where owner=$1 and name=$2`, owner, name); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `delete from deleted_releases where owner=$1 and name=$2 and version=$3`, owner, name, version); err != nil {
+		return err
 	}
 
 	moduleID, err := postgresModuleID(ctx, tx, owner, name)
@@ -1764,6 +1766,9 @@ func (s *PostgresStore) PruneReleaseUsageBefore(ctx context.Context, before time
 func postgresModuleID(ctx context.Context, tx pgx.Tx, owner, name string) (string, error) {
 	var moduleID string
 	if err := tx.QueryRow(ctx, `select id from modules where owner = $1 and name = $2`, owner, name).Scan(&moduleID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
 		return "", fmt.Errorf("get module id: %w", err)
 	}
 	return moduleID, nil

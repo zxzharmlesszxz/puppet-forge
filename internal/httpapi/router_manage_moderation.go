@@ -10,6 +10,7 @@ import (
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/service"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
 type manageModerationData struct {
@@ -41,12 +42,17 @@ func (r *Router) manageModeration(w http.ResponseWriter, req *http.Request, prin
 		return
 	}
 	version := req.URL.Query().Get("version")
-	module, err := r.modules.GetModule(req.Context(), owner, name)
+	status, err := r.modules.ResourceStatus(req.Context(), owner, name, version)
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	data := manageModerationData{Resource: owner + "/" + name, Status: module.Status, Version: version, Next: "/manage/modules"}
+	module, err := r.modules.GetModule(req.Context(), owner, name)
+	if err != nil && (!errors.Is(err, store.ErrNotFound) || status.State != domain.StateBlocked) {
+		writeServiceError(w, err)
+		return
+	}
+	data := manageModerationData{Resource: owner + "/" + name, Status: status, Version: version, Next: "/manage/modules"}
 	allowed, err := r.modules.CanDeleteModule(req.Context(), principal, owner, name)
 	if err != nil {
 		writeServiceError(w, err)
@@ -58,16 +64,18 @@ func (r *Router) manageModeration(w http.ResponseWriter, req *http.Request, prin
 	}
 	if version != "" {
 		release, err := r.modules.GetStoredRelease(req.Context(), owner, name, version)
-		if err != nil {
+		if err != nil && (!errors.Is(err, store.ErrNotFound) || status.State != domain.StateBlocked) {
 			writeServiceError(w, err)
 			return
 		}
 		data.Resource += "@" + version
-		data.SHA256 = release.SHA256
-		data.Status = release.Status
-		if release.Status.State == domain.StatePending {
+		if err == nil {
+			data.SHA256 = release.SHA256
+			data.Status = release.Status
+		}
+		if err == nil && release.Status.State == domain.StatePending {
 			data.DownloadURL = manageModerationURL(owner, name, version) + "&download=true"
-		} else if release.Status.State.Readable() && module.Status.State.Readable() {
+		} else if err == nil && release.Status.State.Readable() && module.Status.State.Readable() {
 			data.DownloadURL = manageModerationURL(owner, name, version) + "&download=true"
 		}
 	}

@@ -112,8 +112,18 @@ func TestReleaseEnrichmentPreservesConcurrentMutation(t *testing.T) {
 				} else if result.err != nil || getErr != nil || stored.Source != "local" || stored.StoragePath != "modules/new.tar.gz" || stored.SHA256 != "new-checksum" || result.release.Source != "local" {
 					t.Fatalf("replacement overwritten: result=%#v, stored=%#v, err=%v", result, stored, getErr)
 				}
-				if pending, err := st.CountArtifactDeletions(ctx); err != nil || pending != 0 {
-					t.Fatalf("replacement queued for deletion: pending=%d err=%v", pending, err)
+				wantPending := 0
+				if mutation == "delete" {
+					wantPending = 1
+				}
+				if pending, err := st.CountArtifactDeletions(ctx); err != nil || pending != wantPending {
+					t.Fatalf("artifact deletion queue: pending=%d want=%d err=%v", pending, wantPending, err)
+				}
+				if mutation == "delete" {
+					queued, err := st.ListArtifactDeletions(ctx, 10)
+					if err != nil || len(queued) != 1 || queued[0].StoragePath != old.StoragePath {
+						t.Fatalf("wrong artifact queued: %#v err=%v", queued, err)
+					}
 				}
 			})
 		}

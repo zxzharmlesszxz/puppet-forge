@@ -571,25 +571,34 @@ erDiagram
 PostgreSQL schema bootstrap серіалізований global advisory lock. Binary не
 працює зі schema version, новішою за підтримувану.
 
-Схема 10 додає upstream_catalogs і module_origins. Позначка завершення та версії каталогу фіксуються атомарно. SQL-lease перевіряється перед commit; HTTP працює поза транзакцією, а lifecycle повторно перевіряється під module lock. Походження захищає локальні модулі від підміни upstream. Помилка чи 404 не створює позначки завершення.
+Схема 11 зберігає `upstream_catalogs`: позначка завершення та версії фіксуються
+разом. Delete скидає завершення, зокрема після видалення останнього релізу:
+наступний upstream-запит може повторно індексувати каталог. Точний фільтр використовує
+SQL-lease `upstream-catalog-<sha256>` із перевіркою власника перед commit.
+HTTP працює поза SQL-транзакцією; під module lock перевіряється явне блокування.
+Схема 11 прибирає старі заборони Deleted і tombstone. `module_origins` зберігає
+мінімальне походження без архівів та релізів. Помилка імпорту або 404 не створює
+позначки завершення. SQL backup
+має включати цю таблицю; позначка не замінює lifecycle.
 
 ## Власність стану та consistency
 
-| Стан                     | Де                     | Scope       | Гарантія                                                                                                                                                      |
-| ------------------------ | ---------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| modules/releases/latest  | SQL                    | shared      | transaction + constraints                                                                                                                                     |
-| release bytes            | object storage         | shared      | immutable create-only + SHA/size                                                                                                                              |
-| usage/tombstones         | SQL                    | shared      | activity TTL; replicas об'єднують usage-записи через bounded throttle, lease-elected worker щодня чистить прострочені rows; exact-запит може відновити версію |
-| named-token consumers    | SQL                    | shared      | archive GET observations зберігаються за `RELEASE_CONSUMER_TTL`; per-replica throttle обмежує записи, lease-elected worker виконує cleanup                    |
-| teams/tokens/OIDC/spaces | SQL                    | shared      | serialized replace; cache до 2s                                                                                                                               |
-| browser sessions         | SQL + opaque cookie    | shared      | TTL 8h, revocation, кожен request перевіряє SQL                                                                                                               |
-| OIDC state               | SQL + encrypted cookie | shared      | TTL 5m, single-use                                                                                                                                            |
-| worker leadership        | SQL                    | shared      | holder + expiry                                                                                                                                               |
-| upstream JSON cache      | memory                 | per replica | bounded fresh/stale TTL                                                                                                                                       |
-| rate counters            | memory                 | per replica | не cluster quota                                                                                                                                              |
-| artifact singleflight    | memory                 | per replica | лише process deduplication                                                                                                                                    |
-| inventory snapshot       | memory                 | per replica | shared SQL через інтервал `METRICS_REFRESH_INTERVAL` із випадковим зсувом                                                                                     |
-| operation counters       | Prometheus registry    | per replica | aggregate sum/rate                                                                                                                                            |
+| Стан                     | Де                      | Scope       | Гарантія                                                                                                                                                      |
+| ------------------------ | ----------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| modules/releases/latest  | SQL                     | shared      | transaction + constraints                                                                                                                                     |
+| upstream catalogs        | SQL / upstream_catalogs | shared      | Атомарна позначка з версіями; Delete скидає її для повторного імпорту; явний Blocked залишається                                                              |
+| release bytes            | object storage          | shared      | immutable create-only + SHA/size                                                                                                                              |
+| usage / origins          | SQL                     | shared      | Usage має TTL; module_origins зберігає походження після Delete. Старі Deleted/tombstone прибирає міграція 11                                                  |
+| named-token consumers    | SQL                     | shared      | archive GET observations зберігаються за `RELEASE_CONSUMER_TTL`; per-replica throttle обмежує записи, lease-elected worker виконує cleanup                    |
+| teams/tokens/OIDC/spaces | SQL                     | shared      | serialized replace; cache до 2s                                                                                                                               |
+| browser sessions         | SQL + opaque cookie     | shared      | TTL 8h, revocation, кожен request перевіряє SQL                                                                                                               |
+| OIDC state               | SQL + encrypted cookie  | shared      | TTL 5m, single-use                                                                                                                                            |
+| worker leadership        | SQL                     | shared      | holder + expiry                                                                                                                                               |
+| upstream JSON cache      | memory                  | per replica | bounded fresh/stale TTL                                                                                                                                       |
+| rate counters            | memory                  | per replica | не cluster quota                                                                                                                                              |
+| artifact singleflight    | memory                  | per replica | лише process deduplication                                                                                                                                    |
+| inventory snapshot       | memory                  | per replica | shared SQL через інтервал `METRICS_REFRESH_INTERVAL` із випадковим зсувом                                                                                     |
+| operation counters       | Prometheus registry     | per replica | aggregate sum/rate                                                                                                                                            |
 
 Перед локальною відповіддю з metadata upstream-релізу сервіс перевіряє
 збережені bytes за SHA-256 і розміром. Repair утримує той самий per-object SQL

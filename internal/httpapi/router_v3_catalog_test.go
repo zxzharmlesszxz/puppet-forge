@@ -350,6 +350,174 @@ func TestV3ConcurrentColdCatalogAcrossReplicas(t *testing.T) {
 	}
 }
 
+func TestV3CatalogHonorsLifecycleDuringFetch(t *testing.T) {
+	for _, backend := range catalogBackends() {
+		for _, mutation := range []string{"block module", "delete module", "block version", "delete version"} {
+			t.Run(backend+"/"+mutation, func(t *testing.T) {
+				f := newCatalogV3Fixture(t, backend, true)
+				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+				defer cancel()
+				done := make(chan *httptest.ResponseRecorder, 1)
+				go func() { done <- f.request(ctx, 0, "/v3/releases?module=puppetlabs-stdlib&version=10.1.0", true) }()
+				select {
+				case <-f.entered:
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+				unlock, err := f.st.LockModule(ctx, "puppetlabs", "stdlib")
+				if err != nil {
+					t.Fatal(err)
+				}
+				func() {
+					defer func() {
+						if err := unlock(); err != nil {
+							t.Error(err)
+						}
+					}()
+					module, err := f.st.UpsertModule(ctx, "puppetlabs", "stdlib")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if strings.Contains(mutation, "version") {
+						release := store.NewRelease(module.ID, module.Owner, module.Name, "10.1.0", "", "", "stdlib.tar.gz", "application/gzip", "", "", "", 0, nil)
+						release.Source = "upstream"
+						if _, err := f.st.CreateRelease(ctx, release); err != nil {
+							t.Fatal(err)
+						}
+					}
+					switch mutation {
+					case "delete module":
+						err = f.st.DeleteModule(ctx, module.Owner, module.Name)
+					case "delete version":
+						err = f.st.DeleteRelease(ctx, module.Owner, module.Name, "10.1.0")
+					default:
+						version := ""
+						if mutation == "block version" {
+							version = "10.1.0"
+						}
+						err = f.st.(store.LifecycleStore).SetResourceStatus(ctx, module.Owner, module.Name, version, domain.ResourceStatus{State: domain.StateBlocked, Previous: domain.StateAvailable, Reason: "concurrent moderation", ChangedAt: time.Now().UTC()})
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+				}()
+				f.resumeCatalog()
+				wantResults, wantMetadata := 0, int32(0)
+				if strings.HasPrefix(mutation, "delete") {
+					wantResults, wantMetadata = 1, 1
+				}
+				select {
+				case rec := <-done:
+					page := catalogPage(t, rec)
+					if len(page.Results) != wantResults {
+						t.Fatalf("moderated resource reappeared: %#v", page)
+					}
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+				catalogPage(t, f.request(ctx, 1, "/v3/releases?module=puppetlabs-stdlib&version=10.1.0", true))
+				if f.catalogs.Load() != 1 || f.metadata.Load() != wantMetadata || f.archives.Load() != 0 {
+					t.Fatal("moderation was bypassed or retriggered catalog fetch")
+				}
+				if mutation == "delete module" {
+					if _, err := f.st.GetModule(ctx, "puppetlabs", "stdlib"); err != nil {
+						t.Fatalf("deleted module did not return: %v", err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestV3CatalogRestoresLastDeletedVersion(t *testing.T) {
+	for _, backend := range catalogBackends() {
+		t.Run(backend, func(t *testing.T) {
+			f := newCatalogV3Fixture(t, backend, false)
+			f.mode.Store("one")
+			catalogPage(t, f.request(t.Context(), 0, "/v3/releases?module=puppetlabs-stdlib", true))
+			if err := f.st.DeleteRelease(t.Context(), "puppetlabs", "stdlib", "10.1.0"); err != nil {
+				t.Fatal(err)
+			}
+			page := catalogPage(t, f.request(t.Context(), 1, "/v3/releases?module=puppetlabs-stdlib", true))
+			if len(page.Results) != 1 || f.catalogs.Load() != 2 {
+				t.Fatalf("last deleted release did not return: %#v", page)
+			}
+			if _, err := f.st.GetModule(t.Context(), "puppetlabs", "stdlib"); err != nil {
+				t.Fatalf("restored final release has no module: %v", err)
+			}
+		})
+	}
+}
+
+func TestV3CatalogDeleteReturnsOnCollectionAndModuleRequests(t *testing.T) {
+	for _, backend := range catalogBackends() {
+		for _, whole := range []bool{false, true} {
+			name := backend + "/release"
+			if whole {
+				name = backend + "/module"
+			}
+			t.Run(name, func(t *testing.T) {
+				f := newCatalogV3Fixture(t, backend, false)
+				collection := "/v3/releases?module=puppetlabs-stdlib&limit=20"
+				catalogPage(t, f.request(t.Context(), 0, collection, true))
+				var err error
+				if whole {
+					err = f.st.DeleteModule(t.Context(), "puppetlabs", "stdlib")
+				} else {
+					err = f.st.DeleteRelease(t.Context(), "puppetlabs", "stdlib", "10.1.0")
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				moduleResponse := f.request(t.Context(), 1, "/v3/modules/puppetlabs-stdlib", true)
+				if moduleResponse.Code != http.StatusOK {
+					t.Fatalf("r10k module lookup: %d %s", moduleResponse.Code, moduleResponse.Body.String())
+				}
+				for index := range 2 {
+					page := catalogPage(t, f.request(t.Context(), index, collection, true))
+					if len(page.Results) != 3 || page.Pagination.Total != 3 {
+						t.Fatalf("deleted catalog not restored: %#v", page)
+					}
+				}
+				if f.catalogs.Load() != 2 || f.archives.Load() != 0 {
+					t.Fatalf("unexpected reindex traffic: catalogs=%d archives=%d", f.catalogs.Load(), f.archives.Load())
+				}
+			})
+		}
+	}
+}
+
+func TestV3CatalogDoesNotReplaceDeletedLocalModuleWithUpstream(t *testing.T) {
+	for _, backend := range catalogBackends() {
+		t.Run(backend, func(t *testing.T) {
+			f := newCatalogV3Fixture(t, backend, false)
+			module, err := f.st.UpsertModule(t.Context(), "puppetlabs", "stdlib")
+			if err != nil {
+				t.Fatal(err)
+			}
+			release := store.NewRelease(module.ID, module.Owner, module.Name, "10.1.0", "", "", "local.tar.gz", "application/gzip", "md5", "sha", "local/object", 7, nil)
+			if _, err := f.st.CreateRelease(t.Context(), release); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.st.DeleteModule(t.Context(), module.Owner, module.Name); err != nil {
+				t.Fatal(err)
+			}
+			page := catalogPage(t, f.request(t.Context(), 0, "/v3/releases?module=puppetlabs-stdlib", true))
+			if len(page.Results) != 0 {
+				t.Fatal("deleted local module restored through collection")
+			}
+			for _, path := range []string{"/v3/modules/puppetlabs-stdlib", "/v3/releases/puppetlabs-stdlib-10.1.0"} {
+				if rec := f.request(t.Context(), 1, path, true); rec.Code != http.StatusNotFound {
+					t.Fatalf("deleted local lookup %s: %d %s", path, rec.Code, rec.Body.String())
+				}
+			}
+			if f.catalogs.Load() != 0 || f.metadata.Load() != 0 || f.archives.Load() != 0 {
+				t.Fatal("deleted local module reached upstream")
+			}
+		})
+	}
+}
+
 func TestV3CatalogFetchCannotOverwriteConcurrentLocalPublication(t *testing.T) {
 	for _, backend := range catalogBackends() {
 		t.Run(backend, func(t *testing.T) {

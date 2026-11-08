@@ -429,7 +429,7 @@ func createPuppetlabsStdlibRelease(t *testing.T, ctx context.Context, s *SQLiteS
 	return module
 }
 
-func TestSQLiteDeleteUpstreamReleaseRecordsTombstone(t *testing.T) {
+func TestSQLiteDeleteUpstreamReleaseDoesNotRecordBan(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -443,8 +443,8 @@ func TestSQLiteDeleteUpstreamReleaseRecordsTombstone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IsReleaseDeleted() error = %v", err)
 	}
-	if !deleted {
-		t.Fatal("expected upstream release tombstone")
+	if deleted {
+		t.Fatal("delete must not create an upstream release ban")
 	}
 }
 

@@ -64,19 +64,22 @@ func (s *ModuleService) Moderate(ctx context.Context, principal auth.Principal, 
 	if !allowed {
 		return ErrModerationForbidden
 	}
-	if _, err := s.modules.GetModule(ctx, owner, name); err != nil {
-		return err
-	}
 	status, err := states.GetResourceStatus(ctx, owner, name, version)
 	if err != nil {
 		return err
 	}
+	_, moduleErr := s.modules.GetModule(ctx, owner, name)
+	if moduleErr != nil && (!errors.Is(moduleErr, store.ErrNotFound) || action != "unblock" || status.State != domain.StateBlocked) {
+		return moduleErr
+	}
+	missing := moduleErr != nil
 	if version != "" {
 		release, err := s.modules.GetRelease(ctx, owner, name, version)
-		if err != nil {
+		if err != nil && (!errors.Is(err, store.ErrNotFound) || action != "unblock" || status.State != domain.StateBlocked) {
 			return err
 		}
-		if (action == "approve" && expectedSHA == "") || expectedSHA != release.SHA256 {
+		missing = err != nil
+		if !missing && ((action == "approve" && expectedSHA == "") || expectedSHA != release.SHA256) {
 			return fmt.Errorf("%w: release content changed; review again", store.ErrConflict)
 		}
 		status.SHA256 = release.SHA256
@@ -109,7 +112,7 @@ func (s *ModuleService) Moderate(ctx context.Context, principal auth.Principal, 
 			return invalidInput("resource is not blocked")
 		}
 		status.State = status.Previous
-		if status.State == "" {
+		if status.State == "" || missing {
 			status.State = domain.StateAvailable
 		}
 		status.Previous = ""

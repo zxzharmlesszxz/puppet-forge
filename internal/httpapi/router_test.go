@@ -2195,7 +2195,7 @@ func TestUpstreamV3ModuleRequestIndexesWithoutMarkingCurrentReleaseActive(t *tes
 	}
 }
 
-func TestV3ReleaseRequestCannotRestoreDeletedUpstreamRelease(t *testing.T) {
+func TestV3ReleaseRequestRestoresDeletedUpstreamRelease(t *testing.T) {
 	t.Parallel()
 	archive := []byte("restored upstream archive")
 
@@ -2208,11 +2208,12 @@ func TestV3ReleaseRequestCannotRestoreDeletedUpstreamRelease(t *testing.T) {
 		_, _ = w.Write([]byte(`{
 			"slug":"puppetlabs-stdlib-1.0.0",
 			"version":"1.0.0",
+			"metadata":{"name":"puppetlabs-stdlib","version":"1.0.0","dependencies":[],"requirements":[]},
 			"description":"stdlib 1.0.0",
 			"readme":"# stdlib",
 			"file_uri":"https://forge.example/v3/files/puppetlabs-stdlib-1.0.0.tar.gz",
 			"file_name":"puppetlabs-stdlib-1.0.0.tar.gz",
-			"file_sha256":"abc123"
+			"file_sha256":""
 		}`))
 	}))
 	t.Cleanup(upstream.Close)
@@ -2257,11 +2258,11 @@ func TestV3ReleaseRequestCannotRestoreDeletedUpstreamRelease(t *testing.T) {
 	defer func() {
 		_ = resp.Body.Close()
 	}()
-	if resp.StatusCode != http.StatusConflict {
+	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("GET /v3/releases deleted upstream release status = %d body = %s", resp.StatusCode, string(body))
 	}
-	if _, err := st.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := st.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); err != nil {
 		t.Fatalf("GetRelease(restored local) error = %v", err)
 	}
 }

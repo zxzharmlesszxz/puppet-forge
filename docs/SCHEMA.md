@@ -628,17 +628,27 @@ erDiagram
 Schema bootstrap is serialized in PostgreSQL with a global advisory lock. A
 binary refuses to run against a schema version newer than it understands.
 
-Schema 10 adds upstream_catalogs and module_origins. Catalog completion commits atomically with version references. A fenced SQL lease coordinates fetches; HTTP runs outside transactions and lifecycle is rechecked under the module lock. Source provenance prevents upstream substitution of local modules. Failed imports and 404 responses do not mark completion.
+Schema 11 includes `upstream_catalogs`: a completion marker and indexed versions
+commit together. Delete explicitly clears completion, including when deleting
+the final release, so the next upstream request can reindex. Exact-filter reads
+use a fenced `upstream-catalog-<sha256>` SQL lease; HTTP runs outside SQL
+transactions, and commit under the module lock rechecks explicit blocks.
+Delete invalidates catalog completion and removes non-blocking lifecycle state.
+Schema 11 removes legacy deletion bans; `module_origins` preserves minimal source
+provenance without retaining release data or archives.
+Failed imports and 404 responses do not create a completion marker. SQL backups
+must include this table; a completion marker is not a replacement for lifecycle.
 
 ## State Ownership and Consistency
 
 | State                                        | Location                            | Scope                      | Consistency and expiry                                                                                                                                |
 | -------------------------------------------- | ----------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | modules, releases, latest version            | SQL                                 | shared                     | transactional and constraint-protected                                                                                                                |
+| upstream catalog completion                  | SQL (upstream_catalogs)             | shared                     | atomic with version inserts; cleared on Delete so upstream can reindex; explicit blocks remain authoritative                                          |
 | release bytes                                | object storage                      | shared                     | immutable create-only object, verified by SHA-256 and size                                                                                            |
 | release usage                                | SQL                                 | shared                     | active window uses `ACTIVE_RELEASE_TTL`; replicas coalesce writes through bounded throttles, while one lease-elected worker prunes expired rows daily |
 | named-token release consumers                | SQL                                 | shared                     | archive GET observations retained for `RELEASE_CONSUMER_TTL`; per-replica throttles bound writes and a lease-elected worker prunes expired rows       |
-| deleted upstream release tombstones          | SQL                                 | shared                     | background refresh is suppressed until TTL cleanup; an exact client request can deliberately restore a version on demand                              |
+| module source provenance                     | SQL (module_origins)                | shared                     | minimal source history survives Delete; protects deleted local modules from upstream substitution and preserves source-based administrative rights    |
 | teams, token metadata, OIDC mappings, spaces | SQL                                 | shared                     | serialized replacement; authorizer cache refresh up to about two seconds                                                                              |
 | token and OIDC browser sessions              | SQL plus opaque cookie              | shared                     | eight-hour TTL, explicit revocation, checked on each request                                                                                          |
 | OIDC login state                             | SQL plus transient encrypted cookie | shared                     | five-minute TTL, atomically single-use                                                                                                                |

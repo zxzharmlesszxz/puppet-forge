@@ -1150,7 +1150,7 @@ func TestDeleteModuleDeletesAllLocalArtifacts(t *testing.T) {
 	}
 }
 
-func TestDeleteUpstreamReleaseDoesNotDeleteSharedCacheArtifact(t *testing.T) {
+func TestDeleteUpstreamReleaseQueuesCacheAndPreservesReferences(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1176,12 +1176,32 @@ func TestDeleteUpstreamReleaseDoesNotDeleteSharedCacheArtifact(t *testing.T) {
 		t.Fatalf("Upload() error = %v", err)
 	}
 	moduleService := NewModuleService(st, artifacts, "modules", nil)
+	other, err := st.UpsertModule(ctx, "puppetlabs", "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := store.NewRelease(other.ID, other.Owner, other.Name, "1.0.0", "", "", "shared.tar.gz", "application/gzip", "md5", "upstream", "upstream-cache/v3/files/puppetlabs-stdlib-9.0.0.tar.gz", 6, nil)
+	shared.Source = "upstream"
+	if _, err := st.CreateRelease(ctx, shared); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := moduleService.DeleteRelease(ctx, "puppetlabs", "stdlib", "9.0.0"); err != nil {
 		t.Fatalf("DeleteRelease() error = %v", err)
 	}
 	if artifacts.objectCount() != 1 || artifacts.deletes != 0 {
 		t.Fatalf("upstream metadata delete changed shared cache: objects=%d deletes=%d", artifacts.objectCount(), artifacts.deletes)
+	}
+	result, err := moduleService.ProcessArtifactDeletions(ctx, 10)
+	if err != nil || result.Canceled != 1 || artifacts.objectCount() != 1 {
+		t.Fatalf("referenced cache was deleted: %#v %v", result, err)
+	}
+	if err := moduleService.DeleteRelease(ctx, other.Owner, other.Name, shared.Version); err != nil {
+		t.Fatal(err)
+	}
+	result, err = moduleService.ProcessArtifactDeletions(ctx, 10)
+	if err != nil || result.Deleted != 1 || artifacts.objectCount() != 0 {
+		t.Fatalf("unreferenced cache was not deleted: %#v %v", result, err)
 	}
 }
 
@@ -1384,7 +1404,7 @@ func TestRefreshCachedUpstreamModulesPersistsAttemptAfterRefreshCancellation(t *
 	}
 }
 
-func TestIndexUpstreamModuleSkipsDeletedRelease(t *testing.T) {
+func TestIndexUpstreamModuleRestoresDeletedRelease(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1414,7 +1434,60 @@ func TestIndexUpstreamModuleSkipsDeletedRelease(t *testing.T) {
 	}
 }
 
-func TestGetReleaseCannotRestoreDeletedUpstreamRelease(t *testing.T) {
+func TestBlockedUpstreamRemainsUnavailableAfterDeletion(t *testing.T) {
+	for _, wholeModule := range []bool{false, true} {
+		t.Run(fmt.Sprintf("module=%v", wholeModule), func(t *testing.T) {
+			svc, _ := newSQLiteModuleService(t)
+			st := svc.modules.(*store.SQLiteStore)
+			svc = newUpstreamModuleService(t, st, &testArtifactStorage{}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				t.Error("deleted resource reached upstream")
+				http.Error(w, "unexpected upstream request", http.StatusInternalServerError)
+			}))
+			upstream := proxy.UpstreamModule{Owner: "teamname", Name: "demo", Slug: "teamname-demo", Releases: []proxy.UpstreamReleaseRef{{Version: "1.0.0"}, {Version: "2.0.0"}}}
+			if err := svc.IndexUpstreamModule(t.Context(), upstream); err != nil {
+				t.Fatal(err)
+			}
+			blockedVersion := "1.0.0"
+			if wholeModule {
+				blockedVersion = ""
+			}
+			if err := st.SetResourceStatus(t.Context(), "teamname", "demo", blockedVersion, domain.ResourceStatus{State: domain.StateBlocked, Reason: "explicit ban", ChangedAt: time.Now().UTC()}); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			if wholeModule {
+				err = st.DeleteModule(t.Context(), "teamname", "demo")
+			} else {
+				err = st.DeleteRelease(t.Context(), "teamname", "demo", "1.0.0")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := st.PurgeDeletedReleases(t.Context(), time.Now().Add(time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.IndexUpstreamModule(t.Context(), upstream); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.GetRelease(t.Context(), "teamname", "demo", "1.0.0"); !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("exact lookup restored deleted resource: %v", err)
+			}
+			if _, err := svc.GetReleaseBySlug(t.Context(), "teamname-demo-1.0.0"); !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("slug lookup restored deleted resource: %v", err)
+			}
+			if _, err := st.GetRelease(t.Context(), "teamname", "demo", "1.0.0"); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("refresh recreated deleted release: %v", err)
+			}
+			if !wholeModule {
+				if _, err := st.GetRelease(t.Context(), "teamname", "demo", "2.0.0"); err != nil {
+					t.Fatalf("unrelated release changed: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestGetReleaseRestoresDeletedUpstreamRelease(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1433,6 +1506,7 @@ func TestGetReleaseCannotRestoreDeletedUpstreamRelease(t *testing.T) {
 		_, _ = w.Write([]byte(`{
 			"slug": "puppetlabs-stdlib-1.0.0",
 			"version": "1.0.0",
+			"metadata":{"name":"puppetlabs-stdlib","version":"1.0.0","dependencies":[],"requirements":[]},
 			"description": "stdlib 1.0.0",
 			"readme": "# stdlib",
 			"file_uri": "https://forge.example/v3/files/puppetlabs-stdlib-1.0.0.tar.gz",
@@ -1456,11 +1530,11 @@ func TestGetReleaseCannotRestoreDeletedUpstreamRelease(t *testing.T) {
 
 	indexDeleteAndReindexUpstreamRelease(t, ctx, st, service, upstreamModule, "puppetlabs", "stdlib", "1.0.0")
 
-	if _, err := service.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("deleted upstream release restored: %v", err)
+	if _, err := service.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); err != nil {
+		t.Fatalf("deleted upstream release did not return: %v", err)
 	}
-	if _, err := st.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("deleted release reappeared: %v", err)
+	if _, err := st.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); err != nil {
+		t.Fatalf("restored release was not persisted: %v", err)
 	}
 }
 
@@ -1897,7 +1971,7 @@ func TestIndexUpstreamModuleUsesModuleLock(t *testing.T) {
 	}
 }
 
-func TestIndexUpstreamModuleDoesNotRestoreDeletedModule(t *testing.T) {
+func TestIndexUpstreamModuleRestoresDeletedModule(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1929,7 +2003,7 @@ func TestIndexUpstreamModuleDoesNotRestoreDeletedModule(t *testing.T) {
 	if err := service.IndexUpstreamModule(ctx, upstreamModule); err != nil {
 		t.Fatalf("IndexUpstreamModule() after module delete error = %v", err)
 	}
-	if _, err := st.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := st.GetRelease(ctx, "puppetlabs", "stdlib", "1.0.0"); err != nil {
 		t.Fatalf("GetRelease(restored) error = %v", err)
 	}
 }
@@ -1955,8 +2029,8 @@ func indexDeleteAndReindexUpstreamRelease(
 	if err := service.IndexUpstreamModule(ctx, upstreamModule); err != nil {
 		t.Fatalf("IndexUpstreamModule() after delete error = %v", err)
 	}
-	if _, err := st.GetRelease(ctx, owner, name, version); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("GetRelease(deleted) error = %v, want ErrNotFound", err)
+	if _, err := st.GetRelease(ctx, owner, name, version); err != nil {
+		t.Fatalf("GetRelease(reindexed) error = %v", err)
 	}
 }
 
