@@ -568,6 +568,18 @@ The service then derives `https://<current-ingress-host>/auth/callback` from the
 
 Do not use `.*` or another unrestricted redirect expression. Authentik documents strict and regex redirect matching in its [OAuth2 provider configuration](https://docs.goauthentik.io/add-secure-apps/providers/oauth2/). `TRUSTED_PROXY_CIDRS="0.0.0.0/0,::/0"` can diagnose an unknown proxy network temporarily, but it lets every direct client supply forwarded identity and origin headers; replace it with the actual direct-proxy CIDRs and restrict direct pod access before production use.
 
+Token login (`POST /manage/login`) checks the request source before authenticating
+credentials or changing sessions. Cross-site requests and foreign origins are
+rejected with HTTP 403. The login form includes a random CSRF secret paired with
+an HttpOnly, SameSite=Strict cookie. When the browser omits origin information or
+sends `Origin: null` without `Sec-Fetch-Site: same-origin` (for example, Safari),
+the matching form secret and cookie are required. A matching `Origin` or
+`Referer`, or the browser's same-origin signal, remains supported for clients
+without a form secret. Non-browser clients can send a matching `Origin` or first
+fetch the login form and submit its secret with the returned cookie.
+Rejected login attempts do not replace an existing session or
+set authentication cookies; diagnostics never include the submitted token.
+
 Logout from `/manage` revokes the SQL-backed token/OIDC session and clears local cookies. If OIDC discovery exposes `end_session_endpoint`, or if `OIDC_LOGOUT_URL` is set, the service also redirects the browser to provider logout so the provider does not silently log the user back in with an old session.
 
 Login and publishing rate limits use SQL-backed counters shared by all replicas.

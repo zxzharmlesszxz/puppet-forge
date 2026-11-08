@@ -2805,7 +2805,14 @@ func TestManageActionsEnforceRoleBoundary(t *testing.T) {
 	readClient := &http.Client{Transport: transport}
 	readJar := newCookieJar(t)
 	readClient.Jar = readJar
-	resp, err = readClient.PostForm(server.URL+"/manage/login", url.Values{"token": {"read-token"}})
+	readLoginRequest, err := http.NewRequest(http.MethodPost, server.URL+"/manage/login", strings.NewReader(url.Values{"token": {"read-token"}}.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readLoginRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	readLoginRequest.Header.Set("Origin", server.URL)
+	readLoginRequest.Header.Set("Sec-Fetch-Site", "same-origin")
+	resp, err = readClient.Do(readLoginRequest)
 	if err != nil {
 		t.Fatalf("read token POST /manage/login error = %v", err)
 	}
@@ -5659,7 +5666,14 @@ func TestRewriteRelativeReadmeLinks(t *testing.T) {
 func postManageToken(t *testing.T, client *http.Client, baseURL string, token string) {
 	t.Helper()
 
-	resp, err := client.PostForm(baseURL+"/manage/login", url.Values{"token": {token}})
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/manage/login", strings.NewReader(url.Values{"token": {token}}.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", baseURL)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("POST /manage/login error = %v", err)
 	}

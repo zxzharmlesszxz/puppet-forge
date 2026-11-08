@@ -9,6 +9,25 @@ async function signIn(page, token = "admin-token") {
   ]);
 }
 
+test("token login supports opaque browser origins without Fetch Metadata", async ({ page }) => {
+  await page.route("**/manage/login", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    const headers = await route.request().allHeaders();
+    headers.origin = "null";
+    delete headers["sec-fetch-site"];
+    delete headers.referer;
+    await route.continue({ headers });
+  });
+  await signIn(page);
+  await expect(page).toHaveURL(/\/manage$/);
+  await page.locator(".administration-menu > summary").click();
+  const globalAccess = page.getByRole("link", { name: "Global access", exact: true });
+  await expect(globalAccess).toBeVisible();
+  await globalAccess.click();
+  await expect(page).toHaveURL(/\/manage\/admin\/access$/);
+  await expect(page.getByRole("heading", { name: "Global Access", exact: true }).first()).toBeVisible();
+});
+
 test("archive documents cannot run scripts with management cookies", async ({ page }) => {
   await signIn(page);
   const requests = [];

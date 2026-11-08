@@ -98,9 +98,10 @@ func (r *Router) publicNavigation(req *http.Request, authLink, authLabel string,
 }
 
 type manageLoginData struct {
-	CSPNonce string
-	Error    string
-	HasOIDC  bool
+	CSPNonce  string
+	CSRFToken string
+	Error     string
+	HasOIDC   bool
 }
 
 type managePageData struct {

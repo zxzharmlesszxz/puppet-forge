@@ -55,6 +55,17 @@ func (r *Router) manageLoginPage(w http.ResponseWriter, req *http.Request) {
 	case http.MethodGet:
 		r.renderManageLogin(w, req, req.URL.Query().Get("error"))
 	case http.MethodPost:
+		if allowed, reason := checkManageLoginRequestSource(req, r.publicBaseURL); !allowed {
+			slog.Warn("manage login source rejected",
+				"request_id", observability.RequestID(req.Context()),
+				"reason", reason,
+				"fetch_site", boundedCSRFLogValue(req.Header.Get("Sec-Fetch-Site")),
+				"origin", csrfLogOrigin(req.Header.Get("Origin")),
+				"referer_origin", csrfLogOrigin(req.Header.Get("Referer")),
+			)
+			writeError(w, http.StatusForbidden, errors.New("cross-origin login rejected"))
+			return
+		}
 		allowed, err := r.allowSharedRateLimit(req, "manage-login", 20, time.Minute)
 		if err != nil {
 			r.renderManageLoginStatus(w, req, "login rate limit service is unavailable", http.StatusServiceUnavailable)
@@ -116,11 +127,16 @@ func (r *Router) renderManageLogin(w http.ResponseWriter, req *http.Request, err
 }
 
 func (r *Router) renderManageLoginStatus(w http.ResponseWriter, req *http.Request, errorMessage string, status int) {
+	csrfToken, err := r.ensureManageCSRFToken(w, req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if status != http.StatusOK {
 		w.WriteHeader(status)
 	}
-	executeHTMLTemplate(w, manageLoginTemplate, manageLoginData{CSPNonce: cspNonce(req), Error: errorMessage, HasOIDC: r.webAuth != nil})
+	executeHTMLTemplate(w, manageLoginTemplate, manageLoginData{CSPNonce: cspNonce(req), CSRFToken: csrfToken, Error: errorMessage, HasOIDC: r.webAuth != nil})
 }
 
 func (r *Router) manageLogoutPage(w http.ResponseWriter, req *http.Request) {
@@ -372,6 +388,24 @@ func (r *Router) requireManageCSRF(w http.ResponseWriter, req *http.Request) boo
 	}
 	slog.Debug("manage csrf token accepted", "request_id", observability.RequestID(req.Context()), "auth_method", "csrf_cookie_only")
 	return true
+}
+
+func checkManageLoginRequestSource(req *http.Request, publicBaseURL string) (bool, string) {
+	fetchSite := strings.ToLower(strings.TrimSpace(req.Header.Get("Sec-Fetch-Site")))
+	source := strings.TrimSpace(req.Header.Get("Origin"))
+	if source == "" {
+		source = strings.TrimSpace(req.Header.Get("Referer"))
+	}
+	// Safari can submit Origin: null without Fetch Metadata. In that case,
+	// require the secret rendered by the login page and its same-site cookie.
+	if (source == "" || strings.EqualFold(source, "null")) && fetchSite != "same-origin" {
+		cookie, err := req.Cookie(manageCSRFCookie)
+		token := req.PostFormValue("csrf_token")
+		if err != nil || len(cookie.Value) < 32 || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(token)) != 1 {
+			return false, "login_csrf_token_required"
+		}
+	}
+	return checkManageRequestSourceForCSRF(req, publicBaseURL)
 }
 
 func manageRequestSourceCompatibleWithCSRF(req *http.Request, publicBaseURL string, allowedPublicHosts ...[]string) bool {

@@ -104,6 +104,7 @@ if [ -n "$admin_token" ]; then
 	login_status="$(
 		"$curl_bin" -sS -o "$body" -D "$headers" -c "$cookies" -w '%{http_code}' \
 			-X POST \
+			-H "Origin: ${base_url}" \
 			--data-urlencode "token=${admin_token}" \
 			"${base_url}/manage/login"
 	)"

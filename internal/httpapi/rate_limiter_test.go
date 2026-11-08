@@ -209,6 +209,7 @@ func TestManageLoginFailsClosedWhenRateLimitStoreIsUnavailable(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "/manage/login", strings.NewReader("token=private-token"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	response := httptest.NewRecorder()
 	router.manageLoginPage(response, req)
 	if response.Code != http.StatusServiceUnavailable {
@@ -221,7 +222,12 @@ func TestManageLoginFailsClosedWhenRateLimitStoreIsUnavailable(t *testing.T) {
 	if strings.Contains(body, "shared rate limit store is not available") || strings.Contains(body, "private-token") {
 		t.Fatal("login page exposes internal errors or submitted credentials")
 	}
-	if response.Header().Get("Location") != "" || len(response.Result().Cookies()) != 0 {
-		t.Fatal("failed login must not redirect or create session cookies")
+	if response.Header().Get("Location") != "" {
+		t.Fatal("failed login must not redirect")
+	}
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Name != manageCSRFCookie {
+			t.Fatal("failed login must not create authentication cookies")
+		}
 	}
 }
