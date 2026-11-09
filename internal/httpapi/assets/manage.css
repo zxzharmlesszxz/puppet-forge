@@ -403,6 +403,8 @@ main { max-width: 1440px; margin: 0 auto; padding: 32px 20px 56px; }
 .module-details a.module-action:not(.danger-button):not(.release-danger-button) { color: var(--accent); background: transparent; border-color: var(--line); }
 .module-details a.module-action:not(.danger-button):not(.release-danger-button):hover { background: #edf5f5; border-color: var(--accent); }
 .module-details .module-action:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.module-actions button.module-action:not(.danger-button) { background: transparent; color: var(--accent); border-color: var(--line); }
+.module-actions button.module-action:not(.danger-button):hover { background: #edf5f5; border-color: var(--accent); }
 
 header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; }
 h1 { margin: 0; font-size: 32px; line-height: 1.15; }

@@ -475,6 +475,7 @@ type manageModuleRow struct {
 	Versions              []manageVersionRow
 	ReleaseCount          int
 	CanDelete             bool
+	CanClearCache         bool
 	CanForceDeleteModule  bool
 	CanForceDeleteRelease bool
 	VersionsLoaded        bool

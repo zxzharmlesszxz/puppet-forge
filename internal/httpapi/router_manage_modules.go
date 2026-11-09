@@ -143,10 +143,15 @@ func (r *Router) loadManageModuleRows(ctx context.Context, principal auth.Princi
 		if err != nil {
 			return nil, 0, err
 		}
+		canClearCache, err := r.modules.CanClearUpstreamCache(ctx, principal, module.Owner, module.Name)
+		if err != nil {
+			return nil, 0, err
+		}
 		rows = append(rows, manageModuleRow{
 			Module:                module,
 			ReleaseCount:          releaseCounts[module.Owner+"\x00"+module.Name],
 			CanDelete:             canDelete,
+			CanClearCache:         canClearCache,
 			CanForceDeleteModule:  canDelete,
 			CanForceDeleteRelease: canDelete,
 			CardID:                manageModuleCardID(module.Owner, module.Name),
@@ -190,11 +195,16 @@ func (r *Router) loadManageModuleCard(ctx context.Context, principal auth.Princi
 	if err != nil {
 		return manageModuleRow{}, err
 	}
+	canClearCache, err := r.modules.CanClearUpstreamCache(ctx, principal, owner, name)
+	if err != nil {
+		return manageModuleRow{}, err
+	}
 	return manageModuleRow{
 		Module:                module,
 		Versions:              rows,
 		ReleaseCount:          len(rows),
 		CanDelete:             canDelete,
+		CanClearCache:         canClearCache,
 		CanForceDeleteModule:  canDelete,
 		CanForceDeleteRelease: canDelete,
 		VersionsLoaded:        true,
@@ -456,6 +466,19 @@ func (r *Router) manageModuleAction(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if !r.requireManageCSRF(w, req) {
+		return
+	}
+
+	if len(parts) == 3 && parts[2] == "clear-cache" {
+		owner, name := parts[0], parts[1]
+		r.prepareMutationAudit(req, principal, "clear_upstream_cache", "space", owner, "module", owner+"/"+name)
+		if err := r.modules.ClearUpstreamCache(req.Context(), principal, owner, name); err != nil {
+			r.audit(req, principal, "clear_upstream_cache", "failure", auditReason(err), "space", owner, "module", owner+"/"+name)
+			respondManageMutationServiceError(w, req, err)
+			return
+		}
+		r.audit(req, principal, "clear_upstream_cache", "success", "none", "space", owner, "module", owner+"/"+name)
+		respondManageMutationSuccess(w, req, "/manage/modules", "Cached archives queued for cleanup", manageModuleCardID(owner, name), "")
 		return
 	}
 

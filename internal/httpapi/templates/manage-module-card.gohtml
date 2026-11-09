@@ -7,8 +7,9 @@
     <span class="item-subtitle">{{if .Module.LatestVersion}}{{.Module.LatestVersion}}{{else}}none{{end}}</span>
     <span class="badge">{{$releaseCount}} version{{if ne $releaseCount 1}}s{{end}}</span>
     {{template "module-state" .Module.Status.State}}
-    {{if or .CanDelete .CanForceDeleteModule}}
+    {{if or .CanDelete .CanForceDeleteModule .CanClearCache}}
     <span class="module-actions">
+      {{if .CanClearCache}}<button class="module-action" type="submit" form="clear-cache-{{.Module.Owner}}-{{.Module.Name}}" title="Clear cached archives" aria-label="Clear cached archives">{{template "module-action-icon" "clear-cache"}}</button>{{end}}
       {{if .CanDelete}}
       <a class="module-action" href="/manage/modules/{{.Module.Owner}}/{{.Module.Name}}/moderate" title="Moderate module" aria-label="Moderate module">{{template "module-action-icon" "moderate"}}</a>
       <button class="danger-button module-action" type="submit" form="delete-module-{{.Module.Owner}}-{{.Module.Name}}" title="Delete module" aria-label="Delete module">{{template "module-action-icon" "delete"}}</button>
@@ -18,6 +19,12 @@
     {{end}}
   </summary>
   <div class="module-notice-slot" aria-live="polite"></div>
+  {{if .CanClearCache}}
+  <form id="clear-cache-{{.Module.Owner}}-{{.Module.Name}}" method="post" action="/manage/modules/{{.Module.Owner}}/{{.Module.Name}}/clear-cache" hidden data-async-mutation data-refresh-target="{{$cardID}}">
+    {{csrfInput .CSRFToken}}
+    {{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}
+  </form>
+  {{end}}
   {{if .CanDelete}}
   <form id="delete-module-{{.Module.Owner}}-{{.Module.Name}}" method="post" action="/manage/modules/{{.Module.Owner}}/{{.Module.Name}}/delete" hidden data-async-mutation data-remove-target="{{$cardID}}">
     {{csrfInput .CSRFToken}}
@@ -65,4 +72,4 @@
   <span><span class="usage-badge">in use</span>Recently downloaded</span>
 </div>
 {{end}}
-{{define "module-action-icon"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">{{if eq . "delete"}}<path d="M3 6h18M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M10 11v6M14 11v6"/>{{else if eq . "force-delete"}}<path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4M12 17h.01"/>{{else if eq . "moderate"}}<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11"/><path d="m9 12 2 2 4-4"/>{{else if eq . "compare"}}<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7zM14 2v6h6M8 13h2M9 12v2M14 13h2M8 18h8"/>{{else if eq . "download"}}<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>{{end}}</svg>{{end}}
+{{define "module-action-icon"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">{{if eq . "clear-cache"}}<path d="M3 3h18v4H3zM5 7v13a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7M10 12l4 4M14 12l-4 4"/>{{else if eq . "delete"}}<path d="M3 6h18M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M10 11v6M14 11v6"/>{{else if eq . "force-delete"}}<path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4M12 17h.01"/>{{else if eq . "moderate"}}<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11"/><path d="m9 12 2 2 4-4"/>{{else if eq . "compare"}}<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7zM14 2v6h6M8 13h2M9 12v2M14 13h2M8 18h8"/>{{else if eq . "download"}}<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>{{end}}</svg>{{end}}

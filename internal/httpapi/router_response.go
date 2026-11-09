@@ -51,7 +51,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 func serviceErrorStatus(err error) int {
 	status := http.StatusInternalServerError
 	switch {
-	case errors.Is(err, service.ErrReviewForbidden), errors.Is(err, service.ErrDeleteForbidden), errors.Is(err, service.ErrModerationForbidden):
+	case errors.Is(err, service.ErrReviewForbidden), errors.Is(err, service.ErrDeleteForbidden), errors.Is(err, service.ErrModerationForbidden), errors.Is(err, service.ErrCacheClearForbidden):
 		status = http.StatusForbidden
 	case errors.Is(err, service.ErrReviewLimit):
 		status = http.StatusRequestEntityTooLarge
