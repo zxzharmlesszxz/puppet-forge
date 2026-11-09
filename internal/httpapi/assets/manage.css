@@ -426,6 +426,16 @@ input:focus, select:focus, textarea:focus { border-color: #81aeb0; outline: 3px 
 button, .action-button { min-height: 42px; padding: 0 16px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
 button.primary { margin-top: 16px; padding: 0 18px; border: 0; }
 .field-hint { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
+.team-name-field { max-width: 28rem; margin-bottom: 24px; }
+.team-access-fields { display: grid; gap: 24px; }
+.team-access-role { min-width: 0; margin: 0; padding: 0; border: 0; }
+.team-access-role + .team-access-role { padding-top: 20px; border-top: 1px solid var(--line); }
+.team-access-role legend { padding: 0; margin-bottom: 12px; font-size: 16px; font-weight: 700; }
+.team-access-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.team-access-grid > div { min-width: 0; }
+.team-access-grid textarea { display: block; min-height: 100px; resize: vertical; }
+.team-access-grid .field-hint { overflow-wrap: anywhere; }
+@media (max-width: 760px) { .team-access-grid { grid-template-columns: 1fr; } }
 .replace-option { display: flex; grid-column: 1 / -1; align-items: flex-start; gap: 10px; margin: 0; padding: 12px; border: 1px solid #e1c27a; border-radius: 6px; background: #fff8e5; color: var(--ink); cursor: pointer; }
 .replace-option input { width: 18px; height: 18px; margin: 1px 0 0; padding: 0; flex: 0 0 auto; }
 .replace-option span { display: block; }

@@ -40,6 +40,44 @@ test("archive documents cannot run scripts with management cookies", async ({ pa
   expect(requests).not.toContain("/browser-fixture/executed");
 });
 
+test("team access forms align groups and emails across roles and screen sizes", async ({ page }) => {
+  await signIn(page);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const path of ["/manage/teams/teamname/access", "/manage/teams/new"]) {
+      await page.goto(path);
+      const roles = page.locator(".team-access-role");
+      await expect(roles.locator("legend")).toHaveText(["Readers", "Administrators"]);
+      const layout = await roles.evaluateAll((sections) => sections.map((section) =>
+        Array.from(section.querySelectorAll("textarea")).map((field) => {
+          const { x, y, width, height } = field.getBoundingClientRect();
+          return { name: field.name, x, y, width, height };
+        })
+      ));
+      expect(layout.map((row) => row.map((field) => field.name))).toEqual([
+        ["oidc_reader_groups", "oidc_emails"],
+        ["oidc_team_admin_groups", "oidc_team_admin_emails"],
+      ]);
+      for (const [groups, emails] of layout) {
+        expect(groups.width).toBeCloseTo(emails.width, 0);
+        expect(groups.height).toBeCloseTo(emails.height, 0);
+        if (width > 760) {
+          expect(groups.y).toBeCloseTo(emails.y, 0);
+          expect(emails.x).toBeGreaterThan(groups.x + groups.width);
+        } else {
+          expect(groups.x).toBeCloseTo(emails.x, 0);
+          expect(emails.y).toBeGreaterThanOrEqual(groups.y + groups.height);
+        }
+      }
+      expect(layout[0][0].x).toBeCloseTo(layout[1][0].x, 0);
+      expect(layout[0][1].x).toBeCloseTo(layout[1][1].x, 0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.locator('[name="oidc_reader_groups"]').fill("example-readers\nother-readers");
+      await expect(page.locator('[name="oidc_reader_groups"]')).toBeFocused();
+    }
+  }
+});
+
 test("layouts load embedded styles and deferred scripts", async ({ page }) => {
   const failedAssets = [];
   const errors = [];

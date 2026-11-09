@@ -101,6 +101,58 @@ func TestOIDCAccessFieldsDescribeInputAndPermissions(t *testing.T) {
 	}
 }
 
+func TestTeamAccessFormsKeepRoleAndColumnOrder(t *testing.T) {
+	t.Parallel()
+	team := accessTeamFormRow{
+		Team: "teamname", OIDCReaderGroups: "readers<&>", OIDCReaderEmails: "reader@example.com",
+		OIDCTeamAdminGroups: "admins<&>", OIDCTeamAdminEmails: "owner@example.com",
+	}
+	roles := regexp.MustCompile(`(?s)<fieldset class="team-access-role">(.*?)</fieldset>`)
+	fields := regexp.MustCompile(`(?s)<textarea[^>]*name="([^"]+)"[^>]*>(.*?)</textarea>`)
+	for _, tc := range []struct {
+		name   string
+		page   *template.Template
+		data   any
+		values [4]string
+	}{
+		{"edit", manageTeamTemplate, manageTeamData{Team: team, ShowAccess: true}, [4]string{team.OIDCReaderGroups, team.OIDCReaderEmails, team.OIDCTeamAdminGroups, team.OIDCTeamAdminEmails}},
+		{"create", manageAccessAddTeamTemplate, manageAccessAddTeamData{}, [4]string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			if err := tc.page.Execute(&output, tc.data); err != nil {
+				t.Fatal(err)
+			}
+			sections := roles.FindAllStringSubmatch(output.String(), -1)
+			if len(sections) != 2 {
+				t.Fatalf("role sections = %d, want 2", len(sections))
+			}
+			for index, role := range []struct {
+				legend string
+				names  [2]string
+			}{
+				{"Readers", [2]string{"oidc_reader_groups", "oidc_emails"}},
+				{"Administrators", [2]string{"oidc_team_admin_groups", "oidc_team_admin_emails"}},
+			} {
+				section := sections[index][1]
+				if !strings.Contains(section, "<legend>"+role.legend+"</legend>") {
+					t.Errorf("role %d must be %s", index, role.legend)
+				}
+				inputs := fields.FindAllStringSubmatch(section, -1)
+				if len(inputs) != 2 {
+					t.Fatalf("%s fields = %d, want 2", role.legend, len(inputs))
+				}
+				for column, name := range role.names {
+					want := template.HTMLEscapeString(tc.values[index*2+column])
+					if inputs[column][1] != name || inputs[column][2] != want {
+						t.Errorf("%s column %d: got %q=%q, want %q=%q", role.legend, column, inputs[column][1], inputs[column][2], name, want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func testAssetSource(t *testing.T, names ...string) string {
 	t.Helper()
 	var source strings.Builder

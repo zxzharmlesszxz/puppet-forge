@@ -27,28 +27,7 @@
     <input type="hidden" name="original_team" value="{{.Team.Team}}">
     <input type="hidden" name="team" value="{{.Team.Team}}">
     <input type="hidden" name="next" value="/manage/teams/{{.Team.Team}}/access">
-    <div class="grid">
-      <div>
-        <label for="team-publish-groups">OIDC team readers (groups)</label>
-        <textarea id="team-publish-groups" name="oidc_reader_groups" aria-describedby="team-readers-hint">{{.Team.OIDCReaderGroups}}</textarea>
-        <p id="team-readers-hint" class="field-hint">{{template "oidc-field-hint" "team-readers"}}</p>
-      </div>
-      <div>
-        <label for="team-reader-emails">OIDC team readers (emails)</label>
-        <textarea id="team-reader-emails" name="oidc_emails" placeholder="reader@example.com" aria-describedby="team-reader-emails-hint">{{.Team.OIDCReaderEmails}}</textarea>
-        <p id="team-reader-emails-hint" class="field-hint">{{template "oidc-field-hint" "team-reader-emails"}}</p>
-      </div>
-      <div>
-        <label for="team-admin-emails">OIDC team admins (emails)</label>
-        <textarea id="team-admin-emails" name="oidc_team_admin_emails" aria-describedby="team-admin-emails-hint">{{.Team.OIDCTeamAdminEmails}}</textarea>
-        <p id="team-admin-emails-hint" class="field-hint">{{template "oidc-field-hint" "team-admin-emails"}}</p>
-      </div>
-      <div>
-        <label for="team-admin-groups">OIDC team admins (groups)</label>
-        <textarea id="team-admin-groups" name="oidc_team_admin_groups" aria-describedby="team-admin-groups-hint">{{.Team.OIDCTeamAdminGroups}}</textarea>
-        <p id="team-admin-groups-hint" class="field-hint">{{template "oidc-field-hint" "team-admin-groups"}}</p>
-      </div>
-    </div>
+    {{template "team-access-fields" (teamAccessFields "team" .Team.OIDCReaderGroups .Team.OIDCReaderEmails .Team.OIDCTeamAdminGroups .Team.OIDCTeamAdminEmails)}}
     <button type="submit">Save Team</button>
   </form>
   {{if .Principal.CanAdmin}}

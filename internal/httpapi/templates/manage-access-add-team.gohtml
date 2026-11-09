@@ -14,32 +14,11 @@
   <form method="post" action="/manage/teams/new">
     {{csrfInput $.CSRFToken}}
     <input type="hidden" name="action" value="save_team">
-    <div class="grid">
-      <div>
-        <label for="new-team">Team</label>
-        <input id="new-team" name="team" placeholder="Platform" pattern="[A-Za-z0-9]+" required>
-      </div>
-      <div>
-        <label for="new-oidc-groups">OIDC team readers (groups)</label>
-        <textarea id="new-oidc-groups" name="oidc_reader_groups" placeholder="platform-readers" aria-describedby="new-readers-hint"></textarea>
-        <p id="new-readers-hint" class="field-hint">{{template "oidc-field-hint" "team-readers"}}</p>
-      </div>
-      <div>
-        <label for="new-reader-emails">OIDC team readers (emails)</label>
-        <textarea id="new-reader-emails" name="oidc_emails" placeholder="reader@example.com" aria-describedby="new-reader-emails-hint"></textarea>
-        <p id="new-reader-emails-hint" class="field-hint">{{template "oidc-field-hint" "team-reader-emails"}}</p>
-      </div>
-      <div>
-        <label for="new-team-admin-emails">OIDC team admins (emails)</label>
-        <textarea id="new-team-admin-emails" name="oidc_team_admin_emails" placeholder="team-owner@example.com" aria-describedby="new-admin-emails-hint"></textarea>
-        <p id="new-admin-emails-hint" class="field-hint">{{template "oidc-field-hint" "team-admin-emails"}}</p>
-      </div>
-      <div>
-        <label for="new-team-admin-groups">OIDC team admins (groups)</label>
-        <textarea id="new-team-admin-groups" name="oidc_team_admin_groups" placeholder="platform-admins" aria-describedby="new-admin-groups-hint"></textarea>
-        <p id="new-admin-groups-hint" class="field-hint">{{template "oidc-field-hint" "team-admin-groups"}}</p>
-      </div>
+    <div class="team-name-field">
+      <label for="new-team">Team</label>
+      <input id="new-team" name="team" placeholder="Platform" pattern="[A-Za-z0-9]+" required>
     </div>
+    {{template "team-access-fields" (teamAccessFields "new" "" "" "" "")}}
     <div class="button-row">
       <button type="submit">Add Team</button>
     </div>

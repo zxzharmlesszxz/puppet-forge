@@ -1,0 +1,34 @@
+{{define "team-access-fields"}}
+<div class="team-access-fields">
+  <fieldset class="team-access-role">
+    <legend>Readers</legend>
+    <div class="team-access-grid">
+      <div>
+        <label for="{{.Prefix}}-reader-groups">OIDC team readers (groups)</label>
+        <textarea id="{{.Prefix}}-reader-groups" name="oidc_reader_groups" rows="4" placeholder="platform-readers" aria-describedby="{{.Prefix}}-readers-hint">{{.ReaderGroups}}</textarea>
+        <p id="{{.Prefix}}-readers-hint" class="field-hint">{{template "oidc-field-hint" "team-readers"}}</p>
+      </div>
+      <div>
+        <label for="{{.Prefix}}-reader-emails">OIDC team readers (emails)</label>
+        <textarea id="{{.Prefix}}-reader-emails" name="oidc_emails" rows="4" placeholder="reader@example.com" aria-describedby="{{.Prefix}}-reader-emails-hint">{{.ReaderEmails}}</textarea>
+        <p id="{{.Prefix}}-reader-emails-hint" class="field-hint">{{template "oidc-field-hint" "team-reader-emails"}}</p>
+      </div>
+    </div>
+  </fieldset>
+  <fieldset class="team-access-role">
+    <legend>Administrators</legend>
+    <div class="team-access-grid">
+      <div>
+        <label for="{{.Prefix}}-admin-groups">OIDC team admins (groups)</label>
+        <textarea id="{{.Prefix}}-admin-groups" name="oidc_team_admin_groups" rows="4" placeholder="platform-admins" aria-describedby="{{.Prefix}}-admin-groups-hint">{{.AdminGroups}}</textarea>
+        <p id="{{.Prefix}}-admin-groups-hint" class="field-hint">{{template "oidc-field-hint" "team-admin-groups"}}</p>
+      </div>
+      <div>
+        <label for="{{.Prefix}}-admin-emails">OIDC team admins (emails)</label>
+        <textarea id="{{.Prefix}}-admin-emails" name="oidc_team_admin_emails" rows="4" placeholder="team-owner@example.com" aria-describedby="{{.Prefix}}-admin-emails-hint">{{.AdminEmails}}</textarea>
+        <p id="{{.Prefix}}-admin-emails-hint" class="field-hint">{{template "oidc-field-hint" "team-admin-emails"}}</p>
+      </div>
+    </div>
+  </fieldset>
+</div>
+{{end}}

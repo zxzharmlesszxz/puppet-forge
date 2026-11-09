@@ -542,7 +542,18 @@ type publishFormData struct {
 	CanReplace bool
 }
 
+type teamAccessFieldsData struct {
+	Prefix       string
+	ReaderGroups string
+	ReaderEmails string
+	AdminGroups  string
+	AdminEmails  string
+}
+
 var pageFuncs = template.FuncMap{
+	"teamAccessFields": func(prefix, readerGroups, readerEmails, adminGroups, adminEmails string) teamAccessFieldsData {
+		return teamAccessFieldsData{Prefix: prefix, ReaderGroups: readerGroups, ReaderEmails: readerEmails, AdminGroups: adminGroups, AdminEmails: adminEmails}
+	},
 	"notices": func(message, failure string) noticeData {
 		return noticeData{Message: message, Error: failure}
 	},
@@ -591,7 +602,7 @@ func mustParsePage(filename, layout string) *template.Template {
 	files := []string{
 		"templates/layout.gohtml", "templates/manage-navigation.gohtml", "templates/public-navigation.gohtml",
 		"templates/manage-module-card.gohtml", "templates/list-filter.gohtml", "templates/pagination.gohtml", "templates/publish-form.gohtml",
-		"templates/oidc-field-hints.gohtml",
+		"templates/oidc-field-hints.gohtml", "templates/team-access-fields.gohtml",
 	}
 	if layout != "" {
 		files = append(files, "templates/"+layout)
