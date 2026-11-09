@@ -268,7 +268,9 @@ helm search repo puppet-forge/puppet-forge --versions
 ## OpenVox 8 Installer Tests
 
 `make release-preflight` and `make push-release` include the standard OpenVox 8
-installer test. `OPENVOX_TEST_IMAGE` defaults to
+installer test. The reusable CI checks also run it in the required **OpenVox
+Installer** job, so pushing a tag directly cannot bypass this release gate.
+`OPENVOX_TEST_IMAGE` defaults to
 `ghcr.io/openvoxproject/openvoxagent:8.31.0`, pinned by digest in `Makefile.mk`; override it with an
 [official OpenVox agent image](https://github.com/OpenVoxProject/container-openvoxagent)
 of major version 8, preferably pinned by digest. An empty override fails the test

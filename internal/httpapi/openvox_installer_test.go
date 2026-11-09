@@ -96,6 +96,29 @@ func TestReleasePreflightIncludesOpenVox(t *testing.T) {
 	t.Fatal("release-preflight target is missing")
 }
 
+func TestCIIncludesOpenVox(t *testing.T) {
+	t.Parallel()
+	source, err := os.ReadFile("../../.github/workflows/checks.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, job, ok := strings.Cut(string(source), "\n  openvox:\n")
+	if !ok {
+		t.Fatal("reusable CI checks must include an OpenVox job")
+	}
+	var lines []string
+	for line := range strings.SplitSeq(job, "\n") {
+		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") && strings.HasSuffix(line, ":") {
+			break
+		}
+		lines = append(lines, line)
+	}
+	job = strings.Join(lines, "\n")
+	if !strings.Contains(job, "run: make test-openvox") || strings.Contains(job, "continue-on-error:") || strings.Contains(job, "    if:") {
+		t.Fatal("OpenVox CI job must unconditionally require the real installer test")
+	}
+}
+
 func TestOpenVox8Installer(t *testing.T) {
 	image := os.Getenv("PUPPET_FORGE_TEST_OPENVOX_IMAGE")
 	if image == "" {

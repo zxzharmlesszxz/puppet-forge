@@ -130,6 +130,24 @@ jobs:
       - name: Run Browser Tests
         run: make test-browser
 
+  openvox:
+    name: OpenVox Installer
+    runs-on: ubuntu-24.04
+    needs:
+      - go-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Run OpenVox Installer Test
+        run: make test-openvox
+
   build:
     name: Build Binary
     if: inputs.run-build

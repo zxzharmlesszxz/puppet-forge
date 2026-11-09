@@ -267,7 +267,9 @@ helm search repo puppet-forge/puppet-forge --versions
 ## Тести Installer OpenVox 8
 
 `make release-preflight` і `make push-release` включають тест стандартного installer
-OpenVox 8. `OPENVOX_TEST_IMAGE` типово містить образ
+OpenVox 8. Спільний CI також запускає його в обов'язковій job **OpenVox
+Installer**: прямий push тегу не обходить цей релізний gate.
+`OPENVOX_TEST_IMAGE` типово містить образ
 `ghcr.io/openvoxproject/openvoxagent:8.31.0`, зафіксований digest у `Makefile.mk`; можна вказати інший
 [офіційний образ агента OpenVox](https://github.com/OpenVoxProject/container-openvoxagent)
 версії 8, бажано з digest. Порожнє перевизначення завершується помилкою,
