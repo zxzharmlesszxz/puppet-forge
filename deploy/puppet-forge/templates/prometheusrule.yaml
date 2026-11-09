@@ -1,4 +1,5 @@
 {{- if .Values.prometheusRule.enabled }}
+{{- $targetJobRegex := default (printf "%s-metrics" (include "chart.fullname" .) | regexQuoteMeta) .Values.prometheusRule.targetJobRegex }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -47,6 +48,21 @@ spec:
                 rate(puppet_forge_http_request_duration_seconds_bucket{route!~"/metrics|/healthz|/readyz"}[5m])
               )
             )
+
+        - record: job_kind_source_state:puppet_forge_resources
+          expr: max by (job, kind, source, state) (puppet_forge_resources)
+
+        - record: job_operation_kind_result:puppet_forge_control_operations:rate5m
+          expr: sum by (job, operation, kind, result) (rate(puppet_forge_control_operations_total[5m]))
+
+        - record: job_scope_result:puppet_forge_authorization_checks:rate5m
+          expr: sum by (job, scope, result) (rate(puppet_forge_authorization_checks_total[5m]))
+
+        - record: job:puppet_forge_audit_write_errors:rate5m
+          expr: sum by (job) (rate(puppet_forge_audit_writes_total{result="error"}[5m]))
+
+        - record: job:puppet_forge_access_config_refresh_errors:rate5m
+          expr: sum by (job) (rate(puppet_forge_access_config_refresh_total{result="error"}[5m]))
 
         - record: job:puppet_forge_indexed_modules
           expr: sum by (job) (max by (job, owner) (puppet_forge_modules))
@@ -131,7 +147,7 @@ spec:
             description: "P95 latency has exceeded the configured threshold for at least 15 minutes on route {{ "{{ $labels.route }}" }}."
 
         - alert: PuppetForgeTargetDown
-          expr: up{job=~".*puppet-forge.*"} == 0
+          expr: up{job=~{{ $targetJobRegex | quote }}} == 0
           for: 5m
           labels:
             severity: critical
@@ -140,7 +156,7 @@ spec:
             description: "Prometheus has not been able to scrape {{ "{{ $labels.instance }}" }} for at least 5 minutes."
 
         - alert: PuppetForgeTargetsAbsent
-          expr: absent(up{job=~".*puppet-forge.*"})
+          expr: absent(up{job=~{{ $targetJobRegex | quote }}})
           for: 5m
           labels:
             severity: critical
@@ -187,6 +203,76 @@ spec:
             summary: "Puppet Forge inventory metrics are truncated on {{ "{{ $labels.instance }}" }}"
             description: "METRICS_MODULE_LIMIT is lower than the number of indexed module owners."
 
+        - alert: PuppetForgeApprovalQueueOld
+          expr: |
+            time() - min by (job, kind, source) (puppet_forge_resource_oldest_pending_timestamp_seconds > 0) > {{ .Values.prometheusRule.thresholds.pendingApprovalMaxAgeSeconds }}
+            and on (job, kind, source)
+            job_kind_source_state:puppet_forge_resources{state="pending"} > 0
+          for: 30m
+          labels:
+            severity: info
+          annotations:
+            summary: "Puppet Forge approval queue is old on {{ "{{ $labels.job }}" }}"
+            description: "At least one {{ "{{ $labels.source }}" }} {{ "{{ $labels.kind }}" }} has awaited approval longer than {{ .Values.prometheusRule.thresholds.pendingApprovalMaxAgeSeconds }} seconds. This is a workflow reminder, not a service outage."
+
+        - alert: PuppetForgeControlOperationErrors
+          expr: job_operation_kind_result:puppet_forge_control_operations:rate5m{result="error"} > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Puppet Forge administrative operation is failing on {{ "{{ $labels.job }}" }}"
+            description: "Operation {{ "{{ $labels.operation }}" }} for {{ "{{ $labels.kind }}" }} has internal failures. Expected permission, lifecycle, validation, and conflict rejections are excluded."
+
+        - alert: PuppetForgeAuthorizationErrors
+          expr: job_scope_result:puppet_forge_authorization_checks:rate5m{result="error"} > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Puppet Forge authorization backend is failing on {{ "{{ $labels.job }}" }}"
+            description: "Authorization gate {{ "{{ $labels.scope }}" }} cannot evaluate access reliably. Access remains fail-closed; ordinary denials are not included."
+
+        - alert: PuppetForgeAuthorizationRejections
+          expr: |
+            sum by (job) (job_scope_result:puppet_forge_authorization_checks:rate5m{result="rejected"}) > {{ .Values.prometheusRule.thresholds.authorizationRejectionMinimumRate }}
+            and
+            sum by (job) (job_scope_result:puppet_forge_authorization_checks:rate5m{result="rejected"})
+            / clamp_min(sum by (job) (job_scope_result:puppet_forge_authorization_checks:rate5m), 0.001) > {{ .Values.prometheusRule.thresholds.authorizationRejectionRatio }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Puppet Forge has sustained access rejections on {{ "{{ $labels.job }}" }}"
+            description: "Authorization rejections exceed the configured rate and ratio thresholds. Check credentials, permissions, and client configuration; this is not an internal-error counter."
+
+        - alert: PuppetForgeAuditWriteErrors
+          expr: sum by (job) (increase(puppet_forge_audit_writes_total{result="error"}[10m])) > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Puppet Forge audit persistence failed on {{ "{{ $labels.job }}" }}"
+            description: "An audit insert or its enclosing commit failed. Transactional mutations are rolled back; nontransactional login/security events may exist only in logs."
+
+        - alert: PuppetForgeAccessConfigRefreshErrors
+          expr: job:puppet_forge_access_config_refresh_errors:rate5m > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Puppet Forge access configuration refresh is failing on {{ "{{ $labels.job }}" }}"
+            description: "Actual SQL-backed access configuration refresh attempts are failing. Existing usable snapshots may temporarily hide the failure from HTTP clients."
+
+        - alert: PuppetForgeUnknownResourceState
+          expr: job_kind_source_state:puppet_forge_resources{state="unknown"} > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Puppet Forge has an unknown lifecycle state on {{ "{{ $labels.job }}" }}"
+            description: "Existing {{ "{{ $labels.kind }}" }} resources have unrecognized lifecycle states. Check schema and application version consistency."
+
         - alert: PuppetForgePublishErrors
           expr: job:puppet_forge_publish_errors:rate5m > 0
           for: 10m
@@ -212,7 +298,7 @@ spec:
             severity: warning
           annotations:
             summary: "Puppet Forge artifact cleanup is failing on {{ "{{ $labels.job }}" }}"
-            description: "Durable artifact deletion attempts have been failing for at least 10 minutes. SQL metadata is already deleted, but object-storage cleanup is pending."
+            description: "Durable artifact deletion attempts have been failing for at least 10 minutes. Deleted releases or cleared upstream archive copies still require object-storage cleanup."
 
         - alert: PuppetForgeArtifactDeletionsPending
           expr: job:puppet_forge_artifact_deletions_pending > 0
@@ -221,7 +307,7 @@ spec:
             severity: warning
           annotations:
             summary: "Puppet Forge has pending artifact deletions on {{ "{{ $labels.job }}" }}"
-            description: "One or more local artifacts have remained in the durable deletion outbox for at least 15 minutes."
+            description: "Artifact deletion tasks, including cleared upstream archive copies, have remained in the durable outbox for at least 15 minutes."
 
         - alert: PuppetForgeArtifactStreamErrors
           expr: job_source:puppet_forge_artifact_stream_errors:rate5m > 0
@@ -323,9 +409,11 @@ spec:
 
         - alert: PuppetForgeUpstreamRefreshWorkerStalled
           expr: |
-            max by (job) (puppet_forge_upstream_refresh_last_timestamp_seconds) == 0
-            or
-            time() - max by (job) (puppet_forge_upstream_refresh_last_timestamp_seconds) > {{ .Values.prometheusRule.thresholds.upstreamRefreshMaxAgeSeconds }}
+            (
+              max by (job) (puppet_forge_upstream_refresh_last_timestamp_seconds and on (job, instance) (puppet_forge_upstream_refresh_enabled == 1)) == 0
+              or
+              time() - max by (job) (puppet_forge_upstream_refresh_last_timestamp_seconds and on (job, instance) (puppet_forge_upstream_refresh_enabled == 1)) > {{ .Values.prometheusRule.thresholds.upstreamRefreshMaxAgeSeconds }}
+            )
           for: 30m
           labels:
             severity: warning
@@ -347,7 +435,7 @@ spec:
 
         - alert: PuppetForgeNoIndexedModules
           expr: |
-            max by (job) (up{job=~".*puppet-forge.*"}) == 1
+            max by (job) (up{job=~{{ $targetJobRegex | quote }}}) == 1
             unless on (job)
             job:puppet_forge_indexed_modules > 0
           for: 30m
@@ -367,7 +455,7 @@ spec:
             description: "The number of in-flight HTTP requests has exceeded the configured threshold for at least 15 minutes."
 
         - alert: PuppetForgeScrapeNearTimeout
-          expr: scrape_duration_seconds{job=~".*puppet-forge.*"} / scrape_timeout_seconds{job=~".*puppet-forge.*"} > {{ .Values.prometheusRule.thresholds.scrapeTimeoutRatio }}
+          expr: scrape_duration_seconds{job=~{{ $targetJobRegex | quote }}} / scrape_timeout_seconds{job=~{{ $targetJobRegex | quote }}} > {{ .Values.prometheusRule.thresholds.scrapeTimeoutRatio }}
           for: 10m
           labels:
             severity: warning
@@ -376,7 +464,7 @@ spec:
             description: "Prometheus scrape duration has exceeded the configured fraction of the scrape timeout for at least 10 minutes."
 
         - alert: PuppetForgeFileDescriptorsNearLimit
-          expr: process_open_fds{job=~".*puppet-forge.*"} / process_max_fds{job=~".*puppet-forge.*"} > {{ .Values.prometheusRule.thresholds.fileDescriptorRatio }}
+          expr: process_open_fds{job=~{{ $targetJobRegex | quote }}} / process_max_fds{job=~{{ $targetJobRegex | quote }}} > {{ .Values.prometheusRule.thresholds.fileDescriptorRatio }}
           for: 15m
           labels:
             severity: warning

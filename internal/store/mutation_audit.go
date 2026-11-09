@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 )
 
 type mutationAuditKey struct{}
@@ -93,8 +94,9 @@ func MarkMutationAuditRecorded(ctx context.Context) {
 	}
 }
 
-func commitPostgresMutation(ctx context.Context, tx pgx.Tx) error {
+func commitPostgresMutation(ctx context.Context, tx pgx.Tx) (err error) {
 	if event, pending := PendingMutationAudit(ctx); pending {
+		defer metrics.ObserveOutcome(&err, metrics.ObserveAuditWrite)
 		if err := recordPostgresAuditEvent(ctx, tx, event); err != nil {
 			return err
 		}
@@ -106,8 +108,9 @@ func commitPostgresMutation(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-func commitSQLiteMutation(ctx context.Context, tx *sql.Tx) error {
+func commitSQLiteMutation(ctx context.Context, tx *sql.Tx) (err error) {
 	if event, pending := PendingMutationAudit(ctx); pending {
+		defer metrics.ObserveOutcome(&err, metrics.ObserveAuditWrite)
 		if err := recordSQLiteAuditEvent(ctx, tx, event); err != nil {
 			return err
 		}

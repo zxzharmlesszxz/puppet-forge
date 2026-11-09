@@ -50,6 +50,11 @@ var (
 		Help: "Duration of the most recent upstream refresh cycle in seconds.",
 	}))
 
+	upstreamRefreshEnabled = RegisterGauge(prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "puppet_forge_upstream_refresh_enabled",
+		Help: "Whether the background upstream refresh worker is configured on this replica (1 enabled, 0 disabled).",
+	}))
+
 	upstreamRefreshLastTimestamp = RegisterGauge(prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "puppet_forge_upstream_refresh_last_timestamp_seconds",
 		Help: "Unix timestamp of the most recent upstream refresh cycle on this replica.",
@@ -82,7 +87,7 @@ var (
 
 	artifactDeletionsPending = RegisterGauge(prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "puppet_forge_artifact_deletions_pending",
-		Help: "Number of local artifact deletions waiting in the durable SQL outbox.",
+		Help: "Number of artifact deletions waiting in the durable SQL outbox, including cleared upstream archive copies.",
 	}))
 
 	artifactStreamTotal = RegisterCounterVec(prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -218,6 +223,14 @@ func ObserveUpstreamRefresh(start time.Time, attempted, succeeded, failed int) {
 	}
 	upstreamRefreshCyclesTotal.WithLabelValues("error").Inc()
 	upstreamRefreshLastErrorTimestamp.Set(now)
+}
+
+func SetUpstreamRefreshEnabled(enabled bool) {
+	value := 0.0
+	if enabled {
+		value = 1
+	}
+	upstreamRefreshEnabled.Set(value)
 }
 
 func ObserveUpstreamCache(kind, result string) {

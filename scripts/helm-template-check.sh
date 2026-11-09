@@ -41,6 +41,22 @@ expect_count() {
 render
 render --set autoscaling.enabled=true
 render --set serviceMonitor.enabled=true --set prometheusRule.enabled=true --set networkPolicy.enabled=true
+custom_telemetry_manifest="$(render_manifest --set fullnameOverride=forge --set serviceMonitor.enabled=true --set prometheusRule.enabled=true)"
+expect_count "$custom_telemetry_manifest" 'job=~"forge-metrics"' 5
+expect_count "$custom_telemetry_manifest" 'job=~".*puppet-forge.*"' 0
+external_telemetry_manifest="$(render_manifest --set prometheusRule.enabled=true --set-string prometheusRule.targetJobRegex=corporate-forge)"
+expect_count "$external_telemetry_manifest" 'job=~"corporate-forge"' 5
+telemetry_manifest="$(render_manifest --set prometheusRule.enabled=true \
+  --set prometheusRule.thresholds.pendingApprovalMaxAgeSeconds=7200 \
+  --set prometheusRule.thresholds.authorizationRejectionMinimumRate=3 \
+  --set prometheusRule.thresholds.authorizationRejectionRatio=0.4)"
+for alert in PuppetForgeApprovalQueueOld PuppetForgeControlOperationErrors PuppetForgeAuthorizationErrors PuppetForgeAuthorizationRejections PuppetForgeAuditWriteErrors PuppetForgeAccessConfigRefreshErrors PuppetForgeUnknownResourceState; do
+  expect_count "$telemetry_manifest" "alert: $alert$" 1
+done
+expect_count "$telemetry_manifest" ' > 7200$' 1
+expect_count "$telemetry_manifest" ' > 3$' 1
+expect_count "$telemetry_manifest" ' > 0.4$' 1
+expect_count "$telemetry_manifest" 'record: job_kind_source_state:puppet_forge_resources$' 1
 render --set secret.create=false --set secret.existingSecret=puppet-forge-runtime
 render --set database.backend=sqlite --set replicaCount=1 --set-string secret.stringData.DATABASE_DSN=sqlite:///data/forge.db
 render --set database.backend=postgres --set secret.create=false --set secret.existingSecret=puppet-forge-runtime

@@ -12,6 +12,7 @@ import (
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/httputil"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/observability"
 )
 
@@ -258,9 +259,17 @@ func (r *Router) managePrincipal(req *http.Request) (auth.Principal, bool, error
 	return auth.Principal{}, false, nil
 }
 
-func (r *Router) requireManage(w http.ResponseWriter, req *http.Request) (auth.Principal, bool) {
+func (r *Router) requireManage(w http.ResponseWriter, req *http.Request) (principal auth.Principal, allowed bool) {
+	result := "rejected"
+	defer func() {
+		if allowed {
+			result = "success"
+		}
+		metrics.ObserveAuthorization("manage", result)
+	}()
 	principal, ok, err := r.managePrincipal(req)
 	if err != nil {
+		result = "error"
 		writeError(w, http.StatusServiceUnavailable, errors.New("access configuration is temporarily unavailable"))
 		return auth.Principal{}, false
 	}

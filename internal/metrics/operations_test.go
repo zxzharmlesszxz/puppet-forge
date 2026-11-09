@@ -120,6 +120,20 @@ func TestBuildInfo(t *testing.T) {
 	}
 }
 
+func TestSetUpstreamRefreshEnabled(t *testing.T) {
+	t.Cleanup(func() { SetUpstreamRefreshEnabled(false) })
+	for _, enabled := range []bool{true, false} {
+		SetUpstreamRefreshEnabled(enabled)
+		want := 0.0
+		if enabled {
+			want = 1
+		}
+		if got := testutil.ToFloat64(upstreamRefreshEnabled); got != want {
+			t.Fatalf("refresh enabled = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestObserveUpstreamRefresh(t *testing.T) {
 	ObserveUpstreamRefresh(time.Now().Add(-time.Second), 3, 2, 1)
 

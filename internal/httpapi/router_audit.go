@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/observability"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/webauth"
@@ -52,6 +53,7 @@ func (r *Router) audit(req *http.Request, principal auth.Principal, action, resu
 }
 
 func (r *Router) auditWithOIDCSession(req *http.Request, principal auth.Principal, session *webauth.Session, action, result, reason string, attrs ...any) {
+	metrics.ObserveSecurityEvent(action, result)
 	recorded := result == "success" && store.MutationAuditRecorded(req.Context())
 	var event store.AuditEvent
 	if recorded {

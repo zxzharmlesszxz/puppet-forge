@@ -7,6 +7,7 @@ import (
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
@@ -40,7 +41,12 @@ func (s *ModuleService) CanDeleteModule(ctx context.Context, principal auth.Prin
 }
 
 // DeleteAuthorized rechecks origin under the publication lock before deleting a resource.
-func (s *ModuleService) DeleteAuthorized(ctx context.Context, principal auth.Principal, owner, name, version string, force bool, activeSince time.Time) error {
+func (s *ModuleService) DeleteAuthorized(ctx context.Context, principal auth.Principal, owner, name, version string, force bool, activeSince time.Time) (err error) {
+	operation := "delete"
+	if force {
+		operation = "force_delete"
+	}
+	defer metrics.ObserveOutcome(&err, controlOperationObserver(operation, version))
 	if !principal.CanDeleteOwner(owner) {
 		return ErrDeleteForbidden
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/storage"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
@@ -41,7 +42,13 @@ func (s *ModuleService) RequireAvailable(ctx context.Context, owner, name, versi
 }
 
 // Moderate serializes decisions with publication and binds approval to the reviewed bytes.
-func (s *ModuleService) Moderate(ctx context.Context, principal auth.Principal, owner, name, version, action, reason, replacement, expectedSHA string) error {
+func (s *ModuleService) Moderate(ctx context.Context, principal auth.Principal, owner, name, version, action, reason, replacement, expectedSHA string) (err error) {
+	operation := "other"
+	switch action {
+	case "approve", "deprecate", "restore", "block", "unblock":
+		operation = action
+	}
+	defer metrics.ObserveOutcome(&err, controlOperationObserver(operation, version))
 	if !principal.CanDeleteOwner(owner) {
 		return ErrModerationForbidden
 	}
@@ -128,7 +135,8 @@ func (s *ModuleService) Moderate(ctx context.Context, principal auth.Principal, 
 
 // ReviewArchive is deliberately separate from normal download paths. Its caller
 // must enforce team administration and must never expose a storage URL.
-func (s *ModuleService) ReviewArchive(ctx context.Context, owner, name, version string) (storage.ObjectReader, error) {
+func (s *ModuleService) ReviewArchive(ctx context.Context, owner, name, version string) (object storage.ObjectReader, err error) {
+	defer metrics.ObserveOutcome(&err, controlOperationObserver("review_download", version))
 	unlock, err := s.modules.LockModule(ctx, owner, name)
 	if err != nil {
 		return storage.ObjectReader{}, err

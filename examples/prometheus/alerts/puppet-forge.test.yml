@@ -4,6 +4,214 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  - name: disabled refresh worker is not stalled
+    interval: 1m
+    input_series:
+      - series: 'puppet_forge_upstream_refresh_enabled{job="puppet-forge",instance="a"}'
+        values: '0+0x1600'
+      - series: 'puppet_forge_upstream_refresh_last_timestamp_seconds{job="puppet-forge",instance="a"}'
+        values: '0+0x1600'
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: PuppetForgeUpstreamRefreshWorkerStalled
+        exp_alerts: []
+
+  - name: enabled worker that never ran is stalled
+    interval: 1m
+    input_series:
+      - series: 'puppet_forge_upstream_refresh_enabled{job="puppet-forge",instance="a"}'
+        values: '1+0x40'
+      - series: 'puppet_forge_upstream_refresh_last_timestamp_seconds{job="puppet-forge",instance="a"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 29m
+        alertname: PuppetForgeUpstreamRefreshWorkerStalled
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: PuppetForgeUpstreamRefreshWorkerStalled
+        exp_alerts:
+          - exp_labels:
+              job: puppet-forge
+              severity: warning
+            exp_annotations:
+              summary: Puppet Forge upstream refresh worker is stalled on puppet-forge
+              description: No upstream refresh cycle has completed for more than 24 hours, including the case where the worker never ran.
+
+  - name: disabled replica cannot hide a stalled enabled worker
+    interval: 1m
+    input_series:
+      - series: 'puppet_forge_upstream_refresh_enabled{job="puppet-forge",instance="a"}'
+        values: '1+0x1600'
+      - series: 'puppet_forge_upstream_refresh_last_timestamp_seconds{job="puppet-forge",instance="a"}'
+        values: '1+0x1600'
+      - series: 'puppet_forge_upstream_refresh_enabled{job="puppet-forge",instance="b"}'
+        values: '0+0x1600'
+      - series: 'puppet_forge_upstream_refresh_last_timestamp_seconds{job="puppet-forge",instance="b"}'
+        values: '1+60x1600'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: PuppetForgeUpstreamRefreshWorkerStalled
+        exp_alerts:
+          - exp_labels:
+              job: puppet-forge
+              severity: warning
+            exp_annotations:
+              summary: Puppet Forge upstream refresh worker is stalled on puppet-forge
+              description: No upstream refresh cycle has completed for more than 24 hours, including the case where the worker never ran.
+
+  - name: healthy elected replica prevents a stalled alert
+    interval: 1m
+    input_series:
+      - series: 'puppet_forge_upstream_refresh_enabled{job="puppet-forge",instance="a"}'
+        values: '1+0x1600'
+      - series: 'puppet_forge_upstream_refresh_last_timestamp_seconds{job="puppet-forge",instance="a"}'
+        values: '0+0x1600'
+      - series: 'puppet_forge_upstream_refresh_enabled{job="puppet-forge",instance="b"}'
+        values: '1+0x1600'
+      - series: 'puppet_forge_upstream_refresh_last_timestamp_seconds{job="puppet-forge",instance="b"}'
+        values: '1+60x1600'
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: PuppetForgeUpstreamRefreshWorkerStalled
+        exp_alerts: []
+
+  - name: resource inventory is deduplicated across replicas
+    interval: 1m
+    input_series:
+      - series: 'puppet_forge_resources{job="puppet-forge",instance="a",kind="release",source="local",state="pending"}'
+        values: '2+0x1500'
+      - series: 'puppet_forge_resources{job="puppet-forge",instance="b",kind="release",source="local",state="pending"}'
+        values: '2+0x1500'
+      - series: 'puppet_forge_resource_oldest_pending_timestamp_seconds{job="puppet-forge",kind="release",source="local"}'
+        values: '1+0x1500'
+    promql_expr_test:
+      - expr: job_kind_source_state:puppet_forge_resources
+        eval_time: 30m
+        exp_samples:
+          - labels: 'job_kind_source_state:puppet_forge_resources{job="puppet-forge",kind="release",source="local",state="pending"}'
+            value: 2
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: PuppetForgeApprovalQueueOld
+        exp_alerts: []
+      - eval_time: 25h
+        alertname: PuppetForgeApprovalQueueOld
+        exp_alerts:
+          - exp_labels:
+              job: puppet-forge
+              kind: release
+              source: local
+              severity: info
+            exp_annotations:
+              summary: Puppet Forge approval queue is old on puppet-forge
+              description: At least one local release has awaited approval for more than 24 hours. This is a workflow reminder, not a service outage.
+
+  - name: empty queue and expected denials are not internal failures
+    interval: 1m
+    input_series:
+      - series: 'puppet_forge_resources{job="puppet-forge",kind="release",source="local",state="pending"}'
+        values: '0+0x40'
+      - series: 'puppet_forge_resource_oldest_pending_timestamp_seconds{job="puppet-forge",kind="release",source="local"}'
+        values: '0+0x40'
+      - series: 'puppet_forge_control_operations_total{job="puppet-forge",operation="block",kind="module",result="rejected"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: PuppetForgeApprovalQueueOld
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: PuppetForgeControlOperationErrors
+        exp_alerts: []
+
+  - name: internal control and audit failures alert
+    interval: 1m
+    input_series:
+      - series: 'puppet_forge_control_operations_total{job="puppet-forge",operation="clear_cache",kind="module",result="error"}'
+        values: '0+1x25'
+      - series: 'puppet_forge_audit_writes_total{job="puppet-forge",result="error"}'
+        values: '0+1x25'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: PuppetForgeControlOperationErrors
+        exp_alerts:
+          - exp_labels:
+              job: puppet-forge
+              operation: clear_cache
+              kind: module
+              result: error
+              severity: warning
+            exp_annotations:
+              summary: Puppet Forge administrative operation is failing on puppet-forge
+              description: Operation clear_cache for module has internal failures. Expected permission, lifecycle, validation, and conflict rejections are excluded.
+      - eval_time: 20m
+        alertname: PuppetForgeAuditWriteErrors
+        exp_alerts:
+          - exp_labels:
+              job: puppet-forge
+              severity: critical
+            exp_annotations:
+              summary: Puppet Forge audit persistence failed on puppet-forge
+              description: An audit insert or its enclosing commit failed. Transactional mutations are rolled back; nontransactional login/security events may exist only in logs.
+
+  - name: authorization infrastructure errors and sustained denials are distinct
+    interval: 1m
+    input_series:
+      - series: 'puppet_forge_authorization_checks_total{job="puppet-forge",scope="read",result="rejected"}'
+        values: '0+120x25'
+      - series: 'puppet_forge_authorization_checks_total{job="puppet-forge",scope="token_active",result="error"}'
+        values: '0+1x25'
+      - series: 'puppet_forge_access_config_refresh_total{job="puppet-forge",result="error"}'
+        values: '0+1x25'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: PuppetForgeAuthorizationErrors
+        exp_alerts:
+          - exp_labels:
+              job: puppet-forge
+              scope: token_active
+              result: error
+              severity: warning
+            exp_annotations:
+              summary: Puppet Forge authorization backend is failing on puppet-forge
+              description: Authorization gate token_active cannot evaluate access reliably. Access remains fail-closed; ordinary denials are not included.
+      - eval_time: 20m
+        alertname: PuppetForgeAuthorizationRejections
+        exp_alerts:
+          - exp_labels:
+              job: puppet-forge
+              severity: warning
+            exp_annotations:
+              summary: Puppet Forge has sustained access rejections on puppet-forge
+              description: More than one authorization gate per second is rejected, exceeding 20% of checks. Check credentials, permissions, and client configuration; this is not an internal-error counter.
+      - eval_time: 20m
+        alertname: PuppetForgeAccessConfigRefreshErrors
+        exp_alerts:
+          - exp_labels:
+              job: puppet-forge
+              severity: warning
+            exp_annotations:
+              summary: Puppet Forge access configuration refresh is failing on puppet-forge
+              description: Actual SQL-backed access configuration refresh attempts are failing. Existing usable snapshots may temporarily hide the failure from HTTP clients.
+
+  - name: unexpected lifecycle states are visible
+    interval: 1m
+    input_series:
+      - series: 'puppet_forge_resources{job="puppet-forge",kind="module",source="local",state="unknown"}'
+        values: '1+0x25'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: PuppetForgeUnknownResourceState
+        exp_alerts:
+          - exp_labels:
+              job: puppet-forge
+              kind: module
+              source: local
+              state: unknown
+              severity: warning
+            exp_annotations:
+              summary: Puppet Forge has an unknown lifecycle state on puppet-forge
+              description: Existing module resources have unrecognized lifecycle states. Check schema and application version consistency.
+
   - name: isolated HTTP panic remains alertable
     interval: 1m
     input_series:

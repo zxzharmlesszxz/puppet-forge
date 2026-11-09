@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 )
 
-func (s *PostgresStore) RecordAuditEvent(ctx context.Context, event AuditEvent) error {
+func (s *PostgresStore) RecordAuditEvent(ctx context.Context, event AuditEvent) (err error) {
+	defer metrics.ObserveOutcome(&err, metrics.ObserveAuditWrite)
 	return recordPostgresAuditEvent(ctx, s.pool, event)
 }
 
@@ -78,7 +80,8 @@ func (s *PostgresStore) ListAuditEvents(ctx context.Context, scopes []string, qu
 	return events, total, rows.Err()
 }
 
-func (s *SQLiteStore) RecordAuditEvent(ctx context.Context, event AuditEvent) error {
+func (s *SQLiteStore) RecordAuditEvent(ctx context.Context, event AuditEvent) (err error) {
+	defer metrics.ObserveOutcome(&err, metrics.ObserveAuditWrite)
 	return recordSQLiteAuditEvent(ctx, s.db, event)
 }
 

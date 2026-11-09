@@ -18,6 +18,7 @@ import (
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
@@ -61,7 +62,12 @@ func validReviewPath(name string) bool {
 
 // ReviewReleases never records installation usage. The caller must retain this
 // lease through rendering so expensive highlighters share the same concurrency bound.
-func (s *ModuleService) ReviewReleases(ctx context.Context, principal auth.Principal, owner, name, version, base, selected, expectedSHA, baseSHA string) (ReleaseReview, func(), error) {
+func (s *ModuleService) ReviewReleases(ctx context.Context, principal auth.Principal, owner, name, version, base, selected, expectedSHA, baseSHA string) (review ReleaseReview, done func(), err error) {
+	operation := "review"
+	if base != "" {
+		operation = "compare"
+	}
+	defer metrics.ObserveOutcome(&err, controlOperationObserver(operation, version))
 	if !principal.CanDeleteOwner(owner) {
 		return ReleaseReview{}, nil, ErrReviewForbidden
 	}

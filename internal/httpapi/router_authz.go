@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/observability"
 )
 
@@ -23,6 +24,7 @@ func (r *Router) requireRead(next http.Handler) http.Handler {
 
 func (r *Router) requireReadAccess(w http.ResponseWriter, req *http.Request) bool {
 	if r.publicModuleAccess {
+		metrics.ObserveAuthorization("read", "success")
 		r.attachOptionalReadPrincipal(req)
 		slog.Debug("read access allowed", "request_id", observability.RequestID(req.Context()), "reason", "public_module_access")
 		return true
@@ -30,17 +32,20 @@ func (r *Router) requireReadAccess(w http.ResponseWriter, req *http.Request) boo
 	authorizer, err := r.currentAuthorizer(req.Context())
 	if err != nil {
 		logReadAuthorization(req, nil, "access_config_unavailable")
+		metrics.ObserveAuthorization("read", "error")
 		writeError(w, http.StatusServiceUnavailable, err)
 		return false
 	}
 	if authorizer == nil {
 		logReadAuthorization(req, nil, "authorizer_unconfigured")
+		metrics.ObserveAuthorization("read", "error")
 		writeError(w, http.StatusServiceUnavailable, errors.New("authorizer is not configured"))
 		return false
 	}
 	if req.Header.Get("Authorization") == "" && r.webAuth != nil {
 		if session, ok := r.webAuth.Session(req); ok {
 			if principal, ok := authorizer.AuthenticateOIDC(session.AuthorizationEmail(), session.Sub, session.Groups); ok && principal.CanRead {
+				metrics.ObserveAuthorization("read", "success")
 				*req = *req.WithContext(auth.ContextWithPrincipal(req.Context(), principal))
 				return true
 			}
@@ -87,11 +92,19 @@ func (r *Router) attachOptionalReadPrincipal(req *http.Request) {
 	r.recordAccessTokenUsed(req.Context(), principal)
 }
 
-func (r *Router) requireActiveAccessToken(w http.ResponseWriter, req *http.Request, principal auth.Principal) bool {
+func (r *Router) requireActiveAccessToken(w http.ResponseWriter, req *http.Request, principal auth.Principal) (allowed bool) {
 	if principal.TokenID == "" {
 		return true
 	}
+	result := "rejected"
+	defer func() {
+		if allowed {
+			result = "success"
+		}
+		metrics.ObserveAuthorization("token_active", result)
+	}()
 	if r.modules == nil {
+		result = "error"
 		logReadAuthorization(req, nil, "token_store_unavailable")
 		writeError(w, http.StatusServiceUnavailable, errors.New("access token store is not available"))
 		return false
@@ -99,6 +112,7 @@ func (r *Router) requireActiveAccessToken(w http.ResponseWriter, req *http.Reque
 	active, err := r.modules.IsAccessTokenActive(req.Context(), principal.TokenID, time.Now())
 	if err != nil {
 		slog.Default().Warn("validate access token failed", "err", err, "token_id", principal.TokenID)
+		result = "error"
 		logReadAuthorization(req, nil, "token_validation_failed")
 		writeError(w, http.StatusServiceUnavailable, errors.New("access token validation failed"))
 		return false
@@ -202,6 +216,7 @@ func (r *Router) refreshAuthorizer(ctx context.Context, force bool) error {
 	}
 
 	configs, err := r.modules.LoadTeamConfigs(ctx)
+	defer metrics.ObserveOutcome(&err, metrics.ObserveAccessConfigRefresh)
 	if err != nil {
 		return err
 	}

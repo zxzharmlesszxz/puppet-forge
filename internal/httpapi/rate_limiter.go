@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/observability"
 )
 
@@ -128,6 +129,13 @@ func (r *Router) allowSharedRateLimit(req *http.Request, scope string, limit int
 	keyDigest := sha256.Sum256([]byte(r.rateLimitKey(req, scope)))
 	key := scope + ":" + hex.EncodeToString(keyDigest[:])
 	allowed, err := r.modules.ConsumeRateLimit(req.Context(), key, limit, window, r.rateLimiter.now().UTC())
+	result := "rejected"
+	if err != nil {
+		result = "error"
+	} else if allowed {
+		result = "success"
+	}
+	metrics.ObserveAuthorization("rate_limit_"+scope, result)
 	if err != nil {
 		slog.Error("shared rate limit check failed", "request_id", observability.RequestID(req.Context()), "scope", scope, "err", err)
 	}

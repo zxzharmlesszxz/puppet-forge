@@ -49,6 +49,8 @@ type moduleMetricsCollector struct {
 	consumerObservationsDesc *prometheus.Desc
 	consumerSeriesTotalDesc  *prometheus.Desc
 	consumerTruncatedDesc    *prometheus.Desc
+	resourceStatesDesc       *prometheus.Desc
+	oldestPendingDesc        *prometheus.Desc
 
 	mu                  sync.RWMutex
 	cached              []prometheus.Metric
@@ -94,6 +96,14 @@ func newModuleMetricsCollector(modules moduleMetricsSource, moduleLimit, consume
 		moduleLimit:   moduleLimit,
 		consumerLimit: consumerLimit,
 		consumerTTL:   consumerTTL,
+		resourceStatesDesc: prometheus.NewDesc(
+			"puppet_forge_resources", "Existing catalog resources by source and effective lifecycle state; release states include parent restrictions.",
+			[]string{"kind", "source", "state"}, nil,
+		),
+		oldestPendingDesc: prometheus.NewDesc(
+			"puppet_forge_resource_oldest_pending_timestamp_seconds", "Oldest pending resource state timestamp, or zero when no resources await approval.",
+			[]string{"kind", "source"}, nil,
+		),
 		modulesByOwnerDesc: prometheus.NewDesc(
 			"puppet_forge_modules",
 			"Known Puppet modules indexed by the service, grouped by owner.",
@@ -257,6 +267,14 @@ func (c *moduleMetricsCollector) refresh(parent context.Context) {
 		)
 	}
 
+	resourceMetrics, err := c.collectResourceMetrics(ctx)
+	if err != nil {
+		c.recordRefreshError()
+		slog.Default().Error("collect resource state metrics failed", "err", err)
+		return
+	}
+	metrics = append(metrics, resourceMetrics...)
+
 	consumerSeriesTotal := 0
 	consumerTruncated := false
 	if source, ok := c.modules.(releaseConsumerMetricsSource); ok {
@@ -324,6 +342,8 @@ func (c *moduleMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.consumerObservationsDesc
 	ch <- c.consumerSeriesTotalDesc
 	ch <- c.consumerTruncatedDesc
+	ch <- c.resourceStatesDesc
+	ch <- c.oldestPendingDesc
 }
 
 func (c *moduleMetricsCollector) Collect(ch chan<- prometheus.Metric) {

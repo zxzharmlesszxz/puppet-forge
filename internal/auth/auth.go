@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 )
 
 type TeamConfig struct {
@@ -456,7 +457,8 @@ func mergeStringSets(left, right map[string]struct{}) map[string]struct{} {
 	return merged
 }
 
-func (a *Authorizer) RequireRead(w http.ResponseWriter, req *http.Request) (Principal, bool) {
+func (a *Authorizer) RequireRead(w http.ResponseWriter, req *http.Request) (principal Principal, allowed bool) {
+	defer func() { a.observeAuthorization("read", allowed) }()
 	if a == nil || !a.enabled {
 		writeAuthError(w, http.StatusServiceUnavailable, "access control is not configured")
 		return Principal{}, false
@@ -485,7 +487,8 @@ func (a *Authorizer) RequirePublish(w http.ResponseWriter, req *http.Request, ow
 	return principal, true
 }
 
-func (a *Authorizer) RequirePublishAny(w http.ResponseWriter, req *http.Request) (Principal, bool) {
+func (a *Authorizer) RequirePublishAny(w http.ResponseWriter, req *http.Request) (principal Principal, allowed bool) {
+	defer func() { a.observeAuthorization("publish", allowed) }()
 	if a == nil || !a.enabled {
 		writeAuthError(w, http.StatusServiceUnavailable, "access control is not configured")
 		return Principal{}, false
@@ -500,7 +503,8 @@ func (a *Authorizer) RequirePublishAny(w http.ResponseWriter, req *http.Request)
 	return principal, true
 }
 
-func (a *Authorizer) RequireDelete(w http.ResponseWriter, req *http.Request, owner string) (Principal, bool) {
+func (a *Authorizer) RequireDelete(w http.ResponseWriter, req *http.Request, owner string) (principal Principal, allowed bool) {
+	defer func() { a.observeAuthorization("delete", allowed) }()
 	if a == nil || !a.enabled {
 		writeAuthError(w, http.StatusServiceUnavailable, "access control is not configured")
 		return Principal{}, false
@@ -525,6 +529,16 @@ func (a *Authorizer) RequireDelete(w http.ResponseWriter, req *http.Request, own
 
 	writeAuthError(w, http.StatusForbidden, "admin or team admin access required")
 	return Principal{}, false
+}
+
+func (a *Authorizer) observeAuthorization(scope string, allowed bool) {
+	result := "rejected"
+	if a == nil || !a.enabled {
+		result = "error"
+	} else if allowed {
+		result = "success"
+	}
+	metrics.ObserveAuthorization(scope, result)
 }
 
 func (a *Authorizer) authenticate(req *http.Request) (Principal, bool) {

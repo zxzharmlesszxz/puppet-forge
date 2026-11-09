@@ -362,6 +362,7 @@ func closeGCSClient(client *storage.Client) {
 }
 
 func (a *App) startUpstreamRefresh(ctx context.Context, moduleSvc *service.ModuleService, interval time.Duration, limit, concurrency int) {
+	metrics.SetUpstreamRefreshEnabled(interval > 0 && moduleSvc != nil)
 	if interval <= 0 || moduleSvc == nil {
 		return
 	}

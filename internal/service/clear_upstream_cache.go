@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/store"
 )
 
@@ -31,7 +32,8 @@ func (s *ModuleService) CanClearUpstreamCache(ctx context.Context, principal aut
 }
 
 // ClearUpstreamCache queues registered archive copies without deleting releases or moderation state.
-func (s *ModuleService) ClearUpstreamCache(ctx context.Context, principal auth.Principal, owner, name string) error {
+func (s *ModuleService) ClearUpstreamCache(ctx context.Context, principal auth.Principal, owner, name string) (err error) {
+	defer metrics.ObserveOutcome(&err, controlOperationObserver("clear_cache", ""))
 	if !principal.CanAdmin {
 		return ErrCacheClearForbidden
 	}

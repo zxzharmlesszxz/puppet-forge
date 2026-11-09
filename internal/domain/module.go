@@ -27,6 +27,14 @@ type ReleaseMetricSummary struct {
 	LatestReleases int
 }
 
+type ResourceMetricSummary struct {
+	Kind            string
+	Source          string
+	State           ResourceState
+	Count           int
+	OldestPendingAt time.Time
+}
+
 type Release struct {
 	Status          ResourceStatus `json:"status"`
 	InitialState    ResourceState  `json:"-"`
