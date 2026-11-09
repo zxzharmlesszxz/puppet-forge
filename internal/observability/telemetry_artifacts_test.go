@@ -45,6 +45,16 @@ func TestTelemetryRuleNamesStayInSync(t *testing.T) {
 	}
 }
 
+func TestComposeForwardsPublishAllowlist(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "      PUBLISH_ALLOWED_CIDRS: ${PUBLISH_ALLOWED_CIDRS:-}") {
+		t.Fatal("Compose must forward the optional publish allowlist to the application")
+	}
+}
+
 func TestDashboardLifecycleQueriesAndReferences(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "examples", "grafana", "puppet-forge-dashboard.json"))
 	if err != nil {

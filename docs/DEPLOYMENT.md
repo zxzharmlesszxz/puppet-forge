@@ -351,6 +351,16 @@ whitespace-separated native IPv4/IPv6 CIDRs, with `/32` or `/128` for individual
 addresses. Invalid entries, bare IPs, wildcard aliases (`*`, `all`), and
 IPv4-mapped IPv6 CIDRs prevent startup. Use native IPv4 CIDRs for IPv4 clients.
 
+The repository's Docker Compose file forwards `PUBLISH_ALLOWED_CIDRS` from the
+host environment or `.env` into the application container. For example:
+
+```dotenv
+PUBLISH_ALLOWED_CIDRS=192.0.2.10/32,2001:db8:1234::/48
+```
+
+Recreate the application container after changing its environment. This setting
+does not configure an ingress allowlist; it is enforced by Forge itself.
+
 Helm values example (replace documentation addresses with actual CI/VPN egress
 networks and direct proxy networks):
 
