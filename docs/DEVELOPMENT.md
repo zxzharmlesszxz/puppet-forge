@@ -268,8 +268,8 @@ helm search repo puppet-forge/puppet-forge --versions
 ## OpenVox 8 Installer Tests
 
 `make release-preflight` and `make push-release` include the standard OpenVox 8
-installer test. `OPENVOX_TEST_IMAGE` defaults to the tested
-`ghcr.io/openvoxproject/openvoxagent:8.28.1`; override it with an
+installer test. `OPENVOX_TEST_IMAGE` defaults to
+`ghcr.io/openvoxproject/openvoxagent:8.31.0`, pinned by digest in `Makefile.mk`; override it with an
 [official OpenVox agent image](https://github.com/OpenVoxProject/container-openvoxagent)
 of major version 8, preferably pinned by digest. An empty override fails the test
 instead of silently skipping this release gate.
@@ -277,7 +277,7 @@ The test starts an ephemeral authenticated Forge and upstream JSON fixture,
 then runs the unmodified installer inside Docker:
 
 ```bash
-make test-openvox OPENVOX_TEST_IMAGE=ghcr.io/openvoxproject/openvoxagent:8.28.1
+make test-openvox OPENVOX_TEST_IMAGE=ghcr.io/openvoxproject/openvoxagent:8.31.0
 ```
 
 The fixture contains valid synthetic archives for Common 1.0.0, apt 11.4.0,
@@ -298,7 +298,7 @@ For actual modules through an already running local Forge with
 ```bash
 export OPENVOX_READ_TOKEN='<read-token>'
 export OPENVOX_COMMON_MODULE='<owner-common>'
-make openvox-smoke OPENVOX_TEST_IMAGE=ghcr.io/openvoxproject/openvoxagent:8.28.1
+make openvox-smoke OPENVOX_TEST_IMAGE=ghcr.io/openvoxproject/openvoxagent:8.31.0
 ```
 
 `OPENVOX_FORGE_URL` defaults to `http://host.docker.internal:8080` in the container.

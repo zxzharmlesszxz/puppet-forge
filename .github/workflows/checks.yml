@@ -231,7 +231,7 @@ jobs:
             --publish 127.0.0.1:8333:8333 \
             --env AWS_ACCESS_KEY_ID=forge-local \
             --env AWS_SECRET_ACCESS_KEY=forge-local-secret \
-            chrislusf/seaweedfs:4.52@sha256:57877e32bb90073b37dc109b438ba66e84fd5ed9ced5f5c04f56444ef243ce59 \
+            chrislusf/seaweedfs:4.53@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 \
             mini -dir=/data -ip.bind=0.0.0.0 \
             -master.volumeSizeLimitMB=128 -master.telemetry=false \
             -s3.autoCreateBucket=false -s3.allowDeleteBucketNotEmpty=false \

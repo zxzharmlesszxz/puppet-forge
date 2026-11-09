@@ -267,8 +267,8 @@ helm search repo puppet-forge/puppet-forge --versions
 ## Тести Installer OpenVox 8
 
 `make release-preflight` і `make push-release` включають тест стандартного installer
-OpenVox 8. `OPENVOX_TEST_IMAGE` типово містить перевірений образ
-`ghcr.io/openvoxproject/openvoxagent:8.28.1`; можна вказати інший
+OpenVox 8. `OPENVOX_TEST_IMAGE` типово містить образ
+`ghcr.io/openvoxproject/openvoxagent:8.31.0`, зафіксований digest у `Makefile.mk`; можна вказати інший
 [офіційний образ агента OpenVox](https://github.com/OpenVoxProject/container-openvoxagent)
 версії 8, бажано з digest. Порожнє перевизначення завершується помилкою,
 а не пропускає цей релізний gate.
@@ -276,7 +276,7 @@ OpenVox 8. `OPENVOX_TEST_IMAGE` типово містить перевірени
 незмінений installer у Docker:
 
 ```bash
-make test-openvox OPENVOX_TEST_IMAGE=ghcr.io/openvoxproject/openvoxagent:8.28.1
+make test-openvox OPENVOX_TEST_IMAGE=ghcr.io/openvoxproject/openvoxagent:8.31.0
 ```
 
 Fixture містить валідні синтетичні архіви Common 1.0.0, apt 11.4.0 та stdlib
@@ -296,7 +296,7 @@ Fixture містить валідні синтетичні архіви Common 1
 ```bash
 export OPENVOX_READ_TOKEN='<read-token>'
 export OPENVOX_COMMON_MODULE='<owner-common>'
-make openvox-smoke OPENVOX_TEST_IMAGE=ghcr.io/openvoxproject/openvoxagent:8.28.1
+make openvox-smoke OPENVOX_TEST_IMAGE=ghcr.io/openvoxproject/openvoxagent:8.31.0
 ```
 
 `OPENVOX_FORGE_URL` у контейнері типово дорівнює
