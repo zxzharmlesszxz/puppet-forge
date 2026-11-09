@@ -4,6 +4,42 @@
 
 ## Unreleased
 
+## v0.9.1
+
+### Fixed
+
+- Suppress stalled-refresh alerts for disabled workers, derive Helm target
+  selectors from the metrics Service name, and discover arbitrary Forge job
+  names in Grafana. Clarify legacy-version and refresh-age panel semantics.
+- Forward `PUBLISH_ALLOWED_CIDRS` through Compose, including its configuration
+  example and regression coverage.
+- Require the OpenVox installer gate in CI as well as local preflight.
+- Synchronize deployment, architecture, and runtime diagrams with the current
+  access and deletion model.
+- Expose bounded lifecycle inventory, approval age, administrative outcomes,
+  authorization/rate-limit gates, audit persistence, and access-config refresh.
+  Update standalone/Helm alerts and Grafana; use current inventory gauges rather
+  than historical samples that could retain removed resources or consumer labels.
+- Update SeaweedFS to 4.53 in Compose and S3 integration jobs; refresh the
+  Alpine 3.24.4 runtime image digest.
+- Require a non-blank root README for new local publications and replacements
+  through both APIs and Manage, before storage or catalog writes. Preserve
+  existing releases and upstream behavior; cover validation and all upload paths.
+- Add a global-admin-only upstream archive cache cleanup action with CSRF,
+  transactional audit, durable retry, and shared-object reference protection.
+  Keep release/catalog/moderation data and all local archives intact.
+- Include the standard OpenVox 8 installer test in release preflight and release
+  push; use the digest-pinned 8.31.0 agent image by default, with an explicit override.
+- Use one team access form for creation and editing, with groups on the left,
+  email addresses on the right, and separate reader/administrator sections.
+  Mobile layouts retain the same field order in one column; access rules and
+  verified-email requirements are unchanged.
+- Show the executable version and project authorship in the shared public and
+  management footer. Release builds use the same version as the CLI and metrics;
+  unversioned development processes display `dev`.
+
+## v0.9.0
+
 ### Fixed
 
 - Delete now removes data without a permanent ban for both sources: upstream
