@@ -54,18 +54,9 @@ func initialResourceStatus(release domain.Release) domain.ResourceStatus {
 }
 
 func initializeSQLiteStatus(ctx context.Context, tx *sql.Tx, release domain.Release) error {
-	current, err := scanResourceStatus(tx.QueryRowContext(ctx, `select state,previous_state,reason,replacement,sha256,changed_at from resource_states where owner=? and name=? and version=?`, release.Owner, release.Name, release.Version))
-	if err != nil {
-		return err
-	}
-	if current.State == domain.StateBlocked {
-		return fmt.Errorf("%w: blocked release must be unblocked before publication", ErrConflict)
-	}
-	if release.InitialState == "" {
-		return nil
-	}
-	status := initialResourceStatus(release)
-	if err := writeSQLiteStatus(ctx, tx, release.Owner, release.Name, release.Version, status); err != nil {
+	row := tx.QueryRowContext(ctx, `select state,previous_state,reason,replacement,sha256,changed_at from resource_states where owner=? and name=? and version=?`, release.Owner, release.Name, release.Version)
+	status, err := initializeReleaseStatus(release, row, sqliteMutationWriter{ctx: ctx, tx: tx})
+	if err != nil || release.InitialState == "" {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `insert into resource_states(owner,name,version,state,changed_at)
@@ -75,24 +66,30 @@ func initializeSQLiteStatus(ctx context.Context, tx *sql.Tx, release domain.Rele
 }
 
 func initializePostgresStatus(ctx context.Context, tx pgx.Tx, release domain.Release) error {
-	current, err := scanResourceStatus(tx.QueryRow(ctx, `select state,previous_state,reason,replacement,sha256,changed_at from resource_states where owner=$1 and name=$2 and version=$3`, release.Owner, release.Name, release.Version))
-	if err != nil {
-		return err
-	}
-	if current.State == domain.StateBlocked {
-		return fmt.Errorf("%w: blocked release must be unblocked before publication", ErrConflict)
-	}
-	if release.InitialState == "" {
-		return nil
-	}
-	status := initialResourceStatus(release)
-	if err := writePostgresStatus(ctx, tx, release.Owner, release.Name, release.Version, status); err != nil {
+	row := tx.QueryRow(ctx, `select state,previous_state,reason,replacement,sha256,changed_at from resource_states where owner=$1 and name=$2 and version=$3`, release.Owner, release.Name, release.Version)
+	status, err := initializeReleaseStatus(release, row, postgresMutationWriter{ctx: ctx, tx: tx})
+	if err != nil || release.InitialState == "" {
 		return err
 	}
 	_, err = tx.Exec(ctx, `insert into resource_states(owner,name,version,state,changed_at)
 	select $1,$2,'',$3,$4 where (select count(*) from releases where module_id=$5)=1
 	on conflict(owner,name,version) do update set state=excluded.state,changed_at=excluded.changed_at where resource_states.state='deleted'`, release.Owner, release.Name, release.InitialState, status.ChangedAt.Format(time.RFC3339Nano), release.ModuleID)
 	return err
+}
+
+func initializeReleaseStatus(release domain.Release, row statusScanner, writer resourceStatusMutationWriter) (domain.ResourceStatus, error) {
+	current, err := scanResourceStatus(row)
+	if err != nil {
+		return domain.ResourceStatus{}, err
+	}
+	if current.State == domain.StateBlocked {
+		return domain.ResourceStatus{}, fmt.Errorf("%w: blocked release must be unblocked before publication", ErrConflict)
+	}
+	if release.InitialState == "" {
+		return domain.ResourceStatus{}, nil
+	}
+	status := initialResourceStatus(release)
+	return status, writer.writeResourceStatus(release.Owner, release.Name, release.Version, status)
 }
 
 type statusScanner interface{ Scan(...any) error }

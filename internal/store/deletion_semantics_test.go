@@ -137,18 +137,7 @@ func TestStoreParityDeletionMigrationPreservesBlocks(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			var execute func(string) error
-			var migrate func() error
-			switch backend := st.(type) {
-			case *SQLiteStore:
-				execute = func(q string) error { _, err := backend.db.ExecContext(t.Context(), q); return err }
-				migrate = func() error { return migrateSQLiteSchema(backend.db, backend.tokenHasher) }
-			case *PostgresStore:
-				execute = func(q string) error { _, err := backend.pool.Exec(t.Context(), q); return err }
-				migrate = func() error { return backend.ensureOperationalTables(t.Context()) }
-			default:
-				t.Fatal("unsupported migration backend")
-			}
+			execute, migrate := migrationTestOperations(t, st)
 			for _, q := range []string{
 				`delete from modules where owner='migrationteam' and name='demo'`,
 				`insert into deleted_releases(owner,name,version,source) values('migrationteam','demo','1.0.0','upstream')`,

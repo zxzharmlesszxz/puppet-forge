@@ -18,18 +18,7 @@ func TestStoreParityNamespaceMigrationRejectsCaseCollisions(t *testing.T) {
 			t.Run(backendCase.name+"/"+collision.name, func(t *testing.T) {
 				st := backendCase.open(t)
 				t.Cleanup(st.Close)
-				var execute func(string) error
-				var migrate func() error
-				switch backend := st.(type) {
-				case *SQLiteStore:
-					execute = func(query string) error { _, err := backend.db.ExecContext(t.Context(), query); return err }
-					migrate = func() error { return migrateSQLiteSchema(backend.db, backend.tokenHasher) }
-				case *PostgresStore:
-					execute = func(query string) error { _, err := backend.pool.Exec(t.Context(), query); return err }
-					migrate = func() error { return backend.ensureOperationalTables(t.Context()) }
-				default:
-					t.Fatal("unsupported migration backend")
-				}
+				execute, migrate := migrationTestOperations(t, st)
 				if err := st.ReplaceTeamConfigs(t.Context(), []auth.TeamConfig{{Team: collision.team, PublishTokens: []string{"migration-token"}, OIDCTeamAdminGroups: []string{"migration-admins"}}}); err != nil {
 					t.Fatal(err)
 				}
@@ -74,21 +63,16 @@ func TestStoreParityMigratesAndRemovesExtraNamespaceTable(t *testing.T) {
 			ctx := t.Context()
 			st := tc.open(t)
 			t.Cleanup(st.Close)
-			var execute func(string) error
-			var migrate func() error
+			execute, migrate := migrationTestOperations(t, st)
 			var legacyTableExists func() (bool, error)
 			switch backend := st.(type) {
 			case *SQLiteStore:
-				execute = func(query string) error { _, err := backend.db.ExecContext(ctx, query); return err }
-				migrate = func() error { return migrateSQLiteSchema(backend.db, backend.tokenHasher) }
 				legacyTableExists = func() (bool, error) {
 					var exists bool
 					err := backend.db.QueryRowContext(ctx, `select exists(select 1 from sqlite_master where type='table' and name='access_publish_owners')`).Scan(&exists)
 					return exists, err
 				}
 			case *PostgresStore:
-				execute = func(query string) error { _, err := backend.pool.Exec(ctx, query); return err }
-				migrate = func() error { return backend.ensureOperationalTables(ctx) }
 				legacyTableExists = func() (bool, error) {
 					var exists bool
 					err := backend.pool.QueryRow(ctx, `select to_regclass('access_publish_owners') is not null`).Scan(&exists)
