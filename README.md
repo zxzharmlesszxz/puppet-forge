@@ -33,9 +33,9 @@ Implemented:
 - `GET /api/v1/modules/{owner}/{name}/versions/{version}` returns a specific release;
 - `DELETE /api/v1/modules/{owner}/{name}/versions/{version}` deletes a specific release through global-admin or team-admin access;
 - `GET /api/v1/modules/{owner}/{name}/versions/{version}/download` serves the stored artifact;
-- `GET /` renders the public HTML module index;
+- `GET /` renders the public HTML catalog of readable local and indexed-upstream modules;
 - `GET /modules/{owner}/{name}` renders a module page with README Markdown, version selector, and install snippets;
-- `GET /v3/*` and `HEAD /v3/*` reverse-proxy the official Puppet Forge API;
+- V3 reads use the local catalog and archive cache where supported; remaining `GET /v3/*` and `HEAD /v3/*` routes proxy the official Puppet Forge API;
 - `/manage` provides a read-only overview of modules and manageable teams;
 - `/manage/modules` provides cross-team module publishing, deletion, search, pagination, and upstream imports;
 - administrative release review provides archive browsing, syntax highlighting, and server-side comparison with SHA256-bound approval; see [Release Review](docs/RELEASE_REVIEW.md);
@@ -64,18 +64,18 @@ Not implemented:
 
 Publishing flow:
 
-1. A client sends a multipart request containing a `.tar.gz` module artifact and, optionally, an explicit `space`.
+1. CI uploads a `.tar.gz` module artifact through multipart `POST /api/v1/modules` with an optional `space`, or through PDK's JSON/base64 `POST /v3/releases`.
 2. The service authenticates the principal and reads identity and metadata from the archive.
 3. The service verifies that the principal may publish to the metadata owner. An explicit `space` must match that owner.
 4. MD5, SHA-256, and size are calculated once. The archive is created without overwrite at `modules/<owner>/<name>/<version>/<sha256>.tar.gz`.
 5. Bearer-token publishing keeps local release identity immutable: retrying identical bytes is idempotent, while different bytes for an existing module/version return `409 Conflict`. A global or owning team administrator may explicitly select **Replace existing release** in the management UI to correct a bad archive without disabling active-release protection.
-6. Release metadata is created in the selected SQL backend and returned to the client. Definite persistence failures compensate the uncommitted object.
+6. A new API upload creates a Pending release in SQL, excluded from ordinary catalogs and downloads until a team or global administrator approves it. The first release's approval also makes its Pending module Available. Administrators retain an emergency web upload with an explicit allow decision and mandatory reason. Definite persistence failures compensate the uncommitted object.
 
 Proxy flow:
 
 1. A client calls `/v3/...` on this service.
-2. The service proxies the request to the official Forge API.
-3. JSON responses are cached in memory for `UPSTREAM_PROXY_JSON_CACHE_TTL`.
+2. Supported catalog and release routes read local SQL first. A concrete unknown upstream module is indexed on demand; the original filters and pagination are applied locally. Required metadata is repaired only for releases on the returned page, without downloading every archive. Pending and Blocked restrictions still apply.
+3. Routes requiring the official Forge API use the upstream proxy and its in-memory JSON cache for `UPSTREAM_PROXY_JSON_CACHE_TTL`. Known local catalog reads do not unconditionally contact upstream. V3 artifact and pagination links use relative paths.
 4. File downloads through `/v3/files/...` stream into a create-only object under `upstream-cache/` on first use, then stream back through this service only after the shared object is complete. The proxy does not retain the full tarball in memory.
 5. If Forge advertises a release before its `/v3/releases/...` metadata becomes available, the service verifies `/v3/files/...tar.gz`, derives both checksums from that artifact, and serves a complete local release response instead of exposing the transient metadata 404 to r10k.
 

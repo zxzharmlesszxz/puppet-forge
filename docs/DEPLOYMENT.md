@@ -761,7 +761,7 @@ Important details:
 - owner, module name, version, summary, description, and stored metadata are read exclusively from `metadata.json`;
 - manual identity or metadata override fields are rejected;
 - when `space` is supplied, the archive namespace must equal it;
-- authorization always checks the archive namespace from `metadata.json`; the token must have the `publish` role and access to that publishing space. In the structured UI, the space named after `Team` is added automatically, and global administrators assign additional spaces under `/manage/admin/spaces`.
+- authorization checks the archive namespace from `metadata.json`; a publish token can upload only to its own team's namespace. One team owns one namespace. `/manage/admin/spaces` is a read-only overview of team and upstream namespaces, not an assignment interface. Administrators can use the emergency web upload under their existing scope.
 - multipart uploads, checksum calculation, object-storage writes, and release downloads are streamed; large archives are not copied into a single in-memory buffer.
 
 PDK 3.4 and later always publish to `/v3/releases`. Pass the Forge base URL; the service decodes the official JSON/base64 payload, derives the space from `metadata.json`, and applies the same authorization rules as the multipart endpoint:

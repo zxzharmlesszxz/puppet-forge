@@ -185,57 +185,62 @@ explicit method dispatch return `405 Method Not Allowed` for unsupported
 methods; unknown resources return `404 Not Found`. Probe and OIDC endpoints are
 listed with the methods used by their normal clients.
 
-| Method        | Path                                                         | Action                                                            | Required capability or guard                                                                                                         |
-|---------------|--------------------------------------------------------------|-------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
-| `GET`         | `/healthz`                                                   | process liveness                                                  | none; does not check dependencies                                                                                                    |
-| `GET`         | `/readyz`                                                    | SQL and artifact-storage readiness                                | two-second dependency deadline                                                                                                       |
-| `GET`         | `/`                                                          | public module catalog and filtering                               | always informationally public                                                                                                        |
-| `GET`         | `/modules/{owner}/{name}`                                    | public module details                                             | always informationally public                                                                                                        |
-| `GET`         | `/modules/{owner}/{name}/versions/{version}/files/{path}`    | extracted archive file                                            | read authorization unless public module access is enabled                                                                            |
-| `GET`         | `/auth/login`                                                | start OIDC login                                                  | OIDC enabled; shared SQL rate limit                                                                                                  |
-| `GET`         | `/auth/callback`                                             | validate OIDC response and create shared session                  | state cookie, SQL state, nonce, PKCE, shared SQL rate limit                                                                          |
-| `GET`         | `/auth/logout`                                               | revoke OIDC session and optionally end provider session           | valid or stale session accepted for cleanup                                                                                          |
-| `GET`         | `/manage/login`                                              | render token/OIDC login                                           | no-store response                                                                                                                    |
-| `POST`        | `/manage/login`                                              | create token-backed browser session                               | valid admin/team credential, shared SQL rate limit                                                                                   |
-| `POST`        | `/manage/logout`                                             | revoke browser session                                            | session-bound CSRF                                                                                                                   |
-| `GET`         | `/manage`                                                    | overview                                                          | global admin or team management capability                                                                                           |
-| `GET`         | `/manage/modules`                                            | manageable module catalog                                         | global admin or team management capability                                                                                           |
-| `POST`        | `/manage/modules`                                            | publish module archive                                            | selected-space publish capability, CSRF, upload limit                                                                                |
-| `POST`        | `/manage/modules/{owner}/{name}/delete`                      | delete module                                                     | normal protection; global force requires reason and exact confirmation                                                               |
-| `POST`        | `/manage/modules/{owner}/{name}/versions/{version}/delete`   | delete release                                                    | normal protection; owning-team/global force requires reason and confirmation                                                         |
-| `POST`        | `/manage/upstream`                                           | explicitly index an upstream module                               | global administrator, CSRF                                                                                                           |
-| `GET`         | `/manage/teams`                                              | list manageable teams                                             | global admin sees all; team admin sees assigned teams                                                                                |
-| `GET`         | `/manage/teams/new`                                          | render team creation                                              | global administrator                                                                                                                 |
-| `POST`        | `/manage/teams/new`                                          | create team                                                       | global administrator, CSRF, validation                                                                                               |
-| `GET`         | `/manage/teams/{team}`                                       | compatibility redirect to team Access                             | global admin or that team administrator                                                                                              |
-| `GET`         | `/manage/teams/{team}/access`                                | team access settings                                              | global admin or that team administrator                                                                                              |
-| `GET`         | `/manage/teams/{team}/tokens`                                | active and historical tokens                                      | global admin or that team administrator                                                                                              |
-| `GET`         | `/manage/teams/{team}/modules`                               | team module catalog and publish form                              | global admin or that team administrator                                                                                              |
-| `GET`         | `/manage/admin/access`                                       | global OIDC access settings                                       | global administrator                                                                                                                 |
-| `POST`        | `/manage/admin/access`                                       | update global OIDC mappings or an authorized team's OIDC mappings | global administrator for global fields; global or matching team administrator for team fields; field-level policy, CSRF, config lock |
-| `GET`         | `/manage/admin/spaces`                                       | publish-space assignments                                         | global administrator                                                                                                                 |
-| `POST`        | `/manage/admin/spaces`                                       | assign or unassign extra publish spaces                           | global administrator, CSRF, config lock; primary team space is immutable                                                             |
-| `GET`         | `/manage/access`                                             | compatibility redirect to global Access                           | authentication before canonical redirect                                                                                             |
-| `POST`        | `/manage/access`                                             | compatibility global or team access mutation                      | same capability, field-level policy, CSRF, and config-lock checks as `/manage/admin/access`                                          |
-| `GET`         | `/manage/access/add`                                         | compatibility redirect to Add Team                                | global administrator                                                                                                                 |
-| `POST`        | `/manage/access/add`                                         | compatibility team creation                                       | global administrator, CSRF, config lock                                                                                              |
-| `POST`        | `/manage/access/token`                                       | create, rotate, or revoke a team token                            | global admin or that team administrator, CSRF, config lock                                                                           |
-| `GET`         | `/api/v1/modules`                                            | list and search modules                                           | read capability; local search rate limit                                                                                             |
-| `POST`        | `/api/v1/modules`                                            | publish multipart `file` with optional `space`                    | publish capability for metadata owner; supplied space must match                                                                     |
-| `GET`         | `/api/v1/manage/publish-spaces`                              | list caller's effective publish spaces                            | publish-capable principal                                                                                                            |
-| `GET`         | `/api/v1/modules/{owner}/{name}`                             | module metadata                                                   | read capability                                                                                                                      |
-| `DELETE`      | `/api/v1/modules/{owner}/{name}`                             | delete module                                                     | protected by default; global force uses explicit reason/confirmation headers                                                         |
-| `GET`         | `/api/v1/modules/{owner}/{name}/versions/{version}`          | release metadata                                                  | read capability; cold upstream checksum materialization when required                                                                |
-| `DELETE`      | `/api/v1/modules/{owner}/{name}/versions/{version}`          | delete release                                                    | protected by default; owning-team/global force uses explicit headers                                                                 |
-| `GET`, `HEAD` | `/api/v1/modules/{owner}/{name}/versions/{version}/download` | stream release bytes                                              | read capability, range/ETag support, local download rate limit                                                                       |
-| `GET`         | `/v3/modules`                                                | Forge-compatible combined module catalog                          | read capability unless public access; local SQL filtering and pagination                                                             |
-| `GET`         | `/v3/releases`                                               | Forge-compatible combined release catalog                         | read capability unless public access; local SQL filtering and pagination without upstream hydration                                  |
-| `POST`        | `/v3/releases`                                               | publish PDK JSON/base64 `file`                                    | publish capability for metadata owner; shared publish rate limit and archive limits                                                  |
-| `GET`         | `/v3/modules/{slug}`                                         | Puppet Forge v3 module metadata                                   | read capability unless public access; fresh responses index metadata, while fresh and cached responses mark observed release usage   |
-| `GET`         | `/v3/releases/{slug}`                                        | Puppet Forge v3 release metadata                                  | read capability unless public access; complete checksum fields                                                                       |
-| `GET`, `HEAD` | `/v3/files/{filename}`                                       | Puppet Forge-compatible artifact stream                           | read capability unless public access; shared cold-cache coordination and range support                                               |
-| `GET`, `HEAD` | other `/v3/*`                                                | transparent upstream Forge proxy                                  | read capability unless public access; bounded JSON or artifact cache path                                                            |
-| `GET`         | metrics listener `/metrics`                                  | Prometheus exposition                                             | separate listener; protect at network layer if required                                                                              |
+| Method          | Path                                                           | Action                                                              | Required capability or guard                                                                                                           |
+| --------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`           | `/healthz`                                                     | process liveness                                                    | none; does not check dependencies                                                                                                      |
+| `GET`           | `/readyz`                                                      | SQL and artifact-storage readiness                                  | two-second dependency deadline                                                                                                         |
+| `GET`           | `/`                                                            | public module catalog and filtering                                 | always informationally public                                                                                                          |
+| `GET`           | `/modules/{owner}/{name}`                                      | public module details                                               | always informationally public                                                                                                          |
+| `GET`           | `/modules/{owner}/{name}/versions/{version}/files/{path}`      | extracted archive file                                              | read authorization unless public module access is enabled                                                                              |
+| `GET`           | `/auth/login`                                                  | start OIDC login                                                    | OIDC enabled; shared SQL rate limit                                                                                                    |
+| `GET`           | `/auth/callback`                                               | validate OIDC response and create shared session                    | state cookie, SQL state, nonce, PKCE, shared SQL rate limit                                                                            |
+| `GET`           | `/auth/logout`                                                 | revoke OIDC session and optionally end provider session             | valid or stale session accepted for cleanup                                                                                            |
+| `GET`           | `/manage/login`                                                | render token/OIDC login                                             | no-store response                                                                                                                      |
+| `POST`          | `/manage/login`                                                | create token-backed browser session                                 | valid admin/team credential, shared SQL rate limit                                                                                     |
+| `POST`          | `/manage/logout`                                               | revoke browser session                                              | session-bound CSRF                                                                                                                     |
+| `GET`           | `/manage`                                                      | overview                                                            | global admin or team management capability                                                                                             |
+| `GET`           | `/manage/modules`                                              | manageable module catalog                                           | global admin or team management capability                                                                                             |
+| `POST`          | `/manage/modules`                                              | publish module archive                                              | team/global admin, namespace scope, CSRF, upload limit, publish CIDRs                                                                  |
+| `POST`          | `/manage/modules/{owner}/{name}/delete`                        | delete module                                                       | normal protection; owning-team/global force requires reason and exact confirmation; upstream: global only                              |
+| `POST`          | `/manage/modules/{owner}/{name}/versions/{version}/delete`     | delete release                                                      | normal protection; owning-team/global force with reason/confirmation; upstream: global only                                            |
+| `POST`          | `/manage/upstream`                                             | explicitly index an upstream module                                 | global administrator, CSRF                                                                                                             |
+| `GET`           | `/manage/teams`                                                | list manageable teams                                               | global admin sees all; team admins/readers see assigned teams                                                                          |
+| `GET`           | `/manage/teams/new`                                            | render team creation                                                | global administrator                                                                                                                   |
+| `POST`          | `/manage/teams/new`                                            | create team                                                         | global administrator, CSRF, validation                                                                                                 |
+| `GET`           | `/manage/teams/{team}`                                         | compatibility redirect to team Access or Modules                    | team reader, team administrator, or global admin; redirects readers to Modules                                                         |
+| `GET`           | `/manage/teams/{team}/access`                                  | team access settings                                                | global admin or that team administrator                                                                                                |
+| `GET`           | `/manage/teams/{team}/tokens`                                  | active and historical tokens                                        | global admin or that team administrator                                                                                                |
+| `GET`           | `/manage/teams/{team}/modules`                                 | team module catalog; emergency upload for administrators            | team reader, team administrator, or global admin; upload requires administrator                                                        |
+| `GET`           | `/manage/admin/access`                                         | global OIDC access settings                                         | global administrator                                                                                                                   |
+| `POST`          | `/manage/admin/access`                                         | update global OIDC mappings or an authorized team's OIDC mappings   | global administrator for global fields; global or matching team administrator for team fields; field-level policy, CSRF, config lock   |
+| `GET`           | `/manage/admin/spaces`                                         | read-only team/upstream namespace overview                          | global administrator                                                                                                                   |
+| `GET`, `POST`   | `/manage/modules/{owner}/{name}/moderate`                      | moderate module or release selected by version                      | owning-team admin for local; global admin for upstream; CSRF on POST                                                                   |
+| `GET`           | `/manage/modules/{owner}/{name}/review`                        | browse and compare release archives                                 | owning-team/global admin; archive and review limits                                                                                    |
+| `POST`          | `/manage/modules/{owner}/{name}/clear-cache`                   | detach cached upstream archives                                     | global admin, CSRF, transactional audit; catalog retained                                                                              |
+| `GET`           | `/manage/admin/{audit,legacy}`                                 | global audit / legacy usage                                         | global admin                                                                                                                           |
+| `GET`           | `/manage/teams/{team}/audit`                                   | team audit                                                          | owning-team/global admin                                                                                                               |
+| `GET`           | `/manage/teams/{team}/legacy`                                  | team legacy usage                                                   | team reader, team administrator, or global admin                                                                                       |
+| `GET`           | `/manage/access`                                               | compatibility redirect to global Access                             | authentication before canonical redirect                                                                                               |
+| `POST`          | `/manage/access`                                               | compatibility global or team access mutation                        | same capability, field-level policy, CSRF, and config-lock checks as `/manage/admin/access`                                            |
+| `GET`           | `/manage/access/add`                                           | compatibility redirect to Add Team                                  | global administrator                                                                                                                   |
+| `POST`          | `/manage/access/add`                                           | compatibility team creation                                         | global administrator, CSRF, config lock                                                                                                |
+| `POST`          | `/manage/access/token`                                         | create, rotate, or revoke a team token                              | global admin or that team administrator, CSRF, config lock                                                                             |
+| `GET`           | `/api/v1/modules`                                              | list and search modules                                             | read capability; local search rate limit                                                                                               |
+| `POST`          | `/api/v1/modules`                                              | publish multipart `file` with optional `space`                      | publish capability for metadata owner; supplied space must match                                                                       |
+| `GET`           | `/api/v1/manage/publish-spaces`                                | list caller's effective publish spaces                              | publish-capable principal                                                                                                              |
+| `GET`           | `/api/v1/modules/{owner}/{name}`                               | module metadata                                                     | read capability                                                                                                                        |
+| `DELETE`        | `/api/v1/modules/{owner}/{name}`                               | delete module                                                       | protected by default; owning-team/global force uses explicit headers; upstream: global only                                            |
+| `GET`           | `/api/v1/modules/{owner}/{name}/versions/{version}`            | release metadata                                                    | read capability; cold upstream checksum materialization when required                                                                  |
+| `DELETE`        | `/api/v1/modules/{owner}/{name}/versions/{version}`            | delete release                                                      | protected by default; owning-team/global force uses explicit headers                                                                   |
+| `GET`, `HEAD`   | `/api/v1/modules/{owner}/{name}/versions/{version}/download`   | stream release bytes                                                | read capability, range/ETag support, local download rate limit                                                                         |
+| `GET`           | `/v3/modules`                                                  | Forge-compatible combined module catalog                            | read capability unless public access; local SQL filtering and pagination                                                               |
+| `GET`           | `/v3/releases`                                                 | Forge-compatible combined release catalog                           | read capability unless public access; local SQL filtering and pagination with required metadata repair on the returned page            |
+| `POST`          | `/v3/releases`                                                 | publish PDK JSON/base64 `file`                                      | publish capability for metadata owner; shared publish rate limit and archive limits                                                    |
+| `GET`           | `/v3/modules/{slug}`                                           | Puppet Forge v3 module metadata                                     | read capability unless public access; indexes missing catalogs; module metadata does not mark latest as used                           |
+| `GET`           | `/v3/releases/{slug}`                                          | Puppet Forge v3 release metadata                                    | read capability unless public access; complete checksum fields                                                                         |
+| `GET`, `HEAD`   | `/v3/files/{filename}`                                         | Puppet Forge-compatible artifact stream                             | read capability unless public access; shared cold-cache coordination and range support                                                 |
+| `GET`, `HEAD`   | other `/v3/*`                                                  | transparent upstream Forge proxy                                    | read capability unless public access; bounded JSON or artifact cache path                                                              |
+| `GET`           | metrics listener `/metrics`                                    | Prometheus exposition                                               | separate listener; protect at network layer if required                                                                                |
 
 `PUBLIC_MODULE_ACCESS=true` bypasses only read authorization. It never grants
 publish, delete, team administration, global administration, or Manage session
@@ -353,14 +358,14 @@ The file body is not buffered in replica memory. The lease owner validates size
 and `Content-Length` while streaming upstream into object storage; a client is
 served only by reopening the successfully committed shared object.
 
-Cold module-response observation and SQL indexing complete before the response
-is written, so the client's next release request cannot observe partial rows.
-The observer preserves request values but uses a detached, 30-second context;
-client cancellation cannot abort indexing, while the independent timeout still
-bounds a stalled observer.
-JSON cache hits still mark the current release as used but skip repeated module
-and release indexing. A later cache miss or periodic refresh reconciles fresh
-upstream metadata.
+The diagram shows the cold path when required checksums must be recovered from
+archive bytes. Complete upstream metadata avoids that recovery download;
+catalog indexing and page metadata repair do not download every archive.
+The `/v3/files/*` path materializes a missing archive when installation needs it.
+Module metadata requests and JSON cache hits do not mark latest as used.
+Activity is recorded for a concrete release or archive request; attribution to
+a named token requires an archive GET. Missing upstream catalogs are indexed
+under shared coordination, and periodic refresh reconciles known catalogs.
 
 Consumer attribution is deliberately narrower than release activity. Only a
 concrete archive `GET` made with a named stored read or publish token updates
@@ -419,7 +424,7 @@ sequenceDiagram
     participant DB as Shared PostgreSQL
     participant B as Replica B
 
-    Admin->>A: POST team, token, OIDC, or space update
+    Admin->>A: POST team, token, or OIDC update
     A->>A: verify session, capability, source, and CSRF
     A->>DB: acquire access-config advisory lock
     A->>DB: load current configuration
@@ -439,7 +444,7 @@ token, and OIDC capabilities.
 
 ```mermaid
 flowchart TD
-    request["Delete module or release"] --> authz{"AUTH-5 allowed?<br/>global admin or primary-team admin"}
+    request["Delete module or release"] --> authz{"AUTH-5 allowed?<br/>global admin; owning-team admin for local only"}
     authz -- no --> forbidden["403"]
     authz -- yes --> override{"Explicit force override?"}
     override -- no --> lock["LOCK-1 acquire module lock"]
@@ -450,17 +455,16 @@ flowchart TD
     forceLock --> forceKind{"Release or module?"}
     forceKind -- release --> deleteReleaseSQL
     forceKind -- module --> deleteModuleSQL
-    kind -- release --> latest{"Is latest?"}
-    latest -- yes --> protected["409 protected"]
-    latest -- no --> active{"Used inside ACTIVE_RELEASE_TTL?"}
-    active -- yes --> protected
-    active -- no --> deleteReleaseSQL["SQL-1 delete metadata and enqueue local path"]
+    kind -- release --> active{"Used inside ACTIVE_RELEASE_TTL?"}
+    active -- yes --> protected["409 protected"]
+    active -- no --> deleteReleaseSQL["SQL-1 delete metadata and enqueue registered archive path"]
     kind -- module --> anyActive{"Any release active?"}
     anyActive -- yes --> protected
-    anyActive -- no --> deleteModuleSQL["SQL-1 delete metadata and enqueue local paths"]
-    deleteReleaseSQL --> commit["Commit SQL transaction and release lock"]
-    deleteModuleSQL --> commit
-    commit --> audit["Persist audit_events row and emit security_audit log"]
+    anyActive -- no --> deleteModuleSQL["SQL-1 delete metadata and enqueue registered archive paths"]
+    deleteReleaseSQL --> auditInsert["Insert transactional audit event"]
+    deleteModuleSQL --> auditInsert
+    auditInsert --> commit["Commit SQL transaction and release lock"]
+    commit --> audit["Emit security_audit log"]
     protected --> auditFailure["Persist failed audit event"]
     audit --> done["Success returned to client"]
     worker["Lease-elected deletion worker"] --> cleanupLock["LOCK-1 acquire module lock"]
@@ -470,8 +474,10 @@ flowchart TD
     deleteObject --> complete["Remove completed outbox task"]
 ```
 
-Extra publish spaces grant publish/update permission, not delete ownership. A
-delegated team administrator can delete only in the team's primary space.
+One team owns one namespace. Team admins may delete only their team's local
+resources; upstream deletion requires a global admin. Inactive latest releases
+can be deleted: the highest remaining readable version becomes latest.
+Delete permits upstream reindexing or local republication; only Blocked is a ban.
 Storage failures keep the outbox row for a later retry. SQL never retains a
 release row that points to an object already deleted by this workflow. Explicit
 reconciliation repair uses the same per-module lock and reference recheck before
@@ -512,9 +518,7 @@ flowchart LR
 erDiagram
     MODULES ||--o{ RELEASES : contains
     MODULES ||--o{ RELEASE_USAGE : records
-    MODULES ||--o{ DELETED_RELEASES : suppresses
     ACCESS_TEAMS ||--o{ ACCESS_TOKENS : owns
-    ACCESS_TEAMS ||--o{ ACCESS_PUBLISH_OWNERS : grants
     ACCESS_TEAMS ||--o{ ACCESS_OIDC_MAPPINGS : maps
     MANAGE_SESSIONS }o--|| ACCESS_TOKENS : binds
 
@@ -536,8 +540,9 @@ erDiagram
         int size_bytes
     }
     RELEASE_USAGE {
-        string module_id FK
-        string version
+        string owner PK
+        string name PK
+        string version PK
         timestamp last_used_at
     }
     RELEASE_CONSUMERS {
@@ -552,8 +557,10 @@ erDiagram
         int request_count
     }
     DELETED_RELEASES {
-        string module_id FK
-        string version
+        string owner PK
+        string name PK
+        string version PK
+        string source PK
         timestamp deleted_at
     }
     ARTIFACT_DELETIONS {
@@ -574,9 +581,16 @@ erDiagram
         timestamp expires_at
         timestamp revoked_at
     }
-    ACCESS_PUBLISH_OWNERS {
-        string team FK
-        string owner
+    RESOURCE_STATES {
+        string owner PK
+        string name PK
+        string version PK
+        string state
+        string previous_state
+        string reason
+        string replacement
+        string sha256
+        timestamp changed_at
     }
     ACCESS_OIDC_MAPPINGS {
         string team FK
@@ -624,6 +638,13 @@ erDiagram
         string source PK
     }
 ```
+
+`resource_states`, `module_origins`, and `upstream_catalogs` are keyed by owner/name,
+not a foreign key to a live module row: explicit blocks and source provenance can
+survive Delete. An empty lifecycle version denotes the module itself.
+`deleted_releases` is a legacy compatibility table cleared by schema 11; new
+deletes do not write tombstones or ban reindexing. Extra-space assignment tables
+are removed by the namespace migration.
 
 Schema bootstrap is serialized in PostgreSQL with a global advisory lock. A
 binary refuses to run against a schema version newer than it understands.

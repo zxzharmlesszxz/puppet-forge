@@ -10,7 +10,14 @@ Back up the metadata database and artifact bucket as one recovery set. Also back
 
 ## Backup
 
-1. Pause module publishing and deletion, or take storage/database snapshots that represent the same point in time.
+1. For sequential database and bucket backups, stop all Forge replicas and any
+   separate mutation/repair jobs. Wait for in-flight requests and workers to
+   finish, and prevent automatic restarts until both backups complete. Pausing
+   publishing and deletion alone is insufficient: Clear cache, background
+   refresh/cleanup, and client-triggered upstream caching can still change SQL
+   or storage. Alternatively, use a coordinated database/storage snapshot
+   procedure that guarantees one consistent recovery point; two independent
+   live snapshots do not provide that guarantee.
 2. Back up PostgreSQL with the platform snapshot mechanism or `pg_dump --format=custom`. For SQLite, stop the only writer and copy the database file, or use SQLite's online backup API.
    The database backup includes the durable `artifact_deletions` outbox. Pending
    object cleanup therefore resumes automatically after restore and startup. It
@@ -18,7 +25,8 @@ Back up the metadata database and artifact bucket as one recovery set. Also back
    usage view; normal `RELEASE_CONSUMER_TTL` cleanup resumes after startup.
 3. Snapshot or version-copy the complete configured bucket. At minimum, include both the local-release namespace below `ARTIFACT_PREFIX` and the independent `upstream-cache/` namespace referenced by indexed upstream releases.
 4. Export the effective non-secret configuration and store the required secrets in the organization's secret backup system.
-5. Record the application version and verify that both database and object backups completed.
+5. Record the application version and verify that both database and object
+   backups completed before restarting replicas or resuming mutation jobs.
 
 ## Restore
 
@@ -37,14 +45,30 @@ Back up the metadata database and artifact bucket as one recovery set. Also back
 
    The command exits non-zero when it finds missing objects, checksum/size mismatches, or orphan objects. Its JSON report can be archived with the recovery record.
 
+   Reconciliation checks every non-empty `storage_path` registered in SQL,
+   including upstream archives, for existence, size, and checksum. Orphan
+   discovery scans only the configured `ARTIFACT_PREFIX` (normally `modules/`).
+   It does not discover unregistered objects in the separate `upstream-cache/`
+   namespace. Those are handled by the daily lease-elected upstream cleanup
+   worker after startup, subject to `UPSTREAM_ARTIFACT_ORPHAN_TTL` and current
+   reference checks. A clean report is not proof that the entire bucket has no
+   orphan objects.
+
 6. Resolve missing or corrupt artifacts from backup. Do not delete their SQL metadata automatically.
-7. To remove only objects that have no SQL release record, run the explicit repair mode:
+7. To remove eligible orphan artifacts under `ARTIFACT_PREFIX`, run the explicit
+   repair mode:
 
    ```bash
    puppet-forge --reconcile-artifacts --reconcile-repair
    ```
 
-   Repair mode deletes reported orphan objects only. Before each deletion it takes the corresponding module lock, rechecks current SQL references, and skips objects created or changed after the scan started, so concurrent publishing cannot turn a stale report into deletion of a live artifact. It never deletes release metadata and never attempts to replace corrupt artifacts.
+   Repair mode deletes only reported orphans with a recognized artifact path
+   under that prefix; unrecognized paths require operator investigation.
+   Before each deletion it takes the corresponding module lock, rechecks
+   current SQL references, and skips objects created or changed after the scan
+   started, so concurrent publishing cannot turn a stale report into deletion
+   of a live artifact. It never deletes release metadata, replaces corrupt
+   artifacts, or performs orphan cleanup outside the configured prefix.
 8. Repeat report mode until it is clean, then start one replica, verify `/readyz`, downloads, OIDC/token login, and publish/delete behavior before restoring normal replica count.
 
 ## Disaster-Recovery Test

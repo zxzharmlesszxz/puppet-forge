@@ -169,48 +169,55 @@ Request ID та observability охоплюють також запити, від
 
 ## Інвентар HTTP-методів і дій
 
-| Метод           | Шлях                                                         | Дія                                | Право або запобіжник                                                              |
-| --------------- | ------------------------------------------------------------ | ---------------------------------- | --------------------------------------------------------------------------------- |
-| `GET`           | `/healthz`                                                   | liveness процесу                   | без dependencies                                                                  |
-| `GET`           | `/readyz`                                                    | SQL та object-storage readiness    | dependency deadline 2s                                                            |
-| `GET`           | `/`                                                          | каталог і filter                   | завжди public information                                                         |
-| `GET`           | `/modules/{owner}/{name}`                                    | сторінка модуля                    | завжди public information                                                         |
-| `GET`           | `/modules/{owner}/{name}/versions/{version}/files/{path}`    | файл з архіву                      | read auth або public access                                                       |
-| `GET`           | `/auth/login`                                                | почати OIDC                        | OIDC enabled, shared SQL rate limit                                               |
-| `GET`           | `/auth/callback`                                             | перевірити OIDC і створити session | state, nonce, PKCE, shared SQL rate limit                                         |
-| `GET`           | `/auth/logout`                                               | revoke OIDC session                | cleanup навіть stale session                                                      |
-| `GET`           | `/manage/login`                                              | login form                         | `no-store`                                                                        |
-| `POST`          | `/manage/login`                                              | token browser session              | admin/team credential, shared SQL rate limit                                      |
-| `POST`          | `/manage/logout`                                             | revoke session                     | session-bound CSRF                                                                |
-| `GET`           | `/manage`                                                    | overview                           | global/team management capability                                                 |
-| `GET`           | `/manage/modules`                                            | manageable catalog                 | global/team management capability                                                 |
-| `POST`          | `/manage/modules`                                            | publish archive                    | publish space, CSRF, upload limit                                                 |
-| `POST`          | `/manage/modules/{owner}/{name}/delete`                      | delete module                      | normal protection; global force з reason і exact confirmation                     |
-| `POST`          | `/manage/modules/{owner}/{name}/versions/{version}/delete`   | delete release                     | normal protection; team/global force з reason і confirmation                      |
-| `POST`          | `/manage/upstream`                                           | index upstream module              | global admin, CSRF                                                                |
-| `GET`           | `/manage/teams`                                              | teams list                         | global sees all, team admin assigned                                              |
-| `GET`, `POST`   | `/manage/teams/new`                                          | render/create team                 | global admin, CSRF on POST                                                        |
-| `GET`           | `/manage/teams/{team}`                                       | redirect до Access                 | global або matching team admin                                                    |
-| `GET`           | `/manage/teams/{team}/{access,tokens,modules}`               | team pages                         | global або matching team admin                                                    |
-| `GET`, `POST`   | `/manage/admin/access`                                       | global/team OIDC mappings          | field policy, CSRF, config lock                                                   |
-| `GET`, `POST`   | `/manage/admin/spaces`                                       | space assignments                  | global admin, CSRF, config lock                                                   |
-| `GET`, `POST`   | `/manage/access`                                             | compatibility access route         | canonical-equivalent checks                                                       |
-| `GET`, `POST`   | `/manage/access/add`                                         | compatibility Add Team             | global admin, CSRF on POST                                                        |
-| `POST`          | `/manage/access/token`                                       | create/rotate/revoke token         | global/matching team admin, CSRF, lock                                            |
-| `GET`           | `/api/v1/modules`                                            | list/search                        | read capability, local rate limit                                                 |
-| `POST`          | `/api/v1/modules`                                            | publish `file`, optional `space`   | metadata-owner permission; supplied space must match                              |
-| `GET`           | `/api/v1/manage/publish-spaces`                              | effective spaces                   | publish-capable principal                                                         |
-| `GET`, `DELETE` | `/api/v1/modules/{owner}/{name}`                             | get/delete module                  | read або delete capability                                                        |
-| `GET`, `DELETE` | `/api/v1/modules/{owner}/{name}/versions/{version}`          | get/delete release                 | read/delete; cold checksum hydration                                              |
-| `GET`, `HEAD`   | `/api/v1/modules/{owner}/{name}/versions/{version}/download` | stream artifact                    | read, range/ETag, rate limit                                                      |
-| `GET`           | `/v3/modules`                                                | combined module catalog            | read/public; local SQL filter і pagination                                        |
-| `GET`           | `/v3/releases`                                               | combined release catalog           | read/public; local SQL filter і pagination без upstream hydration                 |
-| `POST`          | `/v3/releases`                                               | publish PDK JSON/base64 `file`     | metadata-owner publish permission, shared rate limit, archive limits              |
-| `GET`           | `/v3/modules/{slug}`                                         | Forge module metadata              | read/public; fresh response робить index, fresh і cached response оновлюють usage |
-| `GET`           | `/v3/releases/{slug}`                                        | Forge release metadata             | read/public; complete checksums                                                   |
-| `GET`, `HEAD`   | `/v3/files/{filename}`                                       | artifact                           | read/public; shared cold cache + range                                            |
-| `GET`, `HEAD`   | інші `/v3/*`                                                 | transparent proxy                  | read/public; bounded cache                                                        |
-| `GET`           | metrics listener `/metrics`                                  | Prometheus exposition              | захист network layer за потреби                                                   |
+| Метод           | Шлях                                                         | Дія                                    | Право або запобіжник                                                                   |
+| --------------- | ------------------------------------------------------------ | -------------------------------------- | -------------------------------------------------------------------------------------- |
+| `GET`           | `/healthz`                                                   | liveness процесу                       | без dependencies                                                                       |
+| `GET`           | `/readyz`                                                    | SQL та object-storage readiness        | dependency deadline 2s                                                                 |
+| `GET`           | `/`                                                          | каталог і filter                       | завжди public information                                                              |
+| `GET`           | `/modules/{owner}/{name}`                                    | сторінка модуля                        | завжди public information                                                              |
+| `GET`           | `/modules/{owner}/{name}/versions/{version}/files/{path}`    | файл з архіву                          | read auth або public access                                                            |
+| `GET`           | `/auth/login`                                                | почати OIDC                            | OIDC enabled, shared SQL rate limit                                                    |
+| `GET`           | `/auth/callback`                                             | перевірити OIDC і створити session     | state, nonce, PKCE, shared SQL rate limit                                              |
+| `GET`           | `/auth/logout`                                               | revoke OIDC session                    | cleanup навіть stale session                                                           |
+| `GET`           | `/manage/login`                                              | login form                             | `no-store`                                                                             |
+| `POST`          | `/manage/login`                                              | token browser session                  | admin/team credential, shared SQL rate limit                                           |
+| `POST`          | `/manage/logout`                                             | revoke session                         | session-bound CSRF                                                                     |
+| `GET`           | `/manage`                                                    | overview                               | global/team management capability                                                      |
+| `GET`           | `/manage/modules`                                            | manageable catalog                     | global/team management capability                                                      |
+| `POST`          | `/manage/modules`                                            | publish archive                        | team/global admin, namespace, CSRF, upload limit, publish CIDRs                        |
+| `POST`          | `/manage/modules/{owner}/{name}/delete`                      | delete module                          | normal protection; owning-team/global force; upstream лише global admin                |
+| `POST`          | `/manage/modules/{owner}/{name}/versions/{version}/delete`   | delete release                         | normal protection; owning-team/global force; upstream лише global admin                |
+| `POST`          | `/manage/upstream`                                           | index upstream module                  | global admin, CSRF                                                                     |
+| `GET`           | `/manage/teams`                                              | teams list                             | global бачить усі; team admin/reader — свої                                            |
+| `GET`, `POST`   | `/manage/teams/new`                                          | render/create team                     | global admin, CSRF on POST                                                             |
+| `GET`           | `/manage/teams/{team}`                                       | redirect до Access або Modules         | global admin або matching team admin/reader                                            |
+| `GET`           | `/manage/teams/{team}/{access,tokens}`                       | налаштування доступу й токени          | global або matching team admin                                                         |
+| `GET`, `POST`   | `/manage/admin/access`                                       | global/team OIDC mappings              | field policy, CSRF, config lock                                                        |
+| `GET`           | `/manage/admin/spaces`                                       | огляд командних та upstream namespace  | global admin; лише читання                                                             |
+| `GET`           | `/manage/teams/{team}/modules`                               | командний каталог; аварійний upload    | matching team reader/admin або global; upload лише admin                               |
+| `GET`, `POST`   | `/manage/modules/{owner}/{name}/moderate`                    | модерація; параметр version для релізу | owning-team admin для local; upstream лише global; CSRF для POST                       |
+| `GET`           | `/manage/modules/{owner}/{name}/review`                      | перегляд і порівняння архівів          | owning-team/global admin; archive/review limits                                        |
+| `POST`          | `/manage/modules/{owner}/{name}/clear-cache`                 | від'єднати кешовані upstream-архіви    | global admin, CSRF, транзакційний аудит; не видаляє каталог                            |
+| `GET`           | `/manage/admin/{audit,legacy}`                               | глобальний аудит / legacy usage        | global admin                                                                           |
+| `GET`           | `/manage/teams/{team}/audit`                                 | командний аудит                        | owning-team/global admin                                                               |
+| `GET`           | `/manage/teams/{team}/legacy`                                | командний legacy usage                 | matching team reader/admin або global                                                  |
+| `GET`, `POST`   | `/manage/access`                                             | compatibility access route             | canonical-equivalent checks                                                            |
+| `GET`, `POST`   | `/manage/access/add`                                         | compatibility Add Team                 | global admin, CSRF on POST                                                             |
+| `POST`          | `/manage/access/token`                                       | create/rotate/revoke token             | global/matching team admin, CSRF, lock                                                 |
+| `GET`           | `/api/v1/modules`                                            | list/search                            | read capability, local rate limit                                                      |
+| `POST`          | `/api/v1/modules`                                            | publish `file`, optional `space`       | metadata-owner permission; supplied space must match                                   |
+| `GET`           | `/api/v1/manage/publish-spaces`                              | effective spaces                       | publish-capable principal                                                              |
+| `GET`, `DELETE` | `/api/v1/modules/{owner}/{name}`                             | get/delete module                      | read або delete capability                                                             |
+| `GET`, `DELETE` | `/api/v1/modules/{owner}/{name}/versions/{version}`          | get/delete release                     | read/delete; cold checksum hydration                                                   |
+| `GET`, `HEAD`   | `/api/v1/modules/{owner}/{name}/versions/{version}/download` | stream artifact                        | read, range/ETag, rate limit                                                           |
+| `GET`           | `/v3/modules`                                                | combined module catalog                | read/public; local SQL filter і pagination                                             |
+| `GET`           | `/v3/releases`                                               | combined release catalog               | read/public; local SQL filter і pagination із доповненням metadata повернутої сторінки |
+| `POST`          | `/v3/releases`                                               | publish PDK JSON/base64 `file`         | metadata-owner publish permission, shared rate limit, archive limits                   |
+| `GET`           | `/v3/modules/{slug}`                                         | Forge module metadata                  | read/public; індексує відсутній каталог; не позначає latest як used                    |
+| `GET`           | `/v3/releases/{slug}`                                        | Forge release metadata                 | read/public; complete checksums                                                        |
+| `GET`, `HEAD`   | `/v3/files/{filename}`                                       | artifact                               | read/public; shared cold cache + range                                                 |
+| `GET`, `HEAD`   | інші `/v3/*`                                                 | transparent proxy                      | read/public; bounded cache                                                             |
+| `GET`           | metrics listener `/metrics`                                  | Prometheus exposition                  | захист network layer за потреби                                                        |
 
 `PUBLIC_MODULE_ACCESS=true` обходить лише read auth, але не publish, delete,
 team/global administration або Manage session authorization.
@@ -314,14 +321,14 @@ File body не буферизується в пам'яті replica. Власни
 клієнт отримує bytes лише після повторного відкриття успішно завершеного shared
 object.
 
-Для cold module response observer та SQL indexing завершуються до запису
-response, тому наступний release request не бачить частково створених рядків.
-Observer зберігає request values, але використовує окремий 30-секундний context:
-client cancellation не скасовує indexing, а незалежний timeout обмежує завислу
-операцію.
-JSON cache hit продовжує позначати current release як used, але не повторює
-index module/releases. Fresh metadata узгоджується під час наступного cache miss
-або periodic refresh.
+Діаграма показує cold path, коли обов'язкові контрольні суми треба відновити з
+архіву. Повна upstream metadata не потребує такого завантаження; індексування
+каталогу й доповнення metadata сторінки не завантажують усі архіви.
+`/v3/files/*` матеріалізує відсутній архів, коли він потрібен для встановлення.
+Запити metadata модуля та JSON cache hits не позначають latest як used.
+Активність фіксується для конкретного релізу чи архіву; атрибуція іменованому
+токену потребує GET архіву. Відсутній upstream-каталог індексується зі спільною
+координацією, periodic refresh узгоджує вже відомі каталоги.
 
 Атрибуція споживача навмисно вужча за release activity. Лише `GET` конкретного
 архіву з іменованим збереженим read або publish токеном оновлює
@@ -371,7 +378,7 @@ sequenceDiagram
     participant A as Replica A
     participant DB as Shared PostgreSQL
     participant B as Replica B
-    Admin->>A: POST team, token, OIDC або space
+    Admin->>A: POST team, token або OIDC
     A->>A: verify session, capability, source, CSRF
     A->>DB: acquire access-config lock
     A->>DB: load current config
@@ -389,7 +396,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    req["Delete module або release"] --> auth{"AUTH-5 allowed?"}
+    req["Delete module або release"] --> auth{"AUTH-5: global admin;<br/>team admin лише для власних local?"}
     auth -- no --> deny["403"]
     auth -- yes --> override{"Explicit force override?"}
     override -- no --> lock["LOCK-1 module lock"]
@@ -400,17 +407,16 @@ flowchart TD
     forceLock --> forceKind{"Release або module?"}
     forceKind -- release --> releaseSQL
     forceKind -- module --> moduleSQL
-    kind -- release --> latest{"Latest?"}
-    latest -- yes --> protected["409 protected"]
-    latest -- no --> active{"Used in ACTIVE_RELEASE_TTL?"}
-    active -- yes --> protected
-    active -- no --> releaseSQL["SQL-1 delete metadata + enqueue local path"]
+    kind -- release --> active{"Used in ACTIVE_RELEASE_TTL?"}
+    active -- yes --> protected["409 protected"]
+    active -- no --> releaseSQL["SQL-1 delete metadata + enqueue registered archive path"]
     kind -- module --> any{"Any active release?"}
     any -- yes --> protected
-    any -- no --> moduleSQL["SQL-1 delete metadata + enqueue local paths"]
-    releaseSQL --> commit["Commit SQL + release lock"]
-    moduleSQL --> commit
-    commit --> audit["Запис audit_events + security_audit log"]
+    any -- no --> moduleSQL["SQL-1 delete metadata + enqueue registered archive paths"]
+    releaseSQL --> auditInsert["Запис транзакційної audit-події"]
+    moduleSQL --> auditInsert
+    auditInsert --> commit["Commit SQL + release lock"]
+    commit --> audit["Запис security_audit log"]
     protected --> auditFailure["Запис невдалої audit-події"]
     audit --> done["Success для клієнта"]
     worker["Lease-elected deletion worker"] --> cleanupLock["LOCK-1 module lock"]
@@ -420,7 +426,10 @@ flowchart TD
     object --> complete["Remove completed outbox task"]
 ```
 
-Extra publish spaces не дають delete ownership.
+Одна команда володіє одним namespace. Team admin видаляє лише власні локальні
+ресурси; upstream видаляє лише global admin. Неактивний latest можна видалити:
+новим latest стає найбільша доступна версія, що залишилася. Delete дозволяє
+повторне індексування upstream або локальну публікацію; забороною є лише Blocked.
 Помилка object storage залишає outbox row для наступної спроби. SQL не зберігає
 release row, який посилається на вже видалений цим workflow object.
 
@@ -456,9 +465,7 @@ flowchart LR
 erDiagram
     MODULES ||--o{ RELEASES : contains
     MODULES ||--o{ RELEASE_USAGE : records
-    MODULES ||--o{ DELETED_RELEASES : suppresses
     ACCESS_TEAMS ||--o{ ACCESS_TOKENS : owns
-    ACCESS_TEAMS ||--o{ ACCESS_PUBLISH_OWNERS : grants
     ACCESS_TEAMS ||--o{ ACCESS_OIDC_MAPPINGS : maps
     MANAGE_SESSIONS }o--|| ACCESS_TOKENS : binds
     MODULES {
@@ -479,8 +486,9 @@ erDiagram
         int size_bytes
     }
     RELEASE_USAGE {
-        string module_id FK
-        string version
+        string owner PK
+        string name PK
+        string version PK
         timestamp last_used_at
     }
     RELEASE_CONSUMERS {
@@ -495,8 +503,10 @@ erDiagram
         int request_count
     }
     DELETED_RELEASES {
-        string module_id FK
-        string version
+        string owner PK
+        string name PK
+        string version PK
+        string source PK
         timestamp deleted_at
     }
     ARTIFACT_DELETIONS {
@@ -517,9 +527,16 @@ erDiagram
         timestamp expires_at
         timestamp revoked_at
     }
-    ACCESS_PUBLISH_OWNERS {
-        string team FK
-        string owner
+    RESOURCE_STATES {
+        string owner PK
+        string name PK
+        string version PK
+        string state
+        string previous_state
+        string reason
+        string replacement
+        string sha256
+        timestamp changed_at
     }
     ACCESS_OIDC_MAPPINGS {
         string team FK
@@ -567,6 +584,13 @@ erDiagram
         string source PK
     }
 ```
+
+`resource_states`, `module_origins` та `upstream_catalogs` мають ключ owner/name,
+а не foreign key до живого module row: явні блокування й походження можуть
+переживати Delete. Порожня версія lifecycle означає стан самого модуля.
+`deleted_releases` — legacy-таблиця сумісності, яку очищає схема 11; нові Delete
+не створюють tombstone і не забороняють повторне індексування. Міграція namespace
+прибирає таблиці призначення додаткових просторів.
 
 PostgreSQL schema bootstrap серіалізований global advisory lock. Binary не
 працює зі schema version, новішою за підтримувану.

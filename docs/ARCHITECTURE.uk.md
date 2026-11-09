@@ -122,11 +122,14 @@ cache hit. Hydration і запис checksum перед збереженням п
 
 1. Клієнт запитує metadata модуля або релізу через `/api/v1/modules/...`,
    локальний Forge V3-каталог чи UI.
-2. SQL store повертає локальні й індексовані upstream records. Маршрути
-   `GET /v3/modules` і `GET /v3/releases` пагінують збережений каталог без
-   окремої upstream hydration для кожного результату.
-3. Для локальних релізів URL завантаження будується з налаштованого artifact
-   backend.
+2. SQL повертає локальні й індексовані upstream records. Запит конкретного
+   невідомого upstream-модуля через `/v3/releases?module=...` індексує його
+   каталог, після чого SQL застосовує початкові фільтри й пагінацію. Обов'язкова
+   metadata доповнюється лише для релізів повернутої сторінки; індексування не
+   завантажує всі архіви.
+3. URL завантаження ведуть на авторизовані потокові endpoints Forge, а не
+   безпосередньо в object storage. V3 `file_uri` та посилання пагінації відносні
+   для сумісності зі стандартним installer.
 4. `GET` конкретного архіву з іменованим збереженим access-токеном записує у
    shared SQL команду токена, його операторську назву й роль, а також запитану
    версію модуля. Metadata- та `HEAD`-запити не створюють таких спостережень.
@@ -188,15 +191,15 @@ create-only контракт S3 backend вимагає, щоб вибраний 
 `If-None-Match: *` для `PutObject`; підтримувані backends перевіряє integration
 test об'єктного сховища.
 
-Видалення локального релізу атомарно прибирає SQL metadata й записує
-content-addressed object path у надійний `artifact_deletions` outbox. Обраний
-через lease worker щохвилини повторює idempotent видалення object. Перед цим він
-бере module lock і перевіряє чинне SQL-посилання, тому повторна публікація того
-самого immutable path скасовує застаріле завдання, а не видаляє живий вміст.
-Upstream-релізи можуть посилатися на спільний `upstream-cache/`; видалення їхніх
-metadata не додає цей спільний object до outbox. Окремий щоденний worker, обраний
-через lease, видаляє лише cache objects без SQL-посилань, старші за
-`UPSTREAM_ARTIFACT_ORPHAN_TTL`.
+Видалення атомарно прибирає SQL metadata й додає зареєстровані локальні та
+upstream-шляхи архівів у надійний `artifact_deletions` outbox. Обраний через
+lease worker щохвилини повторює idempotent видалення й перевіряє актуальні
+SQL-посилання під відповідною module/cache-координацією. Спільні об'єкти та
+об'єкти з новими посиланнями зберігаються. Окремий щоденний worker знаходить
+незареєстровані upstream-об'єкти без посилань, старші за
+`UPSTREAM_ARTIFACT_ORPHAN_TTL`. Delete не є забороною: дозволений upstream-запит
+повторно індексує каталог; локальний реліз потребує повторної публікації та
+погодження. Явні записи Blocked переживають Delete.
 
 Періодичні воркери refresh та cleanup є критичними компонентами процесу.
 Очікувані операційні помилки логуються і повторюються, але неочікуваний panic
@@ -272,16 +275,21 @@ of truth для teams, tokens, publish spaces та OIDC mappings. SQLite і Post
 - `PUBLIC_MODULE_ACCESS=true` обходить лише read auth для install/API routes;
 - `PUBLIC_MODULE_ACCESS=false` вимагає read/publish/admin auth для цих routes.
 
-OIDC UI вмикається через `WEB_AUTH_MODE=oidc`. `oidc_reader_groups` дають читання й членство в команді,
+OIDC UI вмикається через `WEB_AUTH_MODE=oidc`. `oidc_reader_groups` та
+`oidc_reader_emails` дають читання й членство в команді,
 `oidc_team_admin_emails` та `oidc_team_admin_groups` — delegated team admin, а
 `oidc_admin_groups`, `oidc_admin_emails`, `oidc_admin_subjects` — global admin.
-Team admin редагує лише власні токени й OIDC mappings та видаляє лише у primary
-space. `platform-admin` зарезервовано для global-admin configuration і не може
+Team admin керує доступом, токенами й локальними ресурсами своєї команди.
+Зміни upstream-ресурсів дозволені лише global admin, навіть за збігу owner із
+назвою команди. Email mappings потребують `email_verified=true`; групові — ні.
+`platform-admin` зарезервовано для global-admin configuration і не може
 бути publishing team або module namespace.
 
 Якщо одна OIDC identity збігається з кількома mappings, усі capabilities і team
-scopes об'єднуються. Global admin не скасовує team admin чи publishing rights,
-а global admin має адміністративні права в усіх namespace.
+scopes об'єднуються. Global admin має права читання й адміністрування в усіх
+namespace, включно з аварійною вебпублікацією. OIDC-публікарів немає: звичайна
+CI-публікація використовує токен namespace команди й потребує погодження
+адміністратором до переходу релізу в Available.
 
 `/manage/teams` показує доступні principal команди й підсумок spaces, modules,
 tokens та OIDC mappings. Access, Tokens і Modules розділені на окремі сторінки;
