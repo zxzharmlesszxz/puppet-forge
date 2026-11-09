@@ -679,6 +679,7 @@ func TestPublish(t *testing.T) {
 
 	archive, err := testutil.BuildTarGz(map[string]string{
 		"acme-apache-1.2.3/metadata.json": `{"name":"acme-apache","version":"1.2.3","summary":"Apache module"}`,
+		"acme-apache-1.2.3/README.md":     "# Apache",
 	})
 	if err != nil {
 		t.Fatalf("testutil.BuildTarGz() error = %v", err)
@@ -1209,6 +1210,7 @@ func buildPublishArchive(t *testing.T, moduleName, version, marker string) []byt
 	t.Helper()
 	archive, err := testutil.BuildTarGz(map[string]string{
 		moduleName + "-" + version + "/metadata.json": fmt.Sprintf(`{"name":%q,"version":%q}`, moduleName, version),
+		moduleName + "-" + version + "/README.md":     "# Module documentation",
 		moduleName + "-" + version + "/payload.txt":   marker,
 	})
 	if err != nil {
@@ -2150,6 +2152,7 @@ func TestPublishRejectsInvalidOwner(t *testing.T) {
 
 	archive, err := testutil.BuildTarGz(map[string]string{
 		"AC_ME-apache-1.2.3/metadata.json": `{"name":"AC_ME-apache","version":"1.2.3"}`,
+		"AC_ME-apache-1.2.3/README.md":     "# Apache",
 	})
 	if err != nil {
 		t.Fatalf("testutil.BuildTarGz() error = %v", err)
@@ -2174,6 +2177,7 @@ func TestPublishAcceptsUppercaseModuleOwner(t *testing.T) {
 
 	archive, err := testutil.BuildTarGz(map[string]string{
 		"ACME-apache_2-1.2.3/metadata.json": `{"name":"ACME-apache_2","version":"1.2.3"}`,
+		"ACME-apache_2-1.2.3/README.md":     "# Apache",
 	})
 	if err != nil {
 		t.Fatalf("testutil.BuildTarGz() error = %v", err)
@@ -2198,6 +2202,7 @@ func TestPublishRejectsAmbiguousCanonicalSlug(t *testing.T) {
 
 	archive, err := testutil.BuildTarGz(map[string]string{
 		"acme-foo-bar-1.2.3/metadata.json": `{"name":"acme-foo-bar","version":"1.2.3"}`,
+		"acme-foo-bar-1.2.3/README.md":     "# Module",
 	})
 	if err != nil {
 		t.Fatalf("testutil.BuildTarGz() error = %v", err)
@@ -2452,6 +2457,7 @@ func TestPublishAcceptsSeekableArchiveWithoutFileBytes(t *testing.T) {
 
 	archive, err := testutil.BuildTarGz(map[string]string{
 		"teamname-module-1.0.0/metadata.json": `{"name":"teamname-module","version":"1.0.0"}`,
+		"teamname-module-1.0.0/README.md":     "# Module",
 	})
 	if err != nil {
 		t.Fatalf("BuildTarGz() error = %v", err)
@@ -2524,6 +2530,7 @@ func TestPublishNormalizesUploadedArchiveFileName(t *testing.T) {
 
 	archive, err := testutil.BuildTarGz(map[string]string{
 		"teamname-build-4.0.0/metadata.json": `{"name":"teamname-build","version":"4.0.0"}`,
+		"teamname-build-4.0.0/README.md":     "# Build",
 	})
 	if err != nil {
 		t.Fatalf("testutil.BuildTarGz() error = %v", err)

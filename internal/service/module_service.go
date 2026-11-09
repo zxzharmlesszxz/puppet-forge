@@ -426,6 +426,9 @@ func (s *ModuleService) normalizePublishInput(ctx context.Context, input domain.
 	} else if archiveInfo.Owner != input.Owner {
 		return input, invalidInputError(fmt.Errorf("module namespace %q does not match selected space %q", archiveInfo.Owner, input.Owner))
 	}
+	if strings.TrimSpace(archiveInfo.Readme) == "" {
+		return input, invalidInput("a non-empty root README file is required")
+	}
 	input.Name = archiveInfo.Name
 	input.Version = archiveInfo.Version
 	input.Description = archiveInfo.Description

@@ -2686,6 +2686,7 @@ func TestHTTPAPIAccessMatrix(t *testing.T) {
 		_, server := newHTTPAPIAccessMatrixServer(t, authorizer)
 		archive, err := testutil.BuildTarGz(map[string]string{
 			"alpha-apache-1.2.3/metadata.json": `{"name":"alpha-apache","version":"1.2.3"}`,
+			"alpha-apache-1.2.3/README.md":     "# Apache",
 		})
 		if err != nil {
 			t.Fatalf("testutil.BuildTarGz() error = %v", err)
@@ -2735,6 +2736,7 @@ func TestPublishWithoutSpaceUsesMetadataNamespaceForAuthorization(t *testing.T) 
 
 			archive, err := testutil.BuildTarGz(map[string]string{
 				testCase.metadataOwner + "-pdk-1.0.0/metadata.json": `{"name":"` + testCase.metadataOwner + `-pdk","version":"1.0.0"}`,
+				testCase.metadataOwner + "-pdk-1.0.0/README.md":     "# PDK module",
 			})
 			if err != nil {
 				t.Fatalf("testutil.BuildTarGz() error = %v", err)
@@ -2867,6 +2869,7 @@ func TestManageActionsEnforceRoleBoundary(t *testing.T) {
 
 	archive, err := testutil.BuildTarGz(map[string]string{
 		"teamname-nginx-1.0.0/metadata.json": `{"name":"teamname-nginx","version":"1.0.0"}`,
+		"teamname-nginx-1.0.0/README.md":     "# Nginx",
 	})
 	if err != nil {
 		t.Fatalf("testutil.BuildTarGz() error = %v", err)
@@ -2915,6 +2918,7 @@ func TestManageActionsEnforceRoleBoundary(t *testing.T) {
 
 	replacementArchive, err := testutil.BuildTarGz(map[string]string{
 		"teamname-nginx-1.0.0/metadata.json": `{"name":"teamname-nginx","version":"1.0.0"}`,
+		"teamname-nginx-1.0.0/README.md":     "# Nginx",
 		"teamname-nginx-1.0.0/changed.txt":   "replacement",
 	})
 	if err != nil {
@@ -3356,6 +3360,7 @@ func TestReadOnlyPrincipalsCannotWriteOrDeleteHTTPAPI(t *testing.T) {
 
 	archive, err := testutil.BuildTarGz(map[string]string{
 		"teamname-apache-1.2.3/metadata.json": `{"name":"teamname-apache","version":"1.2.3"}`,
+		"teamname-apache-1.2.3/README.md":     "# Apache",
 	})
 	if err != nil {
 		t.Fatalf("testutil.BuildTarGz() error = %v", err)
@@ -3408,6 +3413,7 @@ func TestReadOnlyPrincipalsCannotWriteOrDeleteHTTPAPI(t *testing.T) {
 	}
 	conflictingArchive, err := testutil.BuildTarGz(map[string]string{
 		"teamname-apache-1.2.3/metadata.json": `{"name":"teamname-apache","version":"1.2.3"}`,
+		"teamname-apache-1.2.3/README.md":     "# Apache",
 		"teamname-apache-1.2.3/changed.txt":   "different release bytes",
 	})
 	if err != nil {
@@ -3547,6 +3553,7 @@ func TestManageEmergencyUploadRequiresReason(t *testing.T) {
 	postManageToken(t, client, server.URL, "admin-token")
 	archive, err := testutil.BuildTarGz(map[string]string{
 		"teamname-emergency-1.0.0/metadata.json": `{"name":"teamname-emergency","version":"1.0.0"}`,
+		"teamname-emergency-1.0.0/README.md":     "# Emergency module",
 	})
 	if err != nil {
 		t.Fatal(err)

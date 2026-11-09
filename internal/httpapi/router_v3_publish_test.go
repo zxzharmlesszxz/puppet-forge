@@ -124,6 +124,7 @@ func buildV3PublishArchive(t *testing.T, owner, name, version string) []byte {
 	root := owner + "-" + name + "-" + version
 	archive, err := testutil.BuildTarGz(map[string]string{
 		root + "/metadata.json": `{"name":"` + owner + `-` + name + `","version":"` + version + `"}`,
+		root + "/README.md":     "# Module documentation",
 	})
 	if err != nil {
 		t.Fatalf("testutil.BuildTarGz() error = %v", err)

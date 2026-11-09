@@ -681,20 +681,27 @@ When upgrading a database that still has the legacy plaintext `access_tokens.tok
 
 ## Module Publishing
 
-The service accepts Puppet module `.tar.gz` archives through `POST /api/v1/modules` as `multipart/form-data`.
+The service accepts Puppet module `.tar.gz` archives through `POST /api/v1/modules` as `multipart/form-data`, `POST /v3/releases` as JSON/base64, and the administrator's emergency upload form in Manage. All three paths apply the same local publication validation, including replacement uploads.
 
 Minimum module requirements:
 
 - the archive contains exactly one valid `metadata.json`;
 - every archive entry is contained by one canonical `<owner>-<name>-<version>` root directory;
-- `metadata.json` and an optional README are direct children of that root directory;
+- `metadata.json` and exactly one non-empty README are direct children of that root directory;
 - absolute paths, parent traversal, links, devices, and other special tar entries are rejected;
 - both individual entry size and total expanded archive size are bounded;
 - `metadata.json.name` uses the `<owner>-<name>` format, for example `teamname-apache`;
 - `owner` uses ASCII letters in either case and digits; the short module `name` uses lowercase ASCII letters, digits, and underscores; hyphens are reserved as the unambiguous separator between those two parts;
 - `metadata.json.version` is present;
 - when the optional `space` field is supplied, the namespace in `metadata.json.name` matches it;
-- putting `README.md` in the module is recommended because it is rendered on the HTML module page.
+- the README contains at least one non-whitespace character and is at most 2 MiB. README names are matched case-insensitively (`README` or `README.*`); use `README.md` for compatibility with packaging tools and rendering on the HTML module page.
+
+Missing, empty, whitespace-only, or nested-only README files are rejected before
+artifact storage or catalog writes. API requests and asynchronous Manage uploads
+return HTTP 400 with `validation_error`; ordinary Manage forms redirect with the
+validation error. A request field cannot substitute for a README in the archive.
+The requirement applies only to new local submissions: existing stored releases
+and upstream imports or reads remain unchanged. No `manifests/init.pp` is required.
 
 Example layout:
 
