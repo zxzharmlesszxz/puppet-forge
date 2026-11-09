@@ -266,9 +266,13 @@ helm search repo puppet-forge/puppet-forge --versions
 
 ## Тести Installer OpenVox 8
 
-Оберіть [офіційний образ агента OpenVox](https://github.com/OpenVoxProject/container-openvoxagent)
-версії 8, бажано зафіксований digest; образ не обирається неявно. Opt-in тест
-підіймає тимчасовий авторизований Forge та upstream JSON fixture і запускає
+`make release-preflight` і `make push-release` включають тест стандартного installer
+OpenVox 8. `OPENVOX_TEST_IMAGE` типово містить перевірений образ
+`ghcr.io/openvoxproject/openvoxagent:8.28.1`; можна вказати інший
+[офіційний образ агента OpenVox](https://github.com/OpenVoxProject/container-openvoxagent)
+версії 8, бажано з digest. Порожнє перевизначення завершується помилкою,
+а не пропускає цей релізний gate.
+Тест підіймає тимчасовий авторизований Forge та upstream JSON fixture і запускає
 незмінений installer у Docker:
 
 ```bash

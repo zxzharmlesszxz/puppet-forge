@@ -77,7 +77,7 @@ release-smoke: release ## Build release archives and smoke-test the native archi
 	"$$binary" --help 2>&1 | grep -F "Usage of $(PROJECT_NAME):" >/dev/null; \
 	"$$binary" --version 2>&1 | grep -F "$(VERSION)" >/dev/null
 
-release-preflight: release-version-check release-chart-version-check full-check coverage-integration-docker security-go test-browser test-race trivy-filesystem trivy-image ## Run all local checks required before pushing a release tag. Set VERSION=vX.Y.Z.
+release-preflight: release-version-check release-chart-version-check openvox-image-check full-check coverage-integration-docker security-go test-browser test-openvox test-race trivy-filesystem trivy-image ## Run all local checks required before pushing a release tag. Set VERSION=vX.Y.Z.
 
 release-version-check: ## Validate VERSION for release targets.
 	@printf '%s\n' "$(VERSION)" | grep -Eq '^v(0|1)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$' || { \
@@ -186,9 +186,11 @@ test-race: ## Run Go tests with the race detector.
 test-browser: ## Run browser interaction regressions with Playwright.
 	PLAYWRIGHT_IMAGE="$(PLAYWRIGHT_IMAGE)" DOCKER="$(DOCKER)" GO="$(GO)" CURL="$(CURL)" bash scripts/browser-tests.sh
 
-.PHONY: test-openvox openvox-smoke
-test-openvox: ## Run the standard OpenVox 8 installer against an isolated authenticated Forge fixture. Set OPENVOX_TEST_IMAGE.
+.PHONY: test-openvox openvox-smoke openvox-image-check
+openvox-image-check:
 	@test -n "$(OPENVOX_TEST_IMAGE)" || (echo "OPENVOX_TEST_IMAGE is required"; exit 1)
+
+test-openvox: openvox-image-check ## Run the standard OpenVox 8 installer against an isolated authenticated Forge fixture. Override OPENVOX_TEST_IMAGE if needed.
 	PUPPET_FORGE_TEST_OPENVOX_IMAGE="$(OPENVOX_TEST_IMAGE)" DOCKER="$(DOCKER)" $(GO) test -buildvcs=false ./internal/httpapi -run '^TestOpenVox8Installer$$' -count=1 -timeout=6m -v
 
 openvox-smoke: ## Install pinned modules through an already running private Forge. Set OPENVOX_TEST_IMAGE and OPENVOX_READ_TOKEN.

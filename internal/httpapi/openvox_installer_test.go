@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -76,6 +77,23 @@ func (s *installerArchiveStorage) UploadReaderIfAbsent(ctx context.Context, key,
 		return false, err
 	}
 	return s.UploadIfAbsent(ctx, key, contentType, data)
+}
+
+func TestReleasePreflightIncludesOpenVox(t *testing.T) {
+	t.Parallel()
+	source, err := os.ReadFile("../../Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for line := range strings.SplitSeq(string(source), "\n") {
+		if strings.HasPrefix(line, "release-preflight:") {
+			if slices.Contains(strings.Fields(strings.SplitN(line, "##", 2)[0]), "test-openvox") {
+				return
+			}
+			t.Fatal("release-preflight must include the standard OpenVox installer test")
+		}
+	}
+	t.Fatal("release-preflight target is missing")
 }
 
 func TestOpenVox8Installer(t *testing.T) {

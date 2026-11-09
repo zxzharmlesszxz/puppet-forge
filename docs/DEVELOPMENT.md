@@ -267,9 +267,13 @@ helm search repo puppet-forge/puppet-forge --versions
 
 ## OpenVox 8 Installer Tests
 
-Choose an [official OpenVox agent image](https://github.com/OpenVoxProject/container-openvoxagent)
-with major version 8, preferably pinned by digest; no image is selected implicitly.
-The opt-in test starts an ephemeral authenticated Forge and upstream JSON fixture,
+`make release-preflight` and `make push-release` include the standard OpenVox 8
+installer test. `OPENVOX_TEST_IMAGE` defaults to the tested
+`ghcr.io/openvoxproject/openvoxagent:8.28.1`; override it with an
+[official OpenVox agent image](https://github.com/OpenVoxProject/container-openvoxagent)
+of major version 8, preferably pinned by digest. An empty override fails the test
+instead of silently skipping this release gate.
+The test starts an ephemeral authenticated Forge and upstream JSON fixture,
 then runs the unmodified installer inside Docker:
 
 ```bash
