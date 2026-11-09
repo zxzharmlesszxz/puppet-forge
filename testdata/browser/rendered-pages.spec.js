@@ -97,6 +97,9 @@ test("layouts load embedded styles and deferred scripts", async ({ page }) => {
     expect(new Set(sources).size).toBe(sources.length);
     await expect(page.locator('link[href="/assets/base.css"]')).toHaveCount(1);
     await expect(page.locator("h1")).toBeVisible();
+    await expect(page.locator(".site-footer")).toHaveCount(1);
+    await expect(page.locator(".site-version")).toHaveText(/\S+/);
+    await expect(page.locator(".site-footer")).toContainText("Denys Razumov");
   }
   expect(failedAssets).toEqual([]);
   expect(errors).toEqual([]);

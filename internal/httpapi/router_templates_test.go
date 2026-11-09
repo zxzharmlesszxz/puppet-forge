@@ -153,6 +153,19 @@ func TestTeamAccessFormsKeepRoleAndColumnOrder(t *testing.T) {
 	}
 }
 
+func TestSiteFooterEscapesBuildVersion(t *testing.T) {
+	t.Parallel()
+	page := mustParsePage("index-page.gohtml", "public-layout.gohtml")
+	page.Funcs(template.FuncMap{"buildVersion": func() string { return `<script>version</script>` }})
+	var output bytes.Buffer
+	if err := page.ExecuteTemplate(&output, "site-footer", nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "<script>") || !strings.Contains(output.String(), "&lt;script&gt;version&lt;/script&gt;") {
+		t.Fatalf("unsafe version: %s", output.String())
+	}
+}
+
 func testAssetSource(t *testing.T, names ...string) string {
 	t.Helper()
 	var source strings.Builder
@@ -716,9 +729,14 @@ func TestPagesRenderOneLayoutWithEmbeddedAssets(t *testing.T) {
 				t.Fatalf("render page: %v", err)
 			}
 			body := output.String()
-			for _, element := range []string{"<!DOCTYPE html>", "<html", "<head>", "<title>", "<body", "<main>", "</main>", "</html>"} {
+			for _, element := range []string{"<!DOCTYPE html>", "<html", "<head>", "<title>", "<body", "<main>", "</main>", "</html>", `<footer class="site-footer">`} {
 				if count := strings.Count(body, element); count != 1 {
 					t.Errorf("%s occurs %d times, want 1", element, count)
+				}
+			}
+			for _, want := range []string{`class="site-version">dev</span>`, "Denys Razumov", `href="https://github.com/zxzharmlesszxz/puppet-forge"`} {
+				if !strings.Contains(body, want) {
+					t.Errorf("page footer misses %q", want)
 				}
 			}
 			if strings.Contains(body, "<style") || strings.Contains(body, "<title></title>") {

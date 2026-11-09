@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/auth"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/buildinfo"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/domain"
 )
 
@@ -551,6 +552,7 @@ type teamAccessFieldsData struct {
 }
 
 var pageFuncs = template.FuncMap{
+	"buildVersion": buildinfo.Version,
 	"teamAccessFields": func(prefix, readerGroups, readerEmails, adminGroups, adminEmails string) teamAccessFieldsData {
 		return teamAccessFieldsData{Prefix: prefix, ReaderGroups: readerGroups, ReaderEmails: readerEmails, AdminGroups: adminGroups, AdminEmails: adminEmails}
 	},

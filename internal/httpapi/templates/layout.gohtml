@@ -14,6 +14,7 @@
   <main>
     {{template "page-navigation" .}}
     {{template "page-content" .}}
+    {{template "site-footer" .}}
   </main>
   {{template "layout-scripts" .}}
   {{template "page-scripts" .}}
@@ -38,4 +39,11 @@
 {{define "notices"}}
 {{if .Message}}<div class="notice ok" role="status">{{.Message}}</div>{{end}}
 {{if .Error}}<div class="notice error" role="alert">{{.Error}}</div>{{end}}
+{{end}}
+
+{{define "site-footer"}}
+<footer class="site-footer">
+  <span><a href="https://github.com/zxzharmlesszxz/puppet-forge">Puppet Forge</a> <span class="site-version">{{buildVersion}}</span></span>
+  <span>&copy; 2026 Denys Razumov</span>
+</footer>
 {{end}}

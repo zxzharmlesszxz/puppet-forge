@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/zxzharmlesszxz/puppet-forge/internal/app"
+	"github.com/zxzharmlesszxz/puppet-forge/internal/buildinfo"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/config"
 	"github.com/zxzharmlesszxz/puppet-forge/internal/metrics"
 )
@@ -53,6 +54,7 @@ func run() (runErr error) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	buildinfo.SetVersion(version)
 	metrics.RecordBuildInfo(version, runtime.Version())
 	if cfg.ReconcileArtifacts {
 		report, err := app.ReconcileArtifacts(ctx, cfg, cfg.ReconcileRepair)
